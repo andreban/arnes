@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>M6 &mdash; Sessions on disk</title>
-<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+<link rel="stylesheet" href="../../build-your-own-harness/assets/styles.css" />
 </head>
 <body>
 <div class="layout">
@@ -15,35 +15,35 @@
     <span>arnes &middot; plan</span>
   </div>
   <div class="nav-group"><h4>Overview</h4><ul>
-    <li><a href="index.html">Introduction</a></li>
+    <li><a href="../index.html">Introduction</a></li>
   </ul></div>
   <div class="nav-group"><h4>Architecture</h4><ul>
-    <li><a href="architecture.html">Modular design</a></li>
-    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="../architecture.html">Modular design</a></li>
+    <li><a href="../core.html" data-accent="coding">arnes-core</a></li>
   </ul></div>
   <div class="nav-group"><h4>Adapters</h4><ul>
-    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
-    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
-    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
-    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+    <li><a href="../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../adapter-gui.html"  data-accent="coding">GUI</a></li>
   </ul></div>
   <div class="nav-group"><h4>Plan</h4><ul>
-    <li><a href="roadmap.html">Roadmap</a></li>
+    <li><a href="../roadmap.html">Roadmap</a></li>
   </ul></div>
   <div class="nav-group"><h4>Milestones</h4><ul>
-    <li><a href="m1.html">M1: Foundation</a></li>
-    <li><a href="m1-plan.html">M1 work plan</a></li>
-    <li><a href="m2.html">M2: First tool</a></li>
-    <li><a href="m3.html">M3: Coding toolkit</a></li>
-    <li><a href="m4.html">M4: System prompt</a></li>
-    <li><a href="m5.html">M5: Skills</a></li>
-    <li><a href="m6.html">M6: Sessions</a></li>
-    <li><a href="m7.html">M7: Compaction</a></li>
-    <li><a href="m8.html">M8: HTTP / WS</a></li>
-    <li><a href="m9.html">M9: GUI</a></li>
+    <li><a href="../m1/index.html">M1: Foundation</a></li>
+    <li><a href="../m1/plan.html">M1 work plan</a></li>
+    <li><a href="../m2/index.html">M2: First tool</a></li>
+    <li><a href="../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../m5/index.html">M5: Skills</a></li>
+    <li><a href="index.html">M6: Sessions</a></li>
+    <li><a href="../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../m9/index.html">M9: GUI</a></li>
   </ul></div>
   <div class="nav-group"><h4>Reference</h4><ul>
-    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+    <li><a href="../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
   </ul></div>
 </aside>
 
@@ -53,7 +53,7 @@
   <span class="eyebrow">Milestone 6 &middot; Persistence</span>
   <h1>Sessions on disk</h1>
   <p class="lead">
-    JSONL session logs, project-scoped storage, ULID-prefixed filenames,
+    JSONL session logs, project-scoped storage, UUID v7-prefixed filenames,
     <code>--continue</code> / <code>--resume</code> CLI flags, and ACP
     <code>session/load</code>. After M6, every minute you spend with the
     agent is recoverable.
@@ -89,8 +89,8 @@ pub enum SessionRow {
     Header(SessionHeader),
     /// Any user / assistant / tool_result message.
     Message {
-        id:        Ulid,
-        parent_id: Option&lt;Ulid&gt;,
+        id:        Uuid,
+        parent_id: Option&lt;Uuid&gt;,
         timestamp: u64,
         agent_id:  AgentId,       // V1: always Root; post-V1 sub-agents append here too
         message:   Message,
@@ -102,12 +102,12 @@ pub enum SessionRow {
     Compaction(CompactionEntry),
     /// Reserved for post-V1 sub-agent lifecycle. V1 never writes these;
     /// the reader recognises them and treats them as no-ops.
-    SubAgentStart { id: Ulid, parent_agent_id: AgentId, spec: SubAgentSpec },
-    SubAgentEnd   { id: Ulid, agent_id: AgentId, /* result summary */ },
+    SubAgentStart { id: Uuid, parent_agent_id: AgentId, spec: SubAgentSpec },
+    SubAgentEnd   { id: Uuid, agent_id: AgentId, /* result summary */ },
 }
 
 pub struct UsageEntry {
-    pub id:        Ulid,
+    pub id:        Uuid,
     pub timestamp: u64,
     pub usage:     Usage,         // from arnes-core::usage; carries agent_id + ModelKey
 }</code></pre>
@@ -132,7 +132,7 @@ pub struct UsageEntry {
 
 pub struct SessionHeader {
     pub version: u32,                  // bump on format-breaking changes
-    pub session_id: Ulid,
+    pub session_id: Uuid,
     pub created_at: u64,
     pub cwd: PathBuf,
     pub model: String,
@@ -153,8 +153,8 @@ pub struct LoadedSession {
 
 <pre><code>~/.arnes/sessions/
 └── {project-hash}/                    # 8-char hash of cwd, no creation overhead
-    ├── 01HX0K9T-summarize-the-readme.jsonl
-    ├── 01HX0M2N-refactor-auth-middleware.jsonl
+    ├── 0190f1c2-7d8a-summarize-the-readme.jsonl
+    ├── 0190f25b-9c14-refactor-auth-middleware.jsonl
     └── ...</code></pre>
 
 <ul>
@@ -165,7 +165,7 @@ pub struct LoadedSession {
     you find a project's sessions by re-computing the hash from its cwd.
   </li>
   <li>
-    <strong>Filename:</strong> <code>{ulid}-{slug}.jsonl</code>. The ULID
+    <strong>Filename:</strong> <code>{uuid}-{slug}.jsonl</code>. The UUID v7
     is sortable (so <code>ls -t</code> orders by creation); the slug is a
     kebab-cased fragment of the first user message, max 60 chars.
   </li>
@@ -193,7 +193,7 @@ pub struct LoadedSession {
         for msg in turn_messages {
             if let Some(w) = self.writer.as_mut() {
                 w.append(SessionRow::Message {
-                    id: Ulid::new(),
+                    id: Uuid::now_v7(),
                     parent_id: self.last_message_id,
                     timestamp: now_unix(),
                     message: msg,
@@ -239,15 +239,15 @@ pub struct LoadedSession {
   <tbody>
     <tr>
       <td><code>arnes</code> / <code>arnes-acp</code> (no resume flag)</td>
-      <td>Fresh session. Mint a ULID, derive the project hash from cwd, open a new file.</td>
+      <td>Fresh session. Mint a UUID v7, derive the project hash from cwd, open a new file.</td>
     </tr>
     <tr>
       <td><code>--continue</code> / <code>-c</code></td>
-      <td>Resume the most-recent session for the current project. <code>ls</code> the project's directory, sort by filename (ULID is sortable), pick the newest.</td>
+      <td>Resume the most-recent session for the current project. <code>ls</code> the project's directory, sort by filename (UUID v7 is sortable), pick the newest.</td>
     </tr>
     <tr>
       <td><code>--resume &lt;id-or-prefix&gt;</code></td>
-      <td>Resume by ULID prefix. Error if ambiguous.</td>
+      <td>Resume by UUID v7 prefix. Error if ambiguous.</td>
     </tr>
     <tr>
       <td><code>--resume</code> (no value)</td>
@@ -316,7 +316,7 @@ pub struct LoadedSession {
 
 <ol class="steps">
   <li>Create <code>arnes-core::persist</code> with <code>SessionWriter</code>, <code>load_session</code>, <code>SessionRow</code>, <code>SessionHeader</code>.</li>
-  <li>Add <code>ulid</code> and <code>xxhash-rust</code> as deps.</li>
+  <li>Add <code>uuid</code> (with <code>features = ["v7"]</code>) and <code>xxhash-rust</code> as deps.</li>
   <li>Extend <code>Session</code> to take an optional <code>SessionWriter</code>; append on each <code>TurnEnd</code>.</li>
   <li>Add <code>Session::resume(loaded, ...)</code> constructor that rebuilds in-memory state from a <code>LoadedSession</code>.</li>
   <li>CLI: parse the new flags; implement project-hash + filename derivation; implement the most-recent and prefix-resolution helpers.</li>
@@ -357,11 +357,11 @@ pub struct LoadedSession {
 </div>
 
 <div class="pager">
-  <a class="prev" href="m5.html">
+  <a class="prev" href="../m5/index.html">
     <span class="pager-label">&larr; Previous</span>
     <span class="pager-title">M5: Skills</span>
   </a>
-  <a class="next" href="m7.html">
+  <a class="next" href="../m7/index.html">
     <span class="pager-label">Next &rarr;</span>
     <span class="pager-title">M7: Compaction</span>
   </a>
@@ -369,6 +369,6 @@ pub struct LoadedSession {
 
 </main>
 </div>
-<script src="../build-your-own-harness/assets/nav.js"></script>
+<script src="../../build-your-own-harness/assets/nav.js"></script>
 </body>
 </html>

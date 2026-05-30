@@ -31,16 +31,16 @@
     <li><a href="roadmap.html">Roadmap</a></li>
   </ul></div>
   <div class="nav-group"><h4>Milestones</h4><ul>
-    <li><a href="m1.html">M1: Foundation</a></li>
-    <li><a href="m1-plan.html">M1 work plan</a></li>
-    <li><a href="m2.html">M2: First tool</a></li>
-    <li><a href="m3.html">M3: Coding toolkit</a></li>
-    <li><a href="m4.html">M4: System prompt</a></li>
-    <li><a href="m5.html">M5: Skills</a></li>
-    <li><a href="m6.html">M6: Sessions</a></li>
-    <li><a href="m7.html">M7: Compaction</a></li>
-    <li><a href="m8.html">M8: HTTP / WS</a></li>
-    <li><a href="m9.html">M9: GUI</a></li>
+    <li><a href="m1/index.html">M1: Foundation</a></li>
+    <li><a href="m1/plan.html">M1 work plan</a></li>
+    <li><a href="m2/index.html">M2: First tool</a></li>
+    <li><a href="m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="m4/index.html">M4: System prompt</a></li>
+    <li><a href="m5/index.html">M5: Skills</a></li>
+    <li><a href="m6/index.html">M6: Sessions</a></li>
+    <li><a href="m7/index.html">M7: Compaction</a></li>
+    <li><a href="m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="m9/index.html">M9: GUI</a></li>
   </ul></div>
   <div class="nav-group"><h4>Reference</h4><ul>
     <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
@@ -186,7 +186,7 @@
 <div class="figure-caption">Single milestone track. Each milestone lands a harness capability and surfaces it in both the TUI and ACP frontends.</div>
 </div>
 
-<h2 id="m1"><a href="m1.html">M1 &mdash; agent-rig + minimal TUI + minimal ACP</a></h2>
+<h2 id="m1"><a href="m1/index.html">M1 &mdash; agent-rig + minimal TUI + minimal ACP</a></h2>
 
 <p><strong>Goal.</strong> Stand up the workspace and prove the two-frontend architecture works.</p>
 <p><strong>Scope.</strong> Cargo workspace. <code>arnes-core</code> with <code>Frontend</code> and <code>Host</code> trait definitions. A <code>LocalHost</code> impl. A <code>Session</code> wrapper around <code>agent_rig::AgentRunner</code>. Two adapters wired up:</p>
@@ -220,7 +220,7 @@
   we fall back to a hand-rolled ~350-line framer on
   <code>tokio_util::codec::LinesCodec</code>. Roll-your-own is the
   fallback, not the default. See
-  <a href="m1.html#jsonrpc">M1 &sect; JSON-RPC library</a> for the
+  <a href="m1/index.html#jsonrpc">M1 &sect; JSON-RPC library</a> for the
   fallback triggers.
 </div>
 
@@ -234,7 +234,7 @@
   </p>
 </div>
 
-<h2 id="m2"><a href="m2.html">M2 &mdash; First tool (<code>read</code>)</a></h2>
+<h2 id="m2"><a href="m2/index.html">M2 &mdash; First tool (<code>read</code>)</a></h2>
 
 <p><strong>Goal.</strong> Prove tool-calling end-to-end through both adapters.</p>
 <p><strong>Scope.</strong> The <code>Tool</code> trait, <code>ToolRegistry</code>, and the first built-in tool (<code>read</code>) all in <code>arnes-core::tools</code>, taking <code>&amp;dyn Host</code>. Sequential execution.</p>
@@ -269,7 +269,7 @@
   </p>
 </div>
 
-<h2 id="m3"><a href="m3.html">M3 &mdash; Coding toolkit + permissions</a></h2>
+<h2 id="m3"><a href="m3/index.html">M3 &mdash; Coding toolkit + permissions</a></h2>
 
 <p><strong>Goal.</strong> Move from read-only to a real coding agent.</p>
 <p><strong>Scope.</strong> Three more built-in tools: <code>write</code>, <code>edit</code> (anchor-text), <code>bash</code>. Per-tool permission policies. The <code>request_permission</code> path on the <code>Frontend</code> trait wired through.</p>
@@ -304,7 +304,7 @@
   </p>
 </div>
 
-<h2 id="m4"><a href="m4.html">M4 &mdash; System prompt assembly</a></h2>
+<h2 id="m4"><a href="m4/index.html">M4 &mdash; System prompt assembly</a></h2>
 
 <p><strong>Goal.</strong> Stop hard-coding the prompt; assemble it from inputs.</p>
 <p><strong>Scope.</strong> <code>SystemPromptBuilder</code>. Tool snippets + per-tool guidelines slot. <code>AGENTS.md</code> tree walk. Cwd + date footer. Cache by input hash; rebuild only when inputs change. Frontend capabilities propagated.</p>
@@ -324,7 +324,7 @@
   </p>
 </div>
 
-<h2 id="m5"><a href="m5.html">M5 &mdash; Skills</a></h2>
+<h2 id="m5"><a href="m5/index.html">M5 &mdash; Skills</a></h2>
 
 <p><strong>Goal.</strong> Conditional knowledge without prompt bloat.</p>
 <p><strong>Scope.</strong> <code>arnes-core::skills</code>. SKILL.md discovery from global and project directories. YAML frontmatter parse. <code>&lt;available_skills&gt;</code> XML block in the system prompt. Skills only advertised when <code>read</code> is active.</p>
@@ -346,10 +346,10 @@
   </p>
 </div>
 
-<h2 id="m6"><a href="m6.html">M6 &mdash; Sessions on disk</a></h2>
+<h2 id="m6"><a href="m6/index.html">M6 &mdash; Sessions on disk</a></h2>
 
 <p><strong>Goal.</strong> Survive a restart.</p>
-<p><strong>Scope.</strong> <code>arnes-core::persist</code>. JSONL writer with header row + message rows + compaction rows. ULID session ids. Project-scoped session directories under <code>~/.arnes/sessions/{project-hash}/</code>. <code>--continue</code>, <code>--resume &lt;id&gt;</code>, <code>--resume</code> (picker) CLI flags.</p>
+<p><strong>Scope.</strong> <code>arnes-core::persist</code>. JSONL writer with header row + message rows + compaction rows. UUID v7 session ids. Project-scoped session directories under <code>~/.arnes/sessions/{project-hash}/</code>. <code>--continue</code>, <code>--resume &lt;id&gt;</code>, <code>--resume</code> (picker) CLI flags.</p>
 
 <div class="compare">
 <div>
@@ -376,7 +376,7 @@
   </p>
 </div>
 
-<h2 id="m7"><a href="m7.html">M7 &mdash; Compaction</a></h2>
+<h2 id="m7"><a href="m7/index.html">M7 &mdash; Compaction</a></h2>
 
 <p><strong>Goal.</strong> Long sessions survive context exhaustion.</p>
 <p><strong>Scope.</strong> <code>arnes-core::compact</code>. Token estimation. Threshold trigger at the top of <code>Session::prompt</code> (only between turns). Structured-summary prompt. History rewrite preserving last K turns. JSONL <code>Compaction</code> row recorded; raw history retained.</p>
@@ -397,7 +397,7 @@
   </p>
 </div>
 
-<h2 id="m8"><a href="m8.html">M8 &mdash; HTTP / WebSockets adapter</a></h2>
+<h2 id="m8"><a href="m8/index.html">M8 &mdash; HTTP / WebSockets adapter</a></h2>
 
 <p><strong>Goal.</strong> Make arnes networked.</p>
 <p><strong>Scope.</strong> <code>arnes-http</code> crate. axum server. <code>/v1</code> REST routes (sessions CRUD, prompt, cancel, compact). <code>/v1/sessions/{id}/ws</code> streaming socket with arnes-native frame vocabulary. Bearer-token auth. CORS allow-list. <code>SessionRegistry</code> with per-session locking.</p>
@@ -418,7 +418,7 @@
   </p>
 </div>
 
-<h2 id="m9"><a href="m9.html">M9 &mdash; GUI</a></h2>
+<h2 id="m9"><a href="m9/index.html">M9 &mdash; GUI</a></h2>
 
 <p><strong>Goal.</strong> The fourth face.</p>
 <p><strong>Scope.</strong> Pick one of the three paths from the <a href="adapter-gui.html#three-paths">GUI adapter page</a> (Tauri, native, or web-on-HTTP). <code>arnes-gui</code> crate (or a separate frontend project with no new Rust if we pick web-on-HTTP). <code>GuiFrontend</code> with permission modal, transcript widget, input box. Rich diffs and inline images via <code>FrontendCapabilities</code>.</p>

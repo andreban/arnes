@@ -31,16 +31,16 @@
     <li><a href="roadmap.html">Roadmap</a></li>
   </ul></div>
   <div class="nav-group"><h4>Milestones</h4><ul>
-    <li><a href="m1.html">M1: Foundation</a></li>
-    <li><a href="m1-plan.html">M1 work plan</a></li>
-    <li><a href="m2.html">M2: First tool</a></li>
-    <li><a href="m3.html">M3: Coding toolkit</a></li>
-    <li><a href="m4.html">M4: System prompt</a></li>
-    <li><a href="m5.html">M5: Skills</a></li>
-    <li><a href="m6.html">M6: Sessions</a></li>
-    <li><a href="m7.html">M7: Compaction</a></li>
-    <li><a href="m8.html">M8: HTTP / WS</a></li>
-    <li><a href="m9.html">M9: GUI</a></li>
+    <li><a href="m1/index.html">M1: Foundation</a></li>
+    <li><a href="m1/plan.html">M1 work plan</a></li>
+    <li><a href="m2/index.html">M2: First tool</a></li>
+    <li><a href="m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="m4/index.html">M4: System prompt</a></li>
+    <li><a href="m5/index.html">M5: Skills</a></li>
+    <li><a href="m6/index.html">M6: Sessions</a></li>
+    <li><a href="m7/index.html">M7: Compaction</a></li>
+    <li><a href="m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="m9/index.html">M9: GUI</a></li>
   </ul></div>
   <div class="nav-group"><h4>Reference</h4><ul>
     <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
@@ -98,7 +98,7 @@
 
 <pre><code>pub enum AgentId {
     Root,
-    SubAgent(Ulid),
+    SubAgent(Uuid),
 }
 
 pub struct Session&lt;F: Frontend, H: Host&gt; {
@@ -184,7 +184,7 @@ impl&lt;F, H&gt; Session&lt;F, H&gt; {
     /// Sensitive tools (bash, write, edit) request permission before running.
     /// Default false (read, ls, grep). When true, the session calls
     /// build_permission_request() and matches_scope() &mdash; see
-    /// <a href="m3.html#permission">M3 &sect; Permission model</a>.
+    /// <a href="m3/index.html#permission">M3 &sect; Permission model</a>.
     fn permission_required(&amp;self) -&gt; bool { false }
     fn build_permission_request(&amp;self, input: &amp;Value) -&gt; PermissionRequest { unreachable!() }
     fn matches_scope(&amp;self, scope: &amp;Scope, input: &amp;Value) -&gt; bool { false }
@@ -288,7 +288,7 @@ pub enum SessionRow {
 pub async fn load_session(path: &amp;Path) -&gt; io::Result&lt;LoadedSession&gt;;</code></pre>
 
 <p>
-  Each row carries an <code>id</code> (ULID) and an optional <code>parent_id</code>.
+  Each row carries an <code>id</code> (UUID v7) and an optional <code>parent_id</code>.
   We don't expose branching in V1, but we plumb the fields so it can land
   later without a format break.
 </p>
@@ -482,7 +482,7 @@ cost     = "free"
   <tbody>
     <tr>
       <td><code>AgentId</code></td>
-      <td>Real type from M1. V1 only ever constructs <code>AgentId::Root</code>; <code>SubAgent(Ulid)</code> exists in the enum but is never minted.</td>
+      <td>Real type from M1. V1 only ever constructs <code>AgentId::Root</code>; <code>SubAgent(Uuid)</code> exists in the enum but is never minted.</td>
     </tr>
     <tr>
       <td><code>SessionEvent</code></td>
@@ -502,7 +502,7 @@ cost     = "free"
     </tr>
     <tr>
       <td><code>PermissionAllowlist</code></td>
-      <td>Entries are <code>AllowEntry { tool_name, scope, principal }</code> structs, not bare tuples (see <a href="m3.html#permission">M3 &sect; Permission model</a>). V1 only ever creates <code>Principal::Any</code> entries; the field is there.</td>
+      <td>Entries are <code>AllowEntry { tool_name, scope, principal }</code> structs, not bare tuples (see <a href="m3/index.html#permission">M3 &sect; Permission model</a>). V1 only ever creates <code>Principal::Any</code> entries; the field is there.</td>
     </tr>
     <tr>
       <td>JSONL <code>SessionRow</code></td>

@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/agent-identity</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 2 &middot; PR 2 of 6</span>
+  <h1><code>feat/agent-identity</code></h1>
+  <p class="lead">
+    <code>AgentId</code> and <code>ModelKey</code> &mdash; the identity
+    vocabulary used by usage tracking, persistence rows, ACP
+    <code>_meta</code> fields, and every <code>SessionEvent</code>. Small
+    file, large blast radius: every later PR's signatures reference these.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Ship <code>AgentId</code> (with the post-V1 sub-agent variant in place
+  but never minted at M1) and <code>ModelKey</code> (the provider / model
+  cost-accounting key). The shapes encode the
+  <a href="../../core.html#future-compat">sub-agent commitments</a>
+  &mdash; later PRs and milestones depend on these types not changing
+  shape when sub-agents land.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/identity.rs</code></li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; declare module, re-export <code>AgentId</code> + <code>ModelKey</code>.</li>
+  <li><strong>modify</strong>: workspace root <code>Cargo.toml</code> &mdash; add <code>uuid</code> to <code>[workspace.dependencies]</code>.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/Cargo.toml</code> &mdash; add <code>uuid = { workspace = true }</code>.</li>
+</ul>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. Why <code>uuid</code> with v7, not <code>ulid</code>?</strong>
+  UUID v7 (RFC 9562, finalized 2024) is the standardized time-sorted
+  128-bit ID. It has the same properties ULID was designed for
+  (time-sortable, collision-resistant) but is universally recognized by
+  databases, log tools, SDKs, and editors. The <code>uuid</code> crate
+  is one of the most battle-tested in the Rust ecosystem. No realistic
+  reason to pick ULID for new code in 2026.
+</p>
+
+<p>
+  <strong>2. <code>AgentId</code> as enum vs newtype.</strong> Choices:
+</p>
+
+<ul>
+  <li><strong>Enum (chosen)</strong>: <code>Root | SubAgent(Uuid)</code>. Clear at the call site whether a particular agent is the root or a sub-agent. Pattern matching surfaces the distinction.</li>
+  <li><strong>Newtype</strong>: <code>struct AgentId(Uuid)</code> with a magic "all zeros" or similar for root. More compact but loses the type-level distinction.</li>
+  <li><strong>Just <code>Uuid</code></strong>: same downsides as newtype plus no semantic affordance.</li>
+</ul>
+
+<p>
+  The enum costs nothing extra at runtime (<code>SubAgent(Uuid)</code>
+  takes 16 bytes + discriminant; <code>Root</code> is one variant
+  discriminant) and makes the V1-only-creates-<code>Root</code>
+  invariant easy to grep for and lint against. <code>#[non_exhaustive]</code>
+  isn't needed (the enum is closed; new identity kinds aren't expected).
+</p>
+
+<p>
+  <strong>3. <code>ModelKey</code>: provider + model_id is enough?</strong>
+  Question worth surfacing: model versions like
+  <code>gemini-2.5-flash-001</code> vs
+  <code>gemini-2.5-flash-latest</code> vs
+  <code>gemini-2.5-flash</code> exist. Cost-wise they're priced the
+  same; behavior-wise they can differ. Options:
+</p>
+
+<ul>
+  <li><strong>Treat the version suffix as part of <code>model_id</code></strong> (chosen for M1). <code>ModelKey { provider: "gemini", model_id: "gemini-2.5-flash-001" }</code>. Lets pricing TOML key on whatever granularity each model uses; matches what agent-rig reports back from the wire.</li>
+  <li><strong>Add a separate <code>version</code> field.</strong> Cleaner semantically but most pricing data doesn't break down to version; over-engineered for what we're doing now.</li>
+</ul>
+
+<p>
+  Keep it at two fields for M1; revisit if M2/M3 pricing or routing logic
+  actually needs the split.
+</p>
+
+<p>
+  <strong>4. Derives.</strong> <code>Clone, Debug, Eq, PartialEq, Hash</code>
+  on both types. <code>Hash</code> is needed because
+  <code>CumulativeUsage</code> indexes by <code>(AgentId, ModelKey)</code>
+  in a <code>HashMap</code> (phase 3). <code>Eq</code> +
+  <code>PartialEq</code> are pure-equality types &mdash; trivial here.
+  <code>Clone</code> because these are passed by value through
+  <code>SessionEvent</code> and <code>Usage</code> records.
+  No <code>Serialize</code>/<code>Deserialize</code> yet &mdash; persistence
+  (M6) and ACP (phase 6) need them and will add the derive then. The
+  uuid crate's <code>serde</code> feature is opt-in via crate features
+  on uuid itself, so deferring keeps the dep tree smaller for now.
+</p>
+
+<p>
+  <strong>5. The future-compat link.</strong> Module-level doc comment
+  must link <a href="../../core.html#future-compat">core.html &sect;
+  Future-compatibility: sub-agents</a>. Anyone touching this file in the
+  future needs to see the contract.
+</p>
+
+<h2 id="deps">Deps</h2>
+
+<p><strong>Workspace root <code>Cargo.toml</code></strong>, add (creating <code>[workspace.dependencies]</code> if it doesn't exist):</p>
+
+<pre><code>[workspace.dependencies]
+uuid = { version = "1", features = ["v7"] }</code></pre>
+
+<p><strong><code>crates/arnes-core/Cargo.toml</code></strong>, add:</p>
+
+<pre><code>[dependencies]
+uuid = { workspace = true }</code></pre>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// Copyright 2026 Andre Cipriani Bandarra
+// SPDX-License-Identifier: Apache-2.0
+
+//! Identity types for agents and models.
+//!
+//! See [Future-compatibility: sub-agents]
+//! (../../docs/implementation-plan/core.html#future-compat).
+//!
+//! V1 only ever constructs [`AgentId::Root`]; [`AgentId::SubAgent`]
+//! exists so the type vocabulary stays stable when sub-agents land
+//! post-V1.
+
+use uuid::Uuid;
+
+/// Identifies an agent within a session.
+///
+/// V1 only ever constructs [`AgentId::Root`]. The [`AgentId::SubAgent`]
+/// variant is reserved for post-V1; minting one is a deliberate
+/// future change, not an accident waiting to happen.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum AgentId {
+    /// The single root agent in a session. V1's only construction.
+    Root,
+    /// A sub-agent spawned by another agent. Reserved for post-V1.
+    SubAgent(Uuid),
+}
+
+/// Identifies a model for cost accounting and usage attribution.
+///
+/// The pair `(provider, model_id)` is the natural key &mdash; pricing
+/// TOML is indexed by it, and per-model usage breakdowns in
+/// [`crate::CumulativeUsage`] (phase 3) bucket by it.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ModelKey {
+    /// The provider's short identifier, e.g. `"gemini"`, `"ollama"`,
+    /// `"anthropic"`. Lower-case by convention.
+    pub provider: String,
+    /// The provider-specific model identifier, e.g.
+    /// `"gemini-2.5-flash"`, `"llama3.2"`. May include a version suffix
+    /// (the entire string is the cost-accounting key).
+    pub model_id: String,
+}</code></pre>
+
+<h2 id="lib-rs">lib.rs additions</h2>
+
+<pre><code>mod identity;
+
+pub use identity::{AgentId, ModelKey};</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>
+  None for this PR &mdash; the types are pure data. Test coverage is
+  earned by:
+</p>
+
+<ul>
+  <li><strong><code>feat/message-types</code></strong> &mdash; serde round-trip touches <code>AgentId</code> indirectly if any content carries it (none does at M1).</li>
+  <li><strong>Phase 3 (usage)</strong> &mdash; <code>CumulativeUsage</code>'s <code>(AgentId, ModelKey)</code> bucketing exercises both types as hash-map keys.</li>
+</ul>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean; module-level doc comment links the future-compat section.</li>
+  <li><code>uuid</code> appears in <code>[workspace.dependencies]</code> with the <code>v7</code> feature, and in <code>arnes-core/Cargo.toml</code> via <code>{ workspace = true }</code>.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="error-type.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/error-type</span>
+  </a>
+  <a class="next" href="message-types.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/message-types</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/tool-context</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 2 &middot; PR 6 of 6</span>
+  <h1><code>feat/tool-context</code></h1>
+  <p class="lead">
+    The bundle every <code>Tool::execute</code> receives: a host handle,
+    a progress sink, a cancellation token, the invoking agent's ID, and
+    a sub-agent spawn handle. The <code>Tool</code> trait itself lives
+    in M2; the context lives here so phase 4's test scaffolding can
+    build one and M2 lands tools against an already-frozen shape.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Ship <code>ToolContext</code>, <code>ProgressSink</code>,
+  <code>ProgressUpdate</code>, and the <code>SubAgentSpawner</code>
+  stub. Last PR in phase 2; closes out the core type vocabulary so
+  phase 3 (usage) can build on it.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/tool_context.rs</code></li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code></li>
+  <li><strong>modify</strong>: root + <code>arnes-core</code> <code>Cargo.toml</code> &mdash; add <code>tokio-util</code> with the <code>rt</code> feature.</li>
+</ul>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. Why bundle into a context struct at all?</strong>
+  agent-rig (and many tool-calling APIs) pass a few values to tool
+  execution. Bundling them into one struct means adding a new
+  capability (timing budget, log tap, trace ID, &hellip;) is a struct
+  field change, not a trait signature change. <code>Tool::execute</code>
+  stays <code>async fn execute(&amp;self, input: Value, cx: &amp;ToolContext) -&gt; ToolResult</code>
+  forever; the cx grows.
+</p>
+
+<p>
+  <strong>2. The early arrival of tokio in <code>arnes-core</code>.</strong>
+  <code>ToolContext.cancellation: CancellationToken</code> comes from
+  <code>tokio_util::sync::CancellationToken</code>, which pulls
+  <code>tokio</code> into <code>arnes-core</code>'s dep tree starting
+  with this PR. That's earlier than phase 4 (where <code>Session</code>
+  actually runs anything on a runtime), but unavoidable if
+  <code>ToolContext</code> lives here.
+</p>
+
+<p>Alternatives considered:</p>
+
+<ul>
+  <li><strong>Defer <code>ToolContext</code> to M2's first PR</strong>: cleaner sequencing, but means M2 has to design the type while also writing the first tool. Splitting now lets phase 2 settle the shape.</li>
+  <li><strong>Use <code>futures::future::AbortHandle</code> instead</strong>: runtime-agnostic, but agent-rig and both adapters use tokio anyway; abstracting over runtime is ceremony for nothing.</li>
+  <li><strong>Use a callback for cancellation</strong>: more flexible but harder to compose; tokio's cancellation token is the idiomatic choice in tokio code.</li>
+</ul>
+
+<p>
+  Decision: keep <code>ToolContext</code> in phase 2; accept the
+  early-tokio cost.
+</p>
+
+<p>
+  <strong>3. <code>ProgressSink</code> as trait, not a channel.</strong>
+  Tools emit progress; <code>Session</code> turns those into
+  <code>EventKind::ToolCallUpdate</code> events (M2). The trait-based
+  shape means the session can implement it on its event-translation
+  side without exposing channel types here. <code>ProgressUpdate</code>
+  has both <code>Text</code> (V1 default) and <code>Structured</code>
+  (post-V1 sub-agent tools emitting nested events).
+</p>
+
+<p>
+  <strong>4. <code>SubAgentSpawner</code> stub.</strong> Sub-agents
+  are post-V1 (see <a href="../../core.html#future-compat">future-compat
+  table</a>). The trait exists so the field type is stable; the V1
+  implementation either:
+</p>
+
+<ul>
+  <li>Returns <code>Err(CoreError::Session("sub-agents are post-V1".into()))</code> &mdash; recoverable, callers can branch.</li>
+  <li>Panics with <code>unimplemented!()</code> &mdash; explicit "you should not be calling this at V1," loud if anyone does.</li>
+</ul>
+
+<p>
+  Recommendation: <code>unimplemented!()</code> for the V1 impl. M1
+  has no caller, so the panic is never reached. Post-V1, the body gets
+  filled in; the test against the panic catches an accidental partial
+  enable.
+</p>
+
+<p>
+  Where does the actual <code>impl SubAgentSpawner</code> live at M1?
+  Phase 4's <code>Session</code> constructs the <code>ToolContext</code>
+  for its tools (when they exist in M2); for M1 there are no tools, so
+  no <code>ToolContext</code> ever gets built outside tests. Phase 4
+  test scaffolding ships a <code>NullSubAgentSpawner</code> for
+  <code>in_memory_host</code> setups.
+</p>
+
+<p>
+  <strong>5. <code>Arc&lt;dyn ...&gt;</code> everywhere?</strong>
+  <code>host: Arc&lt;dyn Host&gt;</code>,
+  <code>progress: Arc&lt;dyn ProgressSink&gt;</code>,
+  <code>spawn_subagent: Arc&lt;dyn SubAgentSpawner&gt;</code>. Reasons:
+</p>
+
+<ul>
+  <li>Tools are <code>dyn Tool</code> in <code>ToolRegistry</code>; their <code>execute</code> takes <code>&amp;ToolContext</code> not <code>&amp;ToolContext&lt;F, H, ...&gt;</code>.</li>
+  <li><code>ToolContext</code> needs to be constructible without the caller knowing the concrete <code>Host</code> impl.</li>
+  <li><code>Arc</code> is the right shared-ownership primitive for multi-tool, possibly-concurrent execution.</li>
+</ul>
+
+<p>
+  The dyn requirement is what justifies the async-trait choice from the
+  cross-cutting decisions.
+</p>
+
+<h2 id="deps">Deps</h2>
+
+<p><strong>Workspace root <code>Cargo.toml</code></strong>:</p>
+
+<pre><code>[workspace.dependencies]
+# (existing entries)
+tokio-util = { version = "0.7", features = ["rt"] }</code></pre>
+
+<p><strong><code>crates/arnes-core/Cargo.toml</code></strong>:</p>
+
+<pre><code>[dependencies]
+# (existing entries)
+tokio-util = { workspace = true }</code></pre>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// Copyright 2026 Andre Cipriani Bandarra
+// SPDX-License-Identifier: Apache-2.0
+
+//! Per-invocation context that every tool's `execute` receives.
+//!
+//! The `Tool` trait itself lands in M2; this PR ships the context type
+//! so M2 can land tools against an already-frozen shape, and phase 4's
+//! test scaffolding can construct one without churn.
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde_json::Value;
+use tokio_util::sync::CancellationToken;
+
+use crate::{AgentId, Host, Result};
+
+/// Everything a tool body needs from the harness, bundled into one
+/// struct so capability additions never change the `Tool::execute`
+/// trait signature.
+pub struct ToolContext {
+    /// OS-resource access. Tools route every filesystem / process call
+    /// through this.
+    pub host: Arc&lt;dyn Host&gt;,
+
+    /// Progress / partial-result emitter. The session translates each
+    /// update into a `SessionEvent`.
+    pub progress: Arc&lt;dyn ProgressSink&gt;,
+
+    /// Cooperative cancellation. Tools poll this between work units
+    /// and bail out cleanly when set.
+    pub cancellation: CancellationToken,
+
+    /// Which agent invoked this tool. V1 always `AgentId::Root`;
+    /// post-V1 sub-agent tools pass their own ID through.
+    pub agent_id: AgentId,
+
+    /// Sub-agent spawn handle. V1 impls panic on call; the field
+    /// exists so future sub-agent-aware tools compile against the M1
+    /// trait surface unchanged.
+    pub spawn_subagent: Arc&lt;dyn SubAgentSpawner&gt;,
+}
+
+/// One progress payload from a running tool.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum ProgressUpdate {
+    /// Plain text progress. V1's default.
+    Text(String),
+    /// Structured payload &mdash; tool-defined.
+    /// Reserved for post-V1 sub-agent tools emitting nested events
+    /// the session translates into child `SessionEvent`s.
+    Structured(Value),
+}
+
+/// Sink for `ProgressUpdate`s. Adapter-side: the session implements
+/// this to fold updates into its own event stream.
+pub trait ProgressSink: Send + Sync {
+    fn send(&amp;self, update: ProgressUpdate);
+}
+
+/// Sub-agent spawner. V1 implementations either return an error or
+/// panic; the trait exists so `ToolContext.spawn_subagent`'s type is
+/// stable.
+#[async_trait]
+pub trait SubAgentSpawner: Send + Sync {
+    async fn spawn(&amp;self, spec: SubAgentSpec) -&gt; Result&lt;SubAgentHandle&gt;;
+}
+
+/// Sub-agent specification. Body lands post-V1; opaque at M1.
+#[derive(Clone, Debug, Default)]
+pub struct SubAgentSpec;
+
+/// Handle returned by a successful sub-agent spawn. Body lands post-V1;
+/// opaque at M1.
+#[derive(Clone, Debug, Default)]
+pub struct SubAgentHandle;</code></pre>
+
+<h2 id="lib-rs">lib.rs additions</h2>
+
+<pre><code>mod tool_context;
+
+pub use tool_context::{
+    ToolContext,
+    ProgressSink, ProgressUpdate,
+    SubAgentSpawner, SubAgentSpec, SubAgentHandle,
+};</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>
+  None for this PR. The context type is a struct of references; the
+  trait is a stub. Test coverage comes from phase 4's session
+  scaffolding, which constructs <code>ToolContext</code> instances in
+  the in-memory-host setup.
+</p>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean &mdash; every field and trait documented, with the V1-stub status of <code>SubAgentSpawner</code> spelled out.</li>
+  <li>End of phase 2: <code>arnes-core</code> exports the full M1 type vocabulary; the workspace still has no runtime-driving code.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="host-trait.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/host-trait</span>
+  </a>
+  <a class="next" href="../plan.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">Back to M1 work plan</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

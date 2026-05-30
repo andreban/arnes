@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/frontend-trait</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 2 &middot; PR 4 of 6</span>
+  <h1><code>feat/frontend-trait</code></h1>
+  <p class="lead">
+    The <code>Frontend</code> trait + the <code>SessionEvent</code> and
+    <code>EventKind</code> types it consumes. Defines what the
+    <code>Session</code> emits and what every adapter
+    (<code>TuiFrontend</code>, <code>AcpFrontend</code>, &hellip;) has
+    to implement.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Ship the <code>Frontend</code> trait (async, dyn-compatible via
+  <code>async-trait</code>), the <code>SessionEvent</code> envelope,
+  the <code>EventKind</code> variant set for M1, and the M3 permission
+  stubs (so the trait can include <code>request_permission</code>
+  without M3 being landed).
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/frontend.rs</code></li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code></li>
+  <li><strong>modify</strong>: root + <code>arnes-core</code> <code>Cargo.toml</code> &mdash; add <code>async-trait</code>.</li>
+</ul>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. <code>async-trait</code> recap.</strong> Per <a href="index.html#cross-cutting">phase cross-cutting decision 1</a>:
+  use <code>async-trait</code> for dyn-compatibility. <code>Frontend</code>
+  is generic in <code>Session&lt;F: Frontend, H: Host&gt;</code> (so could
+  in principle skip dyn), but applying <code>async-trait</code>
+  consistently across <code>Frontend</code> / <code>Host</code> /
+  <code>Tool</code> avoids the mental tax of "which traits use which
+  async style." Settled; mentioning for completeness.
+</p>
+
+<p>
+  <strong>2. <code>EventKind</code> variant set at M1.</strong>
+  The minimal sequence per turn looks like:
+</p>
+
+<pre><code>TurnStart
+&rarr; AgentMessageDelta (zero or more)
+&rarr; TurnEnd { stop_reason }
+(or Error { message } if something fails before TurnEnd)</code></pre>
+
+<p>
+  Variants for M1:
+</p>
+
+<ul>
+  <li><strong><code>TurnStart</code></strong> &mdash; signals "the agent is now producing output for this user turn." Frontend uses it to clear "is the assistant typing" indicators, etc.</li>
+  <li><strong><code>AgentMessageDelta { text: String }</code></strong> &mdash; one chunk of streamed assistant text. Concatenated by frontends.</li>
+  <li><strong><code>TurnEnd { stop_reason: StopReason }</code></strong> &mdash; the turn finished. M1 doesn't yet carry <code>usage</code>; the <code>Usage</code> type doesn't exist until phase 3, and the next phase's first PR (<code>feat/turnend-usage-wiring</code>) adds the field. <code>#[non_exhaustive]</code> on <code>EventKind</code> makes that addition non-breaking.</li>
+  <li><strong><code>Error { message: String }</code></strong> &mdash; terminal failure. M1 keeps it stringly-typed; phase 3+ may refine to a richer error variant.</li>
+</ul>
+
+<p>
+  Variants <em>not</em> in M1:
+</p>
+
+<ul>
+  <li><code>ThinkingDelta { text }</code> &mdash; should we stream thinking blocks as separate events? Discussion: probably yes, since frontends will want to differentiate styling. But this is interrogable from <code>AgentMessageDelta</code> if we embed type info, and adding the variant later is non-breaking. <strong>Defer</strong> &mdash; revisit when the Gemini-thinking integration in phase 7 actually produces them and we see how agent-rig surfaces the distinction.</li>
+  <li><code>ToolCallStart</code> / <code>ToolCallUpdate</code> / <code>ToolCallEnd</code> &mdash; M2.</li>
+  <li><code>SubAgentStart</code> / <code>SubAgentEnd</code> &mdash; post-V1.</li>
+</ul>
+
+<p>
+  <strong>3. <code>StopReason</code> variant set.</strong> agent-rig
+  presumably surfaces these from each provider's wire-level stop reason.
+  Coverage in M1 should be at least:
+</p>
+
+<ul>
+  <li><strong><code>EndTurn</code></strong> &mdash; model finished cleanly.</li>
+  <li><strong><code>MaxTokens</code></strong> &mdash; hit response token limit.</li>
+  <li><strong><code>Cancelled</code></strong> &mdash; we cancelled the turn via <code>Session::cancel</code>.</li>
+</ul>
+
+<p>
+  Plausibly also:
+</p>
+
+<ul>
+  <li><strong><code>ToolUse</code></strong> &mdash; stopped because the model requested a tool. M1 has no tools so this never happens; M2 adds it. Defer.</li>
+  <li><strong><code>Refusal</code></strong> &mdash; model declined (safety, policy). Defer until we have a caller that cares.</li>
+  <li><strong><code>RateLimit</code> / <code>ProviderError</code></strong> &mdash; these probably belong in <code>EventKind::Error</code> instead.</li>
+</ul>
+
+<p>
+  <strong>Decision:</strong> M1 ships <code>EndTurn</code>,
+  <code>MaxTokens</code>, <code>Cancelled</code>. Enum is
+  <code>#[non_exhaustive]</code> so M2's <code>ToolUse</code> variant
+  is additive.
+</p>
+
+<p>
+  <strong>4. <code>FrontendCapabilities</code>: struct or bitflags?</strong>
+  At M1 the struct is empty. The shape decision matters for the future:
+</p>
+
+<ul>
+  <li><strong>Struct with bool fields</strong> (chosen): <code>{ supports_markdown: bool, supports_images: bool, ... }</code>. Reads at the call site as expected; serializable; extensible without breaking.</li>
+  <li><strong>Bitflags</strong>: compact, but you write <code>caps.contains(Caps::MARKDOWN)</code>; serde story is less natural; gain is minimal at our scale.</li>
+</ul>
+
+<p>
+  Empty struct now; bool fields added per capability when there's a real
+  caller branching on it.
+</p>
+
+<p>
+  <strong>5. The M3 stubs.</strong> <code>Frontend::request_permission</code>
+  takes a <code>PermissionRequest</code> and returns a
+  <code>Permission</code>. M3 fleshes out both types (scopes, principals,
+  persistence policy &mdash; see <a href="../../core.html#future-compat">core.html
+  future-compat table</a>). At M1 these are empty stubs:
+</p>
+
+<ul>
+  <li><code>PermissionRequest</code>: unit struct. The trait method exists; no in-tree caller invokes it yet (no tools to permission).</li>
+  <li><code>Permission</code>: enum <code>AllowOnce | AllowAlways { scope, persistence } | Deny</code>. M1 callers (if any) construct <code>AllowOnce</code> or <code>Deny</code>.</li>
+  <li><code>Scope</code>, <code>Persistence</code>, <code>Principal</code>: unit-struct stubs.</li>
+</ul>
+
+<p>
+  M2 / M3 flesh out the bodies. The trait surface needs the types present
+  now so it doesn't acquire <code>request_permission</code> as a
+  breaking method addition.
+</p>
+
+<p>
+  <strong>6. <code>SessionEvent</code> envelope.</strong>
+  <code>{ agent_id, depth, kind }</code>. The <code>depth</code> field
+  exists for sub-agent nesting (always 0 at V1); it's a separate field
+  rather than encoded in <code>agent_id</code> so a renderer can use it
+  for indentation without having to compute parentage. See
+  <a href="../../core.html#future-compat">future-compat &sect; SessionEvent</a>.
+</p>
+
+<h2 id="deps">Deps</h2>
+
+<p><strong>Workspace root <code>Cargo.toml</code></strong>:</p>
+
+<pre><code>[workspace.dependencies]
+# (existing entries)
+async-trait = "0.1"</code></pre>
+
+<p><strong><code>crates/arnes-core/Cargo.toml</code></strong>:</p>
+
+<pre><code>[dependencies]
+# (existing entries)
+async-trait = { workspace = true }</code></pre>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// Copyright 2026 Andre Cipriani Bandarra
+// SPDX-License-Identifier: Apache-2.0
+
+//! The `Frontend` trait: what every UI adapter implements to consume
+//! session events and answer permission requests.
+
+use async_trait::async_trait;
+
+use crate::AgentId;
+
+/// Implemented by every UI adapter (TUI, ACP, HTTP, GUI, ...).
+///
+/// Object-safe via `async-trait`; can be held as `Arc&lt;dyn Frontend&gt;`
+/// or used generically through `Session&lt;F: Frontend, H: Host&gt;`.
+#[async_trait]
+pub trait Frontend: Send + Sync {
+    /// Receive one event from the session. Implementations should not
+    /// block on user input here &mdash; that belongs in
+    /// `request_permission`.
+    async fn on_event(&amp;self, event: SessionEvent);
+
+    /// Ask the user to allow / deny a sensitive operation. At M1 no
+    /// caller invokes this (no sensitive tools exist yet); M2 / M3 wire
+    /// it up.
+    async fn request_permission(&amp;self, req: PermissionRequest) -&gt; Permission;
+
+    /// What this frontend supports. Default: nothing &mdash; the empty
+    /// struct is a forward-compatible placeholder.
+    fn capabilities(&amp;self) -&gt; FrontendCapabilities {
+        FrontendCapabilities::default()
+    }
+}
+
+/// One event from the session loop.
+#[derive(Clone, Debug)]
+pub struct SessionEvent {
+    /// Which agent produced this event. V1 is always
+    /// [`AgentId::Root`].
+    pub agent_id: AgentId,
+    /// Nesting depth for sub-agent rendering. V1 is always 0.
+    pub depth: u8,
+    /// What happened.
+    pub kind: EventKind,
+}
+
+/// Discriminator for event payloads. New variants are added by sweeping
+/// in-tree match sites; `#[non_exhaustive]` keeps that non-breaking.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum EventKind {
+    /// Agent is about to start producing output for the current turn.
+    TurnStart,
+
+    /// One chunk of streamed assistant text. Multiple per turn.
+    AgentMessageDelta { text: String },
+
+    /// Turn finished. Phase 3's `feat/turnend-usage-wiring` adds a
+    /// `usage: Usage` field; `#[non_exhaustive]` makes that addition
+    /// non-breaking for consumers.
+    TurnEnd { stop_reason: StopReason },
+
+    /// Terminal failure (provider error, transport drop, &hellip;).
+    Error { message: String },
+
+    // M2 adds: ToolCallStart, ToolCallUpdate, ToolCallEnd.
+    // Post-V1 adds: SubAgentStart, SubAgentEnd, ThinkingDelta (maybe).
+}
+
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum StopReason {
+    /// Model finished cleanly.
+    EndTurn,
+    /// Hit response token limit.
+    MaxTokens,
+    /// Caller invoked [`crate::Session::cancel`].
+    Cancelled,
+    // M2 adds: ToolUse.
+}
+
+// --- M3 permission stubs ---
+
+/// Permission-prompt payload. Empty stub at M1; M3 adds scope/summary
+/// fields and wires the modal.
+#[derive(Clone, Debug, Default)]
+pub struct PermissionRequest;
+
+/// Frontend's verdict on a permission request.
+#[derive(Clone, Debug)]
+pub enum Permission {
+    /// Allow this one invocation only.
+    AllowOnce,
+    /// Allow within a scope, persisted per the policy.
+    AllowAlways {
+        scope: Scope,
+        persistence: Persistence,
+    },
+    /// Deny this invocation.
+    Deny,
+}
+
+#[derive(Clone, Debug, Default)] pub struct Scope;        // M3 fleshes out
+#[derive(Clone, Debug, Default)] pub struct Persistence;  // M3 fleshes out
+#[derive(Clone, Debug, Default)] pub struct Principal;    // M3 fleshes out
+
+/// What the frontend supports. Empty at M1; bool fields added per
+/// capability when there's a real caller branching on it.
+#[derive(Clone, Debug, Default)]
+pub struct FrontendCapabilities;</code></pre>
+
+<h2 id="lib-rs">lib.rs additions</h2>
+
+<pre><code>mod frontend;
+
+pub use frontend::{
+    Frontend, SessionEvent, EventKind, StopReason,
+    FrontendCapabilities,
+    PermissionRequest, Permission, Scope, Persistence, Principal,
+};</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>
+  None for this PR. The trait has no behavior to test; <code>SessionEvent</code>
+  and <code>EventKind</code> are pure data. Test coverage comes in:
+</p>
+
+<ul>
+  <li><strong>Phase 4's <code>feat/session-roundtrip-test</code></strong> &mdash; asserts the event sequence (<code>TurnStart</code>, N&times;<code>AgentMessageDelta</code>, <code>TurnEnd</code>) for a scripted-LLM round-trip.</li>
+  <li><strong>Phase 4's <code>feat/recording-frontend</code></strong> &mdash; the test helper itself exercises every variant we construct.</li>
+</ul>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean &mdash; every variant and trait method documented; M3 stubs explicitly noted as stubs in their doc comments.</li>
+  <li><code>async-trait</code> in <code>[workspace.dependencies]</code> and referenced via <code>{ workspace = true }</code> from <code>arnes-core/Cargo.toml</code>.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="message-types.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/message-types</span>
+  </a>
+  <a class="next" href="host-trait.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/host-trait</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>
