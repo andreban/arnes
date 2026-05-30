@@ -5,3 +5,6 @@ members = [
     "crates/arnes-tui",
     "crates/arnes-acp",
 ]
+
+[workspace.dependencies]
+uuid = { version = "1", features = ["v7"] }

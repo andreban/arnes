@@ -111,7 +111,37 @@
 </p>
 
 <p>
-  <strong>3. <code>ModelKey</code>: provider + model_id is enough?</strong>
+  <strong>3. Where does the sub-agent kind/role live?</strong>
+  A real sub-agent system distinguishes sub-agent <em>instances</em>
+  (one specific running agent) from sub-agent <em>kinds</em>
+  (code-reviewer, summarizer, planner, &hellip;). Tempting question:
+  should <code>AgentId::SubAgent</code> carry both?
+</p>
+
+<p>
+  <strong>Decision: no.</strong> <code>AgentId</code> is the
+  identifier &mdash; like a primary key. The kind belongs on
+  <code>SubAgentSpec</code> (the type that says "spawn a sub-agent of
+  this kind with these tools and constraints," already stubbed in
+  <code>tool_context.rs</code>). The spawned instance gets a UUID
+  that's threaded into its <code>AgentId</code>.
+</p>
+
+<p>Reasons to keep them separated:</p>
+
+<ul>
+  <li><strong>Different concerns.</strong> Identifier vs description-of-what. Mixing them pushes every consumer that just wants identity to also handle "what kind was that?"</li>
+  <li><strong>We don't know the right shape for "kind."</strong> Fixed enum (<code>SubAgentKind::CodeReviewer | Summarizer | ...</code>), free-form <code>String</code> (user-defined sub-agents), capability bag (<code>Vec&lt;Capability&gt;</code>), or SKILL-style markdown card? Picking now is picking blind.</li>
+  <li><strong>Migration cost is symmetric.</strong> Changing <code>SubAgent(Uuid)</code> to <code>SubAgent { id, kind }</code> is a breaking change to the variant (tuple&rarr;struct) even with <code>#[non_exhaustive]</code>. The minimal shape is the one we're least likely to need to revise.</li>
+</ul>
+
+<p>
+  When sub-agents land, kind lands on <code>SubAgentSpec</code>;
+  <code>AgentId</code> stays a quiet little file about identity.
+</p>
+
+<p>
+  <strong>4. <code>ModelKey</code>: provider + model_id is enough?</strong>
   Question worth surfacing: model versions like
   <code>gemini-2.5-flash-001</code> vs
   <code>gemini-2.5-flash-latest</code> vs
@@ -130,7 +160,7 @@
 </p>
 
 <p>
-  <strong>4. Derives.</strong> <code>Clone, Debug, Eq, PartialEq, Hash</code>
+  <strong>5. Derives.</strong> <code>Clone, Debug, Eq, PartialEq, Hash</code>
   on both types. <code>Hash</code> is needed because
   <code>CumulativeUsage</code> indexes by <code>(AgentId, ModelKey)</code>
   in a <code>HashMap</code> (phase 3). <code>Eq</code> +
@@ -141,13 +171,6 @@
   (M6) and ACP (phase 6) need them and will add the derive then. The
   uuid crate's <code>serde</code> feature is opt-in via crate features
   on uuid itself, so deferring keeps the dep tree smaller for now.
-</p>
-
-<p>
-  <strong>5. The future-compat link.</strong> Module-level doc comment
-  must link <a href="../../core.html#future-compat">core.html &sect;
-  Future-compatibility: sub-agents</a>. Anyone touching this file in the
-  future needs to see the contract.
 </p>
 
 <h2 id="deps">Deps</h2>
@@ -168,42 +191,23 @@ uuid = { workspace = true }</code></pre>
 // SPDX-License-Identifier: Apache-2.0
 
 //! Identity types for agents and models.
-//!
-//! See [Future-compatibility: sub-agents]
-//! (../../docs/implementation-plan/core.html#future-compat).
-//!
-//! V1 only ever constructs [`AgentId::Root`]; [`AgentId::SubAgent`]
-//! exists so the type vocabulary stays stable when sub-agents land
-//! post-V1.
 
 use uuid::Uuid;
 
 /// Identifies an agent within a session.
-///
-/// V1 only ever constructs [`AgentId::Root`]. The [`AgentId::SubAgent`]
-/// variant is reserved for post-V1; minting one is a deliberate
-/// future change, not an accident waiting to happen.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum AgentId {
-    /// The single root agent in a session. V1's only construction.
     Root,
-    /// A sub-agent spawned by another agent. Reserved for post-V1.
     SubAgent(Uuid),
 }
 
 /// Identifies a model for cost accounting and usage attribution.
 ///
-/// The pair `(provider, model_id)` is the natural key &mdash; pricing
-/// TOML is indexed by it, and per-model usage breakdowns in
-/// [`crate::CumulativeUsage`] (phase 3) bucket by it.
+/// The pair `(provider, model_id)` is the natural key; pricing data
+/// is indexed by it, and per-model usage breakdowns bucket by it.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ModelKey {
-    /// The provider's short identifier, e.g. `"gemini"`, `"ollama"`,
-    /// `"anthropic"`. Lower-case by convention.
     pub provider: String,
-    /// The provider-specific model identifier, e.g.
-    /// `"gemini-2.5-flash"`, `"llama3.2"`. May include a version suffix
-    /// (the entire string is the cost-accounting key).
     pub model_id: String,
 }</code></pre>
 
@@ -230,7 +234,7 @@ pub use identity::{AgentId, ModelKey};</code></pre>
 <ul>
   <li><code>cargo check --workspace</code> clean.</li>
   <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
-  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean; module-level doc comment links the future-compat section.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
   <li><code>uuid</code> appears in <code>[workspace.dependencies]</code> with the <code>v7</code> feature, and in <code>arnes-core/Cargo.toml</code> via <code>{ workspace = true }</code>.</li>
 </ul>
 
