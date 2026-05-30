@@ -230,13 +230,10 @@ pub struct ToolContext {
 
 /// One progress payload from a running tool.
 #[derive(Clone, Debug)]
-#[non_exhaustive]
 pub enum ProgressUpdate {
-    /// Plain text progress. V1's default.
     Text(String),
-    /// Structured payload &mdash; tool-defined.
-    /// Reserved for post-V1 sub-agent tools emitting nested events
-    /// the session translates into child `SessionEvent`s.
+    /// Structured payload, tool-defined. Reserved for post-V1
+    /// sub-agent tools emitting nested events.
     Structured(Value),
 }
 

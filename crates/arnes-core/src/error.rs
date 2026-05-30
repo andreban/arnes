@@ -7,7 +7,6 @@ use std::fmt;
 
 /// The crate's unified error type.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum CoreError {
     /// Runtime failure inside the session loop.
     Session(String),

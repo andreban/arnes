@@ -158,10 +158,8 @@
 
 use std::fmt;
 
-/// The crate's unified error type. New variants are added in the PR that
-/// first needs them.
+/// The crate's unified error type.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum CoreError {
     /// Runtime failure inside the session loop (e.g. agent-rig stream
     /// terminated unexpectedly). Variant exists so the type can be
@@ -183,10 +181,10 @@ impl std::error::Error for CoreError {}
 pub type Result&lt;T&gt; = std::result::Result&lt;T, CoreError&gt;;</code></pre>
 
 <p>
-  <code>#[non_exhaustive]</code> on the enum so adding variants in later
-  PRs isn't a breaking change for any (future) external consumer.
-  <code>Debug</code> derived so error chains print usefully in
-  <code>panic!</code> output and test failures.
+  No <code>#[non_exhaustive]</code> &mdash; see the phase-2 cross-cutting
+  decisions for why we skip it on internal enums. <code>Debug</code>
+  derived so error chains print usefully in <code>panic!</code> output
+  and test failures.
 </p>
 
 <h2 id="lib-rs">lib.rs additions</h2>
