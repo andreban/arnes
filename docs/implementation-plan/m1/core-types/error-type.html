@@ -99,13 +99,26 @@
 <pre><code>pub enum CoreError {
     Session(String),     // session loop runtime errors
     Pricing(String),     // pricing-registry lookup / TOML parse errors
-    Acp(String),         // ACP protocol / transport errors (in adapter, but might wrap up here)
     Io(io::Error),       // wrapping Host io errors when they cross the boundary
 }</code></pre>
 
 <p>
   At ~5 variants we should re-evaluate the no-thiserror decision; at ~8
   variants thiserror probably becomes worth it.
+</p>
+
+<p>
+  <strong>What does <em>not</em> belong here.</strong> Adapter-specific
+  errors (ACP protocol / transport, HTTP framing, TUI render errors)
+  live in their own crates. <code>arnes-core</code> is intentionally
+  ignorant of UIs and transports (see
+  <a href="../../core.html#non-goals">arnes-core non-goals</a>); putting
+  an <code>Acp</code> variant in <code>CoreError</code> would invert that
+  dependency. Each adapter crate defines its own error type
+  (<code>arnes_acp::AcpError</code>, etc.) and converts to/from
+  <code>CoreError</code> at its boundary &mdash; typically wrapping a
+  <code>CoreError::Session</code> inside the adapter error rather than
+  the other way around.
 </p>
 
 <p>
