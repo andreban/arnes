@@ -106,8 +106,10 @@
   The enum costs nothing extra at runtime (<code>SubAgent(Uuid)</code>
   takes 16 bytes + discriminant; <code>Root</code> is one variant
   discriminant) and makes the V1-only-creates-<code>Root</code>
-  invariant easy to grep for and lint against. <code>#[non_exhaustive]</code>
-  isn't needed (the enum is closed; new identity kinds aren't expected).
+  invariant easy to grep for and lint against. No
+  <code>#[non_exhaustive]</code> &mdash; the enum is closed, and the
+  phase-2 cross-cutting decisions skip the attribute across the crate
+  anyway.
 </p>
 
 <p>
@@ -132,7 +134,7 @@
 <ul>
   <li><strong>Different concerns.</strong> Identifier vs description-of-what. Mixing them pushes every consumer that just wants identity to also handle "what kind was that?"</li>
   <li><strong>We don't know the right shape for "kind."</strong> Fixed enum (<code>SubAgentKind::CodeReviewer | Summarizer | ...</code>), free-form <code>String</code> (user-defined sub-agents), capability bag (<code>Vec&lt;Capability&gt;</code>), or SKILL-style markdown card? Picking now is picking blind.</li>
-  <li><strong>Migration cost is symmetric.</strong> Changing <code>SubAgent(Uuid)</code> to <code>SubAgent { id, kind }</code> is a breaking change to the variant (tuple&rarr;struct) even with <code>#[non_exhaustive]</code>. The minimal shape is the one we're least likely to need to revise.</li>
+  <li><strong>Migration cost is symmetric.</strong> Changing <code>SubAgent(Uuid)</code> to <code>SubAgent { id, kind }</code> is a breaking change to the variant (tuple&rarr;struct). The minimal shape is the one we're least likely to need to revise.</li>
 </ul>
 
 <p>

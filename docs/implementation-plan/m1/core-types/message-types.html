@@ -158,11 +158,12 @@
 <p>
   <strong>Decision:</strong> M1 ships a <code>ContentBlock::Thinking { text: String }</code>
   variant. We skip <code>RedactedThinking</code> for now since we're
-  Gemini-only at M1 and Gemini doesn't produce encrypted blobs; the
-  <code>#[non_exhaustive]</code> attribute means adding it later (when
-  we wire Anthropic) is non-breaking. <code>signature</code> field
-  (Anthropic's signed-thinking attestation) is also deferred until
-  Anthropic lands.
+  Gemini-only at M1 and Gemini doesn't produce encrypted blobs; adding
+  the variant later (when we wire Anthropic) will require a sweep of
+  match sites, which is what we want &mdash; see the phase cross-cutting
+  decisions for why we skip <code>#[non_exhaustive]</code>.
+  <code>signature</code> field (Anthropic's signed-thinking attestation)
+  is also deferred until Anthropic lands.
 </p>
 
 <h3 id="contentblock-set">2. ContentBlock variant set at M1</h3>
@@ -187,10 +188,6 @@
   <li><code>Citation { ... }</code> &mdash; Claude RAG-specific; defer.</li>
 </ul>
 
-<p>
-  <code>#[non_exhaustive]</code> on <code>ContentBlock</code> means all
-  these are non-breaking additions later.
-</p>
 
 <h3 id="serde-tagging">3. Serde tagging shape (load-bearing)</h3>
 
@@ -247,10 +244,10 @@
 <p>
   Provider caching matters for cost (huge win on long system prompts)
   but lands later (post-M1). The decision is "make this simple now;
-  introduce the block-list shape when caching wiring shows up." With
-  <code>#[non_exhaustive]</code> on <code>Message</code> the variant's
-  internal shape isn't <em>technically</em> non-breaking to change, but
-  the persistence migration is a known cost we'll pay deliberately.
+  introduce the block-list shape when caching wiring shows up." That
+  shape change requires sweeping every site that constructs or matches
+  on <code>Message::System</code>, which is exactly the kind of
+  cognition the compile-error path gives us.
 </p>
 
 <h3 id="constructors">5. Helper constructors</h3>
@@ -285,11 +282,6 @@ serde_json = { workspace = true }</code></pre>
 // SPDX-License-Identifier: Apache-2.0
 
 //! Message + content-block vocabulary.
-//!
-//! Shapes pinned by the round-trip test in
-//! `tests/serde_roundtrip.rs`. Treat any change to the serde tagging
-//! or variant names as a wire-format break (M6 persistence and ACP
-//! both depend on it).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -297,36 +289,25 @@ use serde_json::Value;
 /// A message in conversation history.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum Message {
-    User      { content: Vec&lt;ContentBlock&gt; },
+    User { content: Vec&lt;ContentBlock&gt; },
     Assistant { content: Vec&lt;ContentBlock&gt; },
-    /// System instructions. M1 keeps this as a plain string; if/when
-    /// prompt caching lands we may migrate to `Vec&lt;ContentBlock&gt;`
-    /// (deliberate persistence migration at that time).
-    System    { content: String },
+    System { content: String },
 }
 
-/// One part of a message's content. Variants are added in the PR that
-/// first needs them; `#[non_exhaustive]` makes additions non-breaking.
+/// One part of a message's content.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum ContentBlock {
-    /// User-visible text. The default case for everything at M1.
     Text { text: String },
-    /// Model's reasoning / thinking, distinct from response text.
-    /// Frontends choose whether to display.
-    /// Token counts attributed via `Usage.thinking_tokens`.
+    /// Model reasoning, distinct from response text. Frontends choose
+    /// whether to display.
     Thinking { text: String },
-    /// Tool invocation. M1 never constructs these; declared so M2 does
-    /// not need an enum-breaking PR.
     ToolUse {
         id: String,
         name: String,
         input: Value,
     },
-    /// Tool result. Same M1 rationale.
     ToolResult {
         tool_use_id: String,
         content: Value,

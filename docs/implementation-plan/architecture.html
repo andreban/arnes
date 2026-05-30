@@ -490,9 +490,9 @@ impl&lt;F, E&gt; Session&lt;F, E&gt; where F: Frontend, E: Host {
     <!-- SessionEvent -->
     <rect x="50" y="352" width="240" height="76" rx="8" fill="#141821" stroke="#fbbf24"/>
     <text x="170" y="374" text-anchor="middle" fill="#fbbf24" font-weight="700">SessionEvent { kind: EventKind }</text>
-    <text x="170" y="392" text-anchor="middle" fill="#9aa3b3" font-size="9">TurnStart &middot; AgentMessageDelta</text>
-    <text x="170" y="406" text-anchor="middle" fill="#9aa3b3" font-size="9">TurnEnd { stop_reason } &middot; Error</text>
-    <text x="170" y="422" text-anchor="middle" fill="#6b7384" font-size="9">[ThinkingDelta &middot; ToolCall* arrive later]</text>
+    <text x="170" y="390" text-anchor="middle" fill="#9aa3b3" font-size="9">TurnStart &middot; TextDelta &middot; ThinkingDelta</text>
+    <text x="170" y="404" text-anchor="middle" fill="#9aa3b3" font-size="9">TurnEnd { stop_reason } &middot; Error</text>
+    <text x="170" y="420" text-anchor="middle" fill="#6b7384" font-size="9">[ToolCallStarted / Finished arrive in M2]</text>
 
     <!-- history -->
     <rect x="470" y="352" width="240" height="76" rx="8" fill="#141821" stroke="#fbbf24"/>
@@ -662,22 +662,20 @@ impl&lt;F, E&gt; Session&lt;F, E&gt; where F: Frontend, E: Host {
     pub kind:     EventKind,
 }
 
-#[non_exhaustive]
 pub enum EventKind {
     TurnStart,
-    AgentMessageDelta { text: String },
-    TurnEnd { stop_reason: StopReason },
-    Error   { message: String },
+    TextDelta     { text: String },
+    ThinkingDelta { text: String },
+    TurnEnd       { stop_reason: StopReason },
+    Error         { message: String },
 
-    // Added later, in the PR that first needs them; the enum is
-    // #[non_exhaustive] so additions don't break consumers:
+    // Added later, in the PR that first needs them. The compiler will
+    // surface every match site that needs updating in the same PR.
     //
-    //   ThinkingDelta  { text }                     // Gemini / Claude thinking
-    //   ToolCallStart  { id, name, input }          // M2: first tool
-    //   ToolCallUpdate { id, partial }              // M2
-    //   ToolCallEnd    { id, result }               // M2
-    //   ModeChanged    { mode }                     // M3: set_mode
-    //   Compacted      { tokens_freed }             // M7: compaction
+    //   ToolCallStarted  { name, args }             // M2: first tool
+    //   ToolCallFinished { name, result }           // M2
+    //   ModeChanged      { mode }                   // M3: set_mode
+    //   Compacted        { tokens_freed }           // M7: compaction
 }</code></pre>
 
 <p>

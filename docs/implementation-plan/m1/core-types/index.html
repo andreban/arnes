@@ -119,7 +119,7 @@
 <h2 id="cross-cutting">Cross-cutting decisions (settled)</h2>
 
 <p>
-  Two choices apply to multiple PRs in this phase. Captured here so each
+  Three choices apply to multiple PRs in this phase. Captured here so each
   PR doc can reference them rather than re-litigate.
 </p>
 
@@ -145,6 +145,20 @@
   <code>Error</code> impls are ~20 lines and don't pull in a proc-macro
   build-time dep. Revisit when the enum grows past ~8 variants or the
   <code>From</code> conversions start to multiply.
+</p>
+
+<p>
+  <strong>3. No <code>#[non_exhaustive]</code> on internal enums.</strong>
+  The attribute exists to keep external consumers' match arms compiling
+  across a SemVer minor bump. <code>arnes-core</code> sets
+  <code>publish = false</code>; all consumers are in-tree adapter crates,
+  and we sweep every match site in the same PR that adds a new variant.
+  Marking enums <code>#[non_exhaustive]</code> would silently let a
+  missed match site fall through to a wildcard arm and swallow the new
+  variant; the compile error is the cognition-positive default.
+  Revisit if/when any of <code>arnes-core</code>'s types ship on
+  crates.io. (The reasoning matches the AgentId-specific call in the
+  <code>feat/agent-identity</code> doc; this generalizes it.)
 </p>
 
 <h2 id="discussion-pattern">Discussion sections in each PR doc</h2>

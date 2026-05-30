@@ -9,7 +9,6 @@ use serde_json::Value;
 /// A message in conversation history.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum Message {
     User { content: Vec<ContentBlock> },
     Assistant { content: Vec<ContentBlock> },
@@ -19,7 +18,6 @@ pub enum Message {
 /// One part of a message's content.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum ContentBlock {
     Text {
         text: String,
