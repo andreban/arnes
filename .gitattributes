@@ -1,0 +1,15 @@
+# Normalize all text files to LF in the repo *and* in the working tree on
+# every platform. Rust tooling (cargo, rustfmt) emits LF, so pinning the
+# working tree to LF as well keeps Windows checkouts from churning diffs
+# or fighting rustfmt. Overrides any user-level `core.autocrlf` setting.
+* text=auto eol=lf
+
+# Explicitly binary (do not touch line endings or attempt text diffs)
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.woff  binary
+*.woff2 binary
