@@ -3,6 +3,8 @@
 
 mod error;
 mod identity;
+mod message;
 
 pub use error::{CoreError, Result};
 pub use identity::{AgentId, ModelKey};
+pub use message::{ContentBlock, Message};
