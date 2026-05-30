@@ -70,6 +70,33 @@
   test against a literal string so any future change is deliberate.
 </p>
 
+<h2 id="not-streaming">What this PR is not</h2>
+
+<p>
+  <code>ContentBlock</code> represents <strong>complete, post-streaming
+  content</strong> &mdash; the durable form that lands in conversation
+  history, in M6's JSONL persistence, and in ACP / HTTP message frames.
+  It is <em>not</em> the live stream the frontend renders.
+</p>
+
+<p>
+  The two-layer model:
+</p>
+
+<ul>
+  <li><strong>Storage layer (this PR)</strong>: <code>Message</code> / <code>ContentBlock</code>. Always complete.</li>
+  <li><strong>Streaming layer (next PR, <code>feat/frontend-trait</code>)</strong>: <code>SessionEvent</code> / <code>EventKind</code>. Carries deltas (<code>AgentMessageDelta</code> today; <code>ThinkingDelta</code> / block-aware variants under discussion).</li>
+</ul>
+
+<p>
+  <code>Session</code> is the translator: it consumes provider stream
+  events, emits delta events to the frontend for live rendering, and
+  assembles the complete <code>Message</code> with its
+  <code>ContentBlock</code>s when the turn ends. The "how do thinking
+  blocks stream?" question lands in the <code>feat/frontend-trait</code>
+  discussion, not here.
+</p>
+
 <h2 id="files">Files touched</h2>
 
 <ul>
