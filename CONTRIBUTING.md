@@ -18,9 +18,12 @@ Open an issue on the GitHub repository. Useful issues include:
 ## Pull request process
 
 1. Read [`AGENTS.md`](AGENTS.md) &mdash; it lists the rules CI enforces.
-2. Branch from `main`. Keep PRs scoped to one of the units of work in the
-   current milestone's work plan (e.g. `m1-plan.html#pr3`); if your change
-   spans multiple, split it.
+2. Branch from `main` with a conventional-commits-style name and short
+   slug: `feat/<slug>`, `fix/<slug>`, `docs/<slug>`, `chore/<slug>`. No
+   plan-number prefix &mdash; the PR description references the relevant
+   work-plan section instead. Keep PRs scoped to one unit of work from
+   the current milestone's plan (e.g. `m1-plan.html#pr3`); if your
+   change spans multiple, split it.
 3. Run the full local check matrix:
 
    ```sh
