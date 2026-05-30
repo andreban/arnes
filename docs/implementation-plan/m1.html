@@ -131,7 +131,7 @@
 <h2 id="workspace">Workspace layout</h2>
 
 <pre><code>arnes/
-├── Cargo.toml                    # workspace, members = [...]; rust-version pinned in [workspace.package]
+├── Cargo.toml                    # workspace, members = [...]
 └── crates/
     ├── arnes-core/
     │   ├── src/
@@ -381,7 +381,7 @@ $ arnes-acp                          # speak ACP on stdio (editor-spawned)</code
 
 <ol class="steps">
   <li>Bootstrap the repo: <code>git init</code>, copy the planning docs into <code>docs/</code>, write the meta files (<code>README.md</code>, <code>AGENTS.md</code>, <code>CONTRIBUTING.md</code>, <code>LICENSE</code>, <code>.gitignore</code>), first commit on <code>main</code>.</li>
-  <li>Initialize the Cargo workspace; set an MSRV via <code>rust-version</code> in <code>[workspace.package]</code>; CI runs fmt/clippy/test.</li>
+  <li>Initialize the Cargo workspace (no MSRV pin, no toolchain file &mdash; see PR #1 in the work plan for rationale); CI runs fmt/clippy/test on stable across Linux/macOS/Windows.</li>
   <li>Define <code>arnes-core</code> types: <code>Frontend</code>, <code>Host</code>, <code>Message</code>, and the usage subsystem with seed <code>pricing.toml</code>.</li>
   <li>Wire <code>Session</code> around agent-rig's <code>AgentRunner</code>; land the mock <code>Frontend</code>/<code>Host</code> and scripted-LLM test scaffolding.</li>
   <li>Bring up <code>jsonrpsee</code> for ACP transport (or fall back to a hand-rolled framer per the M1 triggers); land the four inbound methods + one outbound notification; commit the ADR.</li>

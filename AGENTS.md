@@ -16,11 +16,15 @@ internally consistent with what CI enforces; if you change one, change both.
 - Prefer `thiserror` for library error types; `anyhow` is for binaries and
   tests.
 
-## MSRV
+## Toolchain
 
-Pinned in `[workspace.package].rust-version` once the workspace lands in
-PR #1. Policy: latest stable minus two minor versions, bumped deliberately
-in its own PR (never piggy-backed onto a feature change). Edition is `2024`.
+Use a recent stable rustc. Edition is `2024` (requires rustc 1.85+). We do
+not commit a `rust-toolchain.toml` or pin a `rust-version` MSRV at this
+stage &mdash; both are deliberate deferrals documented in
+[the M1 work plan, PR #1](docs/implementation-plan/m1-plan.html#pr1).
+CI declares the toolchain it uses; locally, install via `rustup default
+stable`. Revisit pinning when we publish `arnes-core` to crates.io or
+commit to an external support policy.
 
 ## Commit messages
 

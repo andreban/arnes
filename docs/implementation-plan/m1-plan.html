@@ -97,7 +97,7 @@
   <li><code>git init</code>, set up the remote (GitHub default), push the initial commit on <code>main</code>.</li>
   <li>Copy the planning docs into the new repo: <code>docs/build-your-own-harness/</code> (the book) and <code>docs/implementation-plan/</code> (this site). Both stay editable in-tree as the design evolves.</li>
   <li><strong><code>README.md</code></strong> &mdash; one-paragraph tagline ("arnes is a coding-agent harness in Rust, fronted by a TUI, ACP server, and HTTP/WS server"), one-line install per binary (placeholder until M9), and links to the plan and book under <code>docs/</code>.</li>
-  <li><strong><code>AGENTS.md</code></strong> &mdash; project rules for any coding agent (including arnes itself, eventually) working on the repo: Rust style (rustfmt + clippy <code>-D warnings</code>), MSRV expectation, commit-message convention, never commit <code>target/</code> / <code>.vscode/</code> / <code>.idea/</code>, where tests live, how to run them.</li>
+  <li><strong><code>AGENTS.md</code></strong> &mdash; project rules for any coding agent (including arnes itself, eventually) working on the repo: Rust style (rustfmt + clippy <code>-D warnings</code>), toolchain policy (pinned via <code>rust-toolchain.toml</code> in PR #1, no MSRV pin yet), license-header rule (Apache-2.0 + SPDX on every source file), commit-message convention, never commit <code>target/</code> / <code>.vscode/</code> / <code>.idea/</code>, where tests live, how to run them.</li>
   <li><strong><code>CONTRIBUTING.md</code></strong> &mdash; PR process, sign-off requirements (if any), how to run the full test matrix locally, where to file issues.</li>
   <li><strong><code>LICENSE</code></strong> &mdash; MIT by default unless you prefer Apache-2.0 or dual.</li>
   <li><strong><code>.gitignore</code></strong> &mdash; standard Rust (<code>target/</code>, <code>Cargo.lock</code> for libraries) plus <code>.vscode/</code>, <code>.idea/</code>, <code>.DS_Store</code>, <code>.env</code>.</li>
@@ -108,12 +108,17 @@
 <p><strong>Goal.</strong> Get to <code>cargo check --workspace</code> passing in CI before any real code lands.</p>
 <p><strong>Scope.</strong></p>
 <ul>
-  <li>Root <code>Cargo.toml</code> as workspace with empty members: <code>arnes-core</code>, <code>arnes-tui</code>, <code>arnes-acp</code>. <code>rust-version</code> pinned in <code>[workspace.package]</code>.</li>
-  <li>Workspace-level common deps: <code>tokio</code>, <code>serde</code>, <code>serde_json</code>, <code>thiserror</code>, <code>anyhow</code>.</li>
-  <li><code>rustfmt.toml</code>, <code>clippy.toml</code>.</li>
-  <li>Empty <code>src/lib.rs</code> in each library crate; placeholder <code>src/main.rs</code> in each binary crate.</li>
-  <li><code>.github/workflows/ci.yml</code> running, in this order: <code>cargo fmt --check</code>, <code>cargo clippy --workspace --all-targets -- -D warnings</code>, <code>cargo test --workspace</code>.</li>
-  <li>Extend the README from PR #0 with a <em>Building &amp; testing</em> section.</li>
+  <li>Root <code>Cargo.toml</code> as a pure workspace (no top-level <code>[package]</code>) with members <code>arnes-core</code>, <code>arnes-tui</code>, <code>arnes-acp</code>. Delete the placeholder <code>src/main.rs</code> from PR #0. No <code>[workspace.dependencies]</code> entries yet &mdash; each later PR adds the deps its own code introduces.</li>
+  <li>Empty <code>src/lib.rs</code> in each library crate; placeholder <code>src/main.rs</code> in each binary crate (each carrying the project license header).</li>
+  <li><code>.github/workflows/ci.yml</code> installing stable via <code>dtolnay/rust-toolchain@stable</code>, then running, in this order: <code>cargo fmt --all -- --check</code>, <code>cargo clippy --workspace --all-targets -- -D warnings</code>, <code>cargo test --workspace</code>. Matrix: Linux, macOS, Windows.</li>
+  <li>Extend the README from PR #0 with a <em>Building &amp; testing</em> section noting "needs a recent stable rustc."</li>
+</ul>
+<p><strong>Deliberately deferred.</strong> A few files that are conventionally added at workspace-init time would be premature here; the rationale matters because future PRs will be tempted to add them.</p>
+<ul>
+  <li><strong>No <code>rust-version</code> MSRV pin.</strong> MSRV is a contract that pays off when publishing a library to crates.io or supporting downstream consumers on varied toolchains. Neither applies yet, so a pin is maintenance overhead (bumping it for every new-stdlib-feature use) without payoff. Revisit when we publish <code>arnes-core</code> or commit to an external support policy.</li>
+  <li><strong>No <code>rust-toolchain.toml</code>.</strong> Pinning <code>channel = "stable"</code> only auto-installs stable for rustup users who don't already have it &mdash; tiny convenience, no reproducibility (different days = different "stable"). CI declares its toolchain explicitly; contributors with an old rustc get a clear "edition 2024 requires rustc 1.85+" error. Pin a specific version here only when we genuinely need reproducible toolchains.</li>
+  <li><strong>No <code>rustfmt.toml</code> / <code>clippy.toml</code>.</strong> Both files are only useful for overriding defaults. Empty stubs invite bikeshedding without connecting to actual friction. Add a single line to one of them the first time CI surfaces a real disagreement with the defaults &mdash; not before.</li>
+  <li><strong>No pre-declared workspace deps.</strong> <code>[workspace.dependencies]</code> earns its keep when two or more crates need to agree on a version. Declaring <code>tokio</code>/<code>serde</code>/<code>thiserror</code>/<code>anyhow</code> here, before any crate uses them, is anticipation. PR #2 onward add each dep to <code>[workspace.dependencies]</code> in the same commit that introduces its first use.</li>
 </ul>
 <p><strong>Acceptance.</strong> CI green; <code>cargo check --workspace</code> clean locally on Linux + macOS + Windows.</p>
 
