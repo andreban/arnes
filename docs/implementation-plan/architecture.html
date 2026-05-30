@@ -425,33 +425,269 @@ impl&lt;F, E&gt; Session&lt;F, E&gt; where F: Frontend, E: Host {
   about to fire. Everything else is plumbing.
 </p>
 
+<h2 id="dataflow">Anatomy of a turn: streaming vs storage</h2>
+
+<p>
+  The hardest concept in arnes' runtime is that one input stream produces
+  two outputs at different timescales. While the model is generating, the
+  session emits a fast stream of partial events the frontend renders live
+  (text appears letter by letter; thinking shows up dim; tool calls tick
+  in). Once the turn ends, those same pieces have been accumulated into a
+  complete <code>Message</code> with its <code>ContentBlock</code>s and
+  pushed onto durable history. Two outputs, one input.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 560" role="img" aria-label="Anatomy of a turn: provider stream forks into streaming events and durable messages">
+  <defs>
+    <marker id="dfar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <!-- Provider -->
+    <rect x="290" y="20" width="180" height="44" rx="8" fill="#141821" stroke="#9aa3b3"/>
+    <text x="380" y="42" text-anchor="middle" fill="#e4e8ef" font-weight="700">Provider</text>
+    <text x="380" y="56" text-anchor="middle" fill="#6b7384" font-size="9">Gemini, Anthropic, Ollama, ...</text>
+
+    <line x1="380" y1="64" x2="380" y2="102" stroke="#9aa3b3" stroke-width="1.2" marker-end="url(#dfar)"/>
+    <text x="386" y="86" fill="#6b7384" font-size="9">HTTP stream</text>
+
+    <!-- agent-rig -->
+    <rect x="290" y="104" width="180" height="44" rx="8" fill="#0f1217" stroke="#34d399"/>
+    <text x="380" y="126" text-anchor="middle" fill="#34d399" font-weight="700">agent-rig</text>
+    <text x="380" y="140" text-anchor="middle" fill="#6b7384" font-size="9">normalized typed deltas</text>
+
+    <line x1="380" y1="148" x2="380" y2="200" stroke="#9aa3b3" stroke-width="1.2" marker-end="url(#dfar)"/>
+    <text x="394" y="168" fill="#6b7384" font-size="9">text delta &middot; thinking delta</text>
+    <text x="394" y="180" fill="#6b7384" font-size="9">tool-use delta &middot; stop</text>
+
+    <!-- user input arrow into Session, from left -->
+    <text x="56" y="232" fill="#e4e8ef" font-size="11">user</text>
+    <text x="56" y="246" fill="#6b7384" font-size="9">input</text>
+    <line x1="90" y1="236" x2="238" y2="236" stroke="#9aa3b3" stroke-width="1.2" marker-end="url(#dfar)"/>
+    <text x="100" y="228" fill="#6b7384" font-size="9">session.prompt(text)</text>
+
+    <!-- Session -->
+    <rect x="240" y="202" width="280" height="84" rx="10" fill="#141821" stroke="#fbbf24" stroke-width="1.5"/>
+    <text x="380" y="224" text-anchor="middle" fill="#fbbf24" font-weight="700" font-size="13">Session::prompt</text>
+    <text x="380" y="242" text-anchor="middle" fill="#e4e8ef" font-size="10">translator + accumulator</text>
+    <text x="380" y="260" text-anchor="middle" fill="#9aa3b3" font-size="9">each provider delta &rarr; emit event + accumulate block</text>
+    <text x="380" y="274" text-anchor="middle" fill="#9aa3b3" font-size="9">on TurnEnd &rarr; push complete Message into history</text>
+
+    <!-- layer labels -->
+    <text x="170" y="316" text-anchor="middle" fill="#6b7384" font-size="10" font-weight="700">STREAMING LAYER &middot; per delta</text>
+    <text x="590" y="316" text-anchor="middle" fill="#6b7384" font-size="10" font-weight="700">STORAGE LAYER &middot; per turn</text>
+
+    <!-- arrow Session -> SessionEvent (left) -->
+    <path d="M 300 286 C 250 308, 200 318, 180 348" stroke="#9aa3b3" stroke-width="1.2" fill="none" marker-end="url(#dfar)"/>
+
+    <!-- arrow Session -> history (right) -->
+    <path d="M 460 286 C 510 308, 560 318, 580 348" stroke="#9aa3b3" stroke-width="1.2" fill="none" marker-end="url(#dfar)"/>
+    <text x="540" y="328" fill="#6b7384" font-size="9">on TurnEnd</text>
+
+    <!-- SessionEvent -->
+    <rect x="50" y="352" width="240" height="76" rx="8" fill="#141821" stroke="#fbbf24"/>
+    <text x="170" y="374" text-anchor="middle" fill="#fbbf24" font-weight="700">SessionEvent { kind: EventKind }</text>
+    <text x="170" y="392" text-anchor="middle" fill="#9aa3b3" font-size="9">TurnStart &middot; AgentMessageDelta</text>
+    <text x="170" y="406" text-anchor="middle" fill="#9aa3b3" font-size="9">TurnEnd { stop_reason } &middot; Error</text>
+    <text x="170" y="422" text-anchor="middle" fill="#6b7384" font-size="9">[ThinkingDelta &middot; ToolCall* arrive later]</text>
+
+    <!-- history -->
+    <rect x="470" y="352" width="240" height="76" rx="8" fill="#141821" stroke="#fbbf24"/>
+    <text x="590" y="374" text-anchor="middle" fill="#fbbf24" font-weight="700">history: Vec&lt;Message&gt;</text>
+    <text x="590" y="392" text-anchor="middle" fill="#9aa3b3" font-size="9">Message { content: Vec&lt;ContentBlock&gt; }</text>
+    <text x="590" y="406" text-anchor="middle" fill="#9aa3b3" font-size="9">assembled after every TurnEnd</text>
+    <text x="590" y="422" text-anchor="middle" fill="#6b7384" font-size="9">[M6: SessionWriter persists to JSONL]</text>
+
+    <!-- arrow SessionEvent -> Frontend -->
+    <line x1="170" y1="428" x2="170" y2="472" stroke="#9aa3b3" stroke-width="1.2" marker-end="url(#dfar)"/>
+    <text x="180" y="454" fill="#6b7384" font-size="9">on_event(...)</text>
+
+    <!-- Frontend trait stacked -->
+    <rect x="50" y="476" width="240" height="76" rx="8" fill="#141821" stroke="#9aa3b3"/>
+    <text x="170" y="494" text-anchor="middle" fill="#e4e8ef" font-weight="700">Frontend (trait)</text>
+    <text x="170" y="512" text-anchor="middle" fill="#38bdf8" font-size="10">impl TuiFrontend  &middot;  impl AcpFrontend</text>
+    <text x="170" y="528" text-anchor="middle" fill="#34d399" font-size="10">impl HttpFrontend (M8)  &middot;  impl GuiFrontend (M9)</text>
+    <text x="170" y="544" text-anchor="middle" fill="#6b7384" font-size="9">each adapter consumes the same vocabulary</text>
+
+  </g>
+</svg>
+<div class="figure-caption">A turn enters <code>Session</code> as a stream of normalized deltas from agent-rig and forks into a fast streaming layer (consumed by <code>Frontend</code>) and a slow storage layer (the complete <code>Message</code> pushed to history).</div>
+</div>
+
+<h3 id="storage-layer">Storage layer (durable)</h3>
+
+<p>
+  <code>Message</code> and <code>ContentBlock</code> are always
+  <em>complete</em>. The assistant's accumulated reply &mdash; text,
+  thinking, tool-use, tool-result blocks &mdash; lives in
+  <code>history: Vec&lt;Message&gt;</code> the instant <code>TurnEnd</code>
+  fires. Ready to be replayed into the next turn's prompt, shown to a
+  viewer that joined mid-session, or written to disk once M6 lands
+  <code>SessionWriter</code>.
+</p>
+
+<h3 id="streaming-layer">Streaming layer (live)</h3>
+
+<p>
+  <code>SessionEvent { kind: EventKind }</code> carries the per-delta
+  events. Frontends use them for live rendering, but must not treat
+  their concatenation as the message's truth &mdash; the truth lives in
+  <code>history</code>. The two layers stay in sync because
+  <code>Session</code> is the one writing both.
+</p>
+
+<p>
+  M1 ships the four variants in the diagram (<code>TurnStart</code>,
+  <code>AgentMessageDelta</code>, <code>TurnEnd</code>,
+  <code>Error</code>); thinking-delta and the tool-call variants land
+  alongside the Gemini thinking-mode integration and M2's first tool.
+</p>
+
+<h3 id="session-fork">The fork lives in <code>Session::prompt</code></h3>
+
+<p>
+  Each delta from agent-rig is handled twice: emitted downstream as a
+  <code>SessionEvent</code> and appended to the accumulating
+  <code>ContentBlock</code> in the current message. When agent-rig
+  signals the turn is done, <code>Session</code> emits
+  <code>TurnEnd</code>, pushes the assembled <code>Message</code> into
+  history, and returns. The translator is the single seam between the
+  two layers; no other code does both jobs.
+</p>
+
+<h2 id="client-comm">How clients consume: history vs events</h2>
+
+<p>
+  The previous section showed how a turn produces history and events;
+  this one shows how a client uses each. The short version: <strong>history
+  is read once at attach time, events stream from then on</strong>.
+  Clients never poll history; the session never pushes the whole history.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 480" role="img" aria-label="Two channels from Session to client: attach-time history snapshot and live event stream">
+  <defs>
+    <marker id="cmar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <!-- Session box -->
+    <rect x="180" y="20" width="400" height="120" rx="10" fill="#141821" stroke="#fbbf24" stroke-width="1.5"/>
+    <text x="380" y="42" text-anchor="middle" fill="#fbbf24" font-weight="700" font-size="13">Session (arnes-core)</text>
+    <text x="380" y="60" text-anchor="middle" fill="#9aa3b3" font-size="10">runs the agent loop, owns the truth</text>
+
+    <!-- internal state inside Session -->
+    <rect x="220" y="80" width="320" height="48" rx="6" fill="#0f1217" stroke="#6b7384" stroke-dasharray="3,3"/>
+    <text x="380" y="100" text-anchor="middle" fill="#e4e8ef" font-size="10">history: Vec&lt;Message&gt; (private field)</text>
+    <text x="380" y="116" text-anchor="middle" fill="#6b7384" font-size="9">grown turn-by-turn; not poll-readable from outside</text>
+
+    <!-- channel labels -->
+    <text x="170" y="178" text-anchor="middle" fill="#6b7384" font-size="10" font-weight="700">ATTACH-TIME &middot; one-shot</text>
+    <text x="590" y="178" text-anchor="middle" fill="#6b7384" font-size="10" font-weight="700">LIVE &middot; continuous</text>
+
+    <!-- arrows Session → each channel -->
+    <line x1="260" y1="140" x2="190" y2="200" stroke="#9aa3b3" stroke-width="1.2" marker-end="url(#cmar)"/>
+    <line x1="500" y1="140" x2="570" y2="200" stroke="#9aa3b3" stroke-width="1.2" marker-end="url(#cmar)"/>
+
+    <!-- attach-time channel box -->
+    <rect x="40" y="208" width="280" height="116" rx="8" fill="#141821" stroke="#fbbf24"/>
+    <text x="180" y="228" text-anchor="middle" fill="#fbbf24" font-weight="700">history bootstrap</text>
+    <text x="180" y="252" text-anchor="middle" fill="#9aa3b3" font-size="10">Fresh session: history is empty;</text>
+    <text x="180" y="266" text-anchor="middle" fill="#9aa3b3" font-size="10">nothing to load.</text>
+    <text x="180" y="284" text-anchor="middle" fill="#9aa3b3" font-size="10">Resumed (M6): load_session(path)</text>
+    <text x="180" y="298" text-anchor="middle" fill="#9aa3b3" font-size="10">returns Vec&lt;Message&gt; from disk.</text>
+    <text x="180" y="316" text-anchor="middle" fill="#9aa3b3" font-size="10">Mid-session join (M8): snapshot()</text>
+
+    <!-- live channel box -->
+    <rect x="440" y="208" width="280" height="116" rx="8" fill="#141821" stroke="#fbbf24"/>
+    <text x="580" y="228" text-anchor="middle" fill="#fbbf24" font-weight="700">event stream</text>
+    <text x="580" y="252" text-anchor="middle" fill="#9aa3b3" font-size="10">frontend.on_event(SessionEvent)</text>
+    <text x="580" y="266" text-anchor="middle" fill="#9aa3b3" font-size="10">called per delta + per boundary</text>
+    <text x="580" y="284" text-anchor="middle" fill="#9aa3b3" font-size="10">from the moment of attach onward,</text>
+    <text x="580" y="298" text-anchor="middle" fill="#9aa3b3" font-size="10">for the session's lifetime.</text>
+    <text x="580" y="316" text-anchor="middle" fill="#6b7384" font-size="9">push, never poll</text>
+
+    <!-- arrows down to Client -->
+    <line x1="180" y1="324" x2="180" y2="376" stroke="#9aa3b3" stroke-width="1.2" marker-end="url(#cmar)"/>
+    <line x1="580" y1="324" x2="580" y2="376" stroke="#9aa3b3" stroke-width="1.2" marker-end="url(#cmar)"/>
+
+    <!-- Client box -->
+    <rect x="40" y="384" width="680" height="80" rx="10" fill="#141821" stroke="#9aa3b3"/>
+    <text x="380" y="406" text-anchor="middle" fill="#e4e8ef" font-weight="700">Client (Frontend impl: TUI &middot; ACP &middot; HTTP &middot; GUI)</text>
+    <text x="380" y="426" text-anchor="middle" fill="#9aa3b3" font-size="10">renders the history snapshot once at attach,</text>
+    <text x="380" y="440" text-anchor="middle" fill="#9aa3b3" font-size="10">then renders incrementally from the live event stream</text>
+    <text x="380" y="456" text-anchor="middle" fill="#6b7384" font-size="9">history is never polled; events are never accumulated as truth</text>
+
+  </g>
+</svg>
+<div class="figure-caption">Two channels from <code>Session</code> to client. The history snapshot is a one-shot at attach: empty for fresh sessions; loaded from disk on resume (M6); queried at join time for late-arriving multi-viewers (M8). The event stream is push-driven from attach onward.</div>
+</div>
+
+<p>
+  This split is what lets a TUI, an editor over ACP, and a browser over
+  WebSocket all consume the same session shape. None of them needs to
+  know how the others got their history snapshot &mdash; only that the
+  snapshot was complete at the moment they attached and that the event
+  stream they subscribe to picks up from there.
+</p>
+
+<p>
+  <strong>When each channel actually materializes</strong> in the
+  milestone plan: the event stream is M1 (the only path
+  <code>arnes-core</code> ships at first; fresh sessions start with empty
+  history so there's nothing to bootstrap). Resume-from-disk is M6, when
+  <code>load_session</code> appears alongside <code>SessionWriter</code>.
+  Mid-session join is M8, when <code>HttpFrontend</code> needs to hand a
+  newly-connecting WebSocket client an in-process snapshot before
+  attaching them to the live stream.
+</p>
+
 <h2 id="session-event">SessionEvent: the lingua franca</h2>
 
 <p>
-  Every adapter speaks the same event vocabulary. Most variants map almost
-  1:1 to ACP's <code>session/update</code> payloads, which is not a
-  coincidence &mdash; ACP got this right and there is no reason to invent
-  something different.
+  Every adapter speaks the same event vocabulary. The envelope carries
+  agent identity (so post-V1 sub-agent attribution is available even when
+  individual adapters ignore it) and nesting depth; the <code>kind</code>
+  is what actually varies between events.
 </p>
 
-<pre><code>pub enum SessionEvent {
-    AgentMessageDelta { text: String },
-    AgentThoughtDelta { text: String },
-    ToolCallStart   { id: String, name: String, input: serde_json::Value },
-    ToolCallUpdate  { id: String, partial: serde_json::Value },
-    ToolCallEnd     { id: String, result: ToolResult },
+<pre><code>pub struct SessionEvent {
+    pub agent_id: AgentId,   // V1 always Root
+    pub depth:    u8,        // V1 always 0
+    pub kind:     EventKind,
+}
+
+#[non_exhaustive]
+pub enum EventKind {
     TurnStart,
-    TurnEnd         { stop_reason: StopReason },
-    ModeChanged     { mode: SessionMode },
-    Compacted       { tokens_freed: u64 },
-    Error           { message: String },
+    AgentMessageDelta { text: String },
+    TurnEnd { stop_reason: StopReason },
+    Error   { message: String },
+
+    // Added later, in the PR that first needs them; the enum is
+    // #[non_exhaustive] so additions don't break consumers:
+    //
+    //   ThinkingDelta  { text }                     // Gemini / Claude thinking
+    //   ToolCallStart  { id, name, input }          // M2: first tool
+    //   ToolCallUpdate { id, partial }              // M2
+    //   ToolCallEnd    { id, result }               // M2
+    //   ModeChanged    { mode }                     // M3: set_mode
+    //   Compacted      { tokens_freed }             // M7: compaction
 }</code></pre>
 
 <p>
   The TUI turns these into screen updates. The ACP adapter wraps them in
-  <code>session/update</code> notifications. The HTTP/WS adapter pushes them
-  over a channel. The GUI translates them into UI state updates. None of
-  them edit the vocabulary &mdash; only consume it.
+  <code>session/update</code> notifications. The HTTP/WS adapter pushes
+  them over a channel. The GUI translates them into UI state updates.
+  None of them edit the vocabulary &mdash; only consume it. Most variants
+  map almost 1:1 to ACP's <code>session/update</code> payloads, which is
+  not a coincidence: ACP got this right and there is no reason to invent
+  something different. The envelope shape itself is arnes-specific.
 </p>
 
 <h2 id="non-goals">Two things this design deliberately does not try</h2>
