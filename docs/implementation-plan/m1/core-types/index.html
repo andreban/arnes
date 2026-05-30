@@ -200,7 +200,6 @@
   <li><code>cargo test -p arnes-core</code> green; the two integration tests pass.</li>
   <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean &mdash; every public item documented.</li>
   <li>No code in <code>arnes-core</code> spawns a tokio runtime or calls <code>tokio::spawn</code>; the runtime dep is there for the <code>CancellationToken</code> type and for the <code>#[tokio::test]</code> harness only.</li>
-  <li>Module-level doc comment in <code>identity.rs</code> links the future-compat section of <a href="../../core.html#future-compat">core.html</a>.</li>
 </ul>
 
 <div class="pager">
