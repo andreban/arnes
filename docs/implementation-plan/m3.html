@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>M3 &mdash; Coding toolkit + permissions</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">Milestone 3 &middot; Coding toolkit</span>
+  <h1>write, edit, bash + permissions</h1>
+  <p class="lead">
+    The transition from "agent that can read your code" to "agent that
+    can change it." Three new tools, a permission model that goes through
+    the <code>Frontend</code> trait, and the full set of ACP outbound
+    callbacks (<code>fs/write_text_file</code>,
+    <code>terminal/*</code>, <code>session/request_permission</code>).
+  </p>
+</div>
+
+<h2 id="why">Why these three, why now</h2>
+
+<p>
+  The toolkit chosen mirrors the book (Chapter 4) and pi's defaults. These
+  three together give the model enough leverage to do real work:
+  <code>write</code> for new files and complete rewrites, <code>edit</code>
+  for surgical changes, <code>bash</code> for everything else. After M3 the
+  ACP protocol surface is essentially complete; subsequent milestones rarely
+  add methods.
+</p>
+
+<h2 id="permission">Permission model</h2>
+
+<p>
+  Permission decisions cannot be coarse. Approving <em>"write"</em> once
+  for a session approves writes to anything &mdash; too much trust.
+  Approving <em>"bash"</em> on the binary alone means <code>cargo test</code>
+  and <code>cargo publish</code> get the same blanket approval &mdash;
+  worse. The right unit is a <strong>tool-defined scope pattern</strong>:
+  a path glob for filesystem tools, a command pattern for bash. The tool
+  builds a menu of candidate patterns the user can pick; the session
+  remembers the picks for future calls that match.
+</p>
+
+<h3 id="permission-trait">Tool trait additions</h3>
+
+<pre><code>pub trait Tool: Send + Sync {
+    // ... M2 methods ...
+
+    /// False for read-only tools (read, ls, grep): they never hit the modal.
+    fn permission_required(&amp;self) -&gt; bool { false }
+
+    /// For each call that requires permission, build a summary and a menu
+    /// of scope options the user can pick to "always allow" similar calls.
+    fn build_permission_request(&amp;self, input: &amp;Value) -&gt; PermissionRequest;
+
+    /// For a previously-approved scope, decide whether THIS call falls
+    /// within it. Only called when the allowlist has an entry for this tool.
+    fn matches_scope(&amp;self, scope: &amp;Scope, input: &amp;Value) -&gt; bool;
+
+    /// The widest persistence scope an "always allow" decision for this
+    /// tool can be trusted at. Observation-only tools can permit Global;
+    /// mutating tools cap at Workspace. The frontend uses this to hide
+    /// persistence options the tool doesn't endorse.
+    fn max_persistence(&amp;self) -&gt; Persistence { Persistence::Session }
+}</code></pre>
+
+<h3 id="permission-types">Types</h3>
+
+<pre><code>pub struct PermissionRequest {
+    pub summary: String,           // "Run: cargo test --lib"
+    pub input:   Value,            // raw arguments (for UI redisplay)
+    pub scopes:  Vec&lt;ScopeOption&gt;, // ordered narrowest-first
+}
+
+pub struct ScopeOption {
+    pub label: String,             // shown in the modal: "any cargo command"
+    pub scope: Scope,              // opaque to the UI; tool-defined
+}
+
+pub enum Scope {
+    JustThis,                                              // allow once, no entry
+    PathGlob       { glob: String },                       // write / edit
+    Command        { command: String },                    // bash exact match
+    CommandPattern { pattern: String },                    // bash glob
+    Custom         { tool_data: serde_json::Value },       // future tools
+}
+
+pub enum Persistence {
+    Session,    // in-memory only; resets when the session ends
+    Workspace,  // ~/.arnes/permissions/{project-hash}.toml
+    Global,     // ~/.arnes/permissions/global.toml (read-only tools only)
+}
+
+pub enum Permission {
+    AllowOnce,
+    AllowAlways { scope: Scope, persistence: Persistence }, // append to the matching store
+    Deny,
+}</code></pre>
+
+<h3 id="permission-allowlist">Allowlist and persistence</h3>
+
+<p>
+  The allowlist holds <code>AllowEntry</code> structs (not bare tuples)
+  partitioned by persistence level. Each entry carries a <code>principal</code>
+  field reserved for future per-agent scoping &mdash; V1 only ever stores
+  <code>Principal::Any</code>, but the field exists so post-V1 sub-agents can
+  be approved separately without a breaking change to the allowlist.
+</p>
+
+<pre><code>pub struct AllowEntry {
+    pub tool_name: String,
+    pub scope:     Scope,
+    pub principal: Principal,    // V1: always Any
+}
+
+pub enum Principal {
+    Any,                         // V1 default: applies to whatever agent calls the tool
+    Root,                        // root agent only (post-V1)
+    SubAgent { spec: String },   // a named sub-agent kind (post-V1)
+}
+
+pub struct PermissionAllowlist {
+    // Loaded at session start: global + workspace. The session layer
+    // appends Session entries in-memory only.
+    session:   Vec&lt;AllowEntry&gt;,
+    workspace: Vec&lt;AllowEntry&gt;,
+    global:    Vec&lt;AllowEntry&gt;,
+}
+
+impl PermissionAllowlist {
+    pub fn allows(&amp;self, tool: &amp;dyn Tool, agent: &amp;AgentId, input: &amp;Value) -&gt; bool {
+        self.iter_all().any(|e|
+            e.tool_name == tool.name()
+            &amp;&amp; e.principal.matches(agent)              // V1: Any matches everything
+            &amp;&amp; tool.matches_scope(&amp;e.scope, input))
+    }
+    pub fn add(&amp;mut self, entry: AllowEntry, level: Persistence) {
+        match level {
+            Persistence::Session   =&gt; self.session.push(entry),
+            Persistence::Workspace =&gt; self.workspace.push(entry),    // V2: also writes to disk
+            Persistence::Global    =&gt; self.global.push(entry),       // V3: also writes to disk
+        }
+    }
+}</code></pre>
+
+<p>
+  The <code>agent</code> argument to <code>allows()</code> is the
+  <code>AgentId</code> of the caller. V1 always passes
+  <code>AgentId::Root</code>; <code>Principal::Any</code> matches anything;
+  no observable behavior change. Post-V1 the same code path handles
+  per-agent scoping by introducing other <code>Principal</code> variants
+  &mdash; no refactor of the call sites.
+</p>
+
+<h4>Per-tool persistence defaults</h4>
+
+<table>
+  <thead><tr><th>Tool</th><th><code>max_persistence()</code></th><th>Rationale</th></tr></thead>
+  <tbody>
+    <tr><td><code>write</code></td><td><code>Workspace</code></td><td>Mutating; bound the blast radius to one project.</td></tr>
+    <tr><td><code>edit</code></td><td><code>Workspace</code></td><td>Same as write.</td></tr>
+    <tr><td><code>bash</code></td><td><code>Workspace</code></td><td>Global <em>"any cargo command"</em> would silently apply on a new project six months later; too easy to forget.</td></tr>
+    <tr><td><code>read</code> (today)</td><td>n/a (no permission gating)</td><td>&mdash;</td></tr>
+    <tr><td>future <code>ls</code>, <code>grep</code>, gated <code>read</code></td><td><code>Global</code></td><td>Observation-only. A globally-trusted <em>"never ask before reading *.md"</em> can't corrupt anything.</td></tr>
+  </tbody>
+</table>
+
+<h4>Rollout</h4>
+
+<table>
+  <thead><tr><th>Phase</th><th>What lands</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>V1 (M3)</strong></td>
+      <td>Session persistence only. <code>Persistence::Workspace</code> and <code>Global</code> are valid enum variants and the trait method exists; <code>PermissionAllowlist::add</code> for those levels is in-memory and a no-op on shutdown. Frontends show only the "session" persistence option.</td>
+    </tr>
+    <tr>
+      <td><strong>V2 (post-M3)</strong></td>
+      <td>Workspace persistence. <code>~/.arnes/permissions/{project-hash}.toml</code> &mdash; the same <code>project-hash</code> used by sessions in M6, so loading is mechanical at <code>Session</code> construction. Frontends gain the "workspace" option.</td>
+    </tr>
+    <tr>
+      <td><strong>V3 (small follow-up)</strong></td>
+      <td>Global persistence. <code>~/.arnes/permissions/global.toml</code>. Frontends gain the "global" option, but only when <code>tool.max_persistence() == Global</code>. Mutating tools never offer it.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="permission-examples">What each gated tool builds</h3>
+
+<p><strong>write</strong> &mdash; call: <code>{path: "src/main.rs", content: "..."}</code></p>
+
+<pre><code>impl Tool for WriteTool {
+    fn permission_required(&amp;self) -&gt; bool { true }
+    fn max_persistence(&amp;self) -&gt; Persistence { Persistence::Workspace }
+
+    fn build_permission_request(&amp;self, input: &amp;Value) -&gt; PermissionRequest {
+        let path = input["path"].as_str().unwrap_or("&lt;invalid&gt;").to_string();
+        let parent = parent_dir(&amp;path);                 // "src"
+        let ext    = extension(&amp;path);                  // "rs"
+        PermissionRequest {
+            summary: format!("Write {path}"),
+            input:   input.clone(),
+            scopes: vec![
+                ScopeOption { label: "this file".into(),
+                              scope: Scope::PathGlob { glob: path.clone() } },
+                ScopeOption { label: format!("anything in {parent}/"),
+                              scope: Scope::PathGlob { glob: format!("{parent}/**") } },
+                ScopeOption { label: format!("any *.{ext} file"),
+                              scope: Scope::PathGlob { glob: format!("**/*.{ext}") } },
+            ],
+        }
+    }
+
+    fn matches_scope(&amp;self, scope: &amp;Scope, input: &amp;Value) -&gt; bool {
+        let path = input["path"].as_str().unwrap_or("");
+        match scope {
+            Scope::PathGlob { glob } =&gt; glob_matches(glob, path),
+            _ =&gt; false,
+        }
+    }
+}</code></pre>
+
+<p>
+  <strong>edit</strong> uses the same scope shape as <code>write</code>
+  &mdash; the operation is path-scoped; the individual edit ops don't
+  carry separate permission semantics.
+</p>
+
+<p><strong>bash</strong> &mdash; call: <code>{command: "cargo test --lib"}</code></p>
+
+<pre><code>impl Tool for BashTool {
+    fn permission_required(&amp;self) -&gt; bool { true }
+    fn max_persistence(&amp;self) -&gt; Persistence { Persistence::Workspace }
+
+    fn build_permission_request(&amp;self, input: &amp;Value) -&gt; PermissionRequest {
+        let cmd: String = input["command"].as_str().unwrap_or("").to_string();
+        let parts: Vec&lt;&amp;str&gt; = cmd.split_whitespace().collect();
+        let mut scopes = vec![
+            ScopeOption { label: "this exact command".into(),
+                          scope: Scope::Command { command: cmd.clone() } },
+        ];
+        // Propose patterns at each prefix depth: "cargo test *", "cargo *", ...
+        for depth in (1..=parts.len().min(3)).rev() {
+            let prefix = parts[..depth].join(" ");
+            scopes.push(ScopeOption {
+                label: format!("any '{prefix} ...'"),
+                scope: Scope::CommandPattern { pattern: format!("{prefix} *") },
+            });
+        }
+        PermissionRequest { summary: format!("Run: {cmd}"), input: input.clone(), scopes }
+    }
+
+    fn matches_scope(&amp;self, scope: &amp;Scope, input: &amp;Value) -&gt; bool {
+        let cmd = input["command"].as_str().unwrap_or("");
+        match scope {
+            Scope::Command { command }        =&gt; command == cmd,
+            Scope::CommandPattern { pattern } =&gt; cmd_glob_matches(pattern, cmd),
+            _ =&gt; false,
+        }
+    }
+}</code></pre>
+
+<p>
+  <strong>read</strong>, future <strong>ls</strong>, future <strong>grep</strong>:
+  <code>permission_required()</code> returns false. They never reach the
+  modal.
+</p>
+
+<div class="note">
+  <strong>Matchers.</strong> Use <code>globset</code> for path globs; write
+  a tiny custom matcher for bash command patterns (~30 lines: split on
+  whitespace, treat <code>*</code> as <em>"match the rest"</em>). Two
+  different matchers because the syntax expectations are different &mdash;
+  reusing a path-glob engine for command lines confuses users who expect
+  shell-style semantics.
+</div>
+
+<h2 id="tools">The three tools</h2>
+
+<h3 id="write-tool">write</h3>
+
+<pre><code>#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct WriteInput {
+    path: String,
+    content: String,
+}
+
+#[async_trait]
+impl Tool for WriteTool {
+    fn name(&amp;self) -&gt; &amp;str { "write" }
+    fn description(&amp;self) -&gt; &amp;str {
+        "Create a new file or completely overwrite an existing one. \
+         Use only for new files or complete rewrites. For surgical \
+         changes to existing files, use the edit tool instead."
+    }
+    // permission_required + build_permission_request + matches_scope
+    // are shown in the Permission model section above.
+
+    async fn execute(&amp;self, input: serde_json::Value, cx: &amp;ToolContext) -&gt; ToolResult {
+        let WriteInput { path, content } = serde_json::from_value(input)?;
+        match cx.host.write_text_file(Path::new(&amp;path), &amp;content).await {
+            Ok(()) =&gt; ToolResult::ok(format!("wrote {} bytes to {}", content.len(), path)),
+            Err(e) =&gt; ToolResult::error(format!("write failed: {e}")),
+        }
+    }
+}</code></pre>
+
+<h3 id="edit-tool">edit</h3>
+
+<p>
+  Anchor-text edits. The model supplies <code>{oldText, newText}</code>
+  pairs; the harness applies them only when <code>oldText</code> matches
+  exactly once in the file. All-or-nothing semantics: any edit failing
+  rolls back the lot.
+</p>
+
+<pre><code>#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct EditInput {
+    path: String,
+    edits: Vec&lt;EditOp&gt;,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct EditOp { old_text: String, new_text: String }
+
+async fn execute(&amp;self, input: serde_json::Value, cx: &amp;ToolContext) -&gt; ToolResult {
+    let EditInput { path, edits } = serde_json::from_value(input)?;
+    let mut text = match cx.host.read_text_file(Path::new(&amp;path)).await {
+        Ok(t) =&gt; t, Err(e) =&gt; return ToolResult::error(e.to_string()),
+    };
+    for (i, EditOp { old_text, new_text }) in edits.iter().enumerate() {
+        let count = text.matches(old_text.as_str()).count();
+        if count == 0 { return ToolResult::error(format!("edit {i}: oldText not found")); }
+        if count &gt; 1  { return ToolResult::error(format!("edit {i}: oldText matched {count} times; be more specific")); }
+        text = text.replacen(old_text, new_text, 1);
+    }
+    match cx.host.write_text_file(Path::new(&amp;path), &amp;text).await {
+        Ok(()) =&gt; ToolResult::ok(format!("applied {} edit(s) to {path}", edits.len())),
+        Err(e) =&gt; ToolResult::error(e.to_string()),
+    }
+}</code></pre>
+
+<h3 id="bash-tool">bash</h3>
+
+<p>
+  Runs a command through the <code>Host</code>'s terminal interface.
+  Capped output, hard timeout, exit code reported. In ACP mode this goes
+  through the editor's integrated terminal; in TUI mode it spawns locally.
+</p>
+
+<pre><code>#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct BashInput {
+    command: String,
+    #[serde(default = "default_timeout")]
+    timeout_seconds: u32,
+}
+fn default_timeout() -&gt; u32 { 120 }
+
+async fn execute(&amp;self, input: serde_json::Value, cx: &amp;ToolContext) -&gt; ToolResult {
+    let BashInput { command, timeout_seconds } = serde_json::from_value(input)?;
+    let handle = cx.host.terminal_create(TerminalSpec::shell(&amp;command)).await?;
+    let _ = tokio::time::timeout(
+        Duration::from_secs(timeout_seconds as u64),
+        cx.host.terminal_wait(&amp;handle),
+    ).await;
+    let snap = cx.host.terminal_output(&amp;handle).await?;
+    cx.host.terminal_release(handle).await.ok();
+    let body = truncate(snap.combined_output, 1000_lines_or_200kb);
+    ToolResult::ok(format!("exit {}\n{body}", snap.exit_code.unwrap_or(-1)))
+}</code></pre>
+
+<h2 id="host-impls">Host, fully implemented</h2>
+
+<div class="compare">
+<div>
+<h5>LocalHost</h5>
+<ul>
+  <li><code>write_text_file</code>: <code>tokio::fs::write</code> after <code>create_dir_all</code> on parent.</li>
+  <li><code>terminal_create</code>: spawn <code>bash -c</code> via <code>tokio::process::Command</code>; keep handle in <code>HashMap&lt;TerminalHandle, Child&gt;</code>.</li>
+  <li><code>terminal_output</code>: read accumulated stdout+stderr from background tasks.</li>
+  <li><code>terminal_wait</code>: <code>child.wait().await</code>.</li>
+  <li><code>terminal_kill</code>: <code>child.kill().await</code>.</li>
+</ul>
+</div>
+<div>
+<h5>AcpHost</h5>
+<ul>
+  <li><code>write_text_file</code>: outbound <code>fs/write_text_file</code>; editor lands changes in its buffer/diff view.</li>
+  <li><code>terminal_create</code>: outbound <code>terminal/create</code>; receive a handle.</li>
+  <li><code>terminal_output</code>, <code>terminal_wait</code>, <code>terminal_kill</code>, <code>terminal_release</code>: thin RPC pass-throughs.</li>
+  <li>Each method short-circuits with <code>Unsupported</code> if the client didn't advertise the capability.</li>
+</ul>
+</div>
+</div>
+
+<h2 id="frontends">What the frontends do</h2>
+
+<div class="compare">
+<div>
+<h5>TUI at M3</h5>
+<ul>
+  <li>Permission modal &mdash; floating box showing the tool summary, the
+      raw input preview, and a menu of choices: <em>Allow once</em>, then
+      one row per <code>ScopeOption</code> (e.g. <em>"Always: this file"</em>,
+      <em>"Always: anything in src/"</em>, <em>"Always: any *.rs file"</em>),
+      each row carrying a persistence selector limited by
+      <code>tool.max_persistence()</code> (V1: only <em>session</em>; V2 adds
+      <em>workspace</em>; V3 adds <em>global</em> for read-only tools). Final
+      row is <em>Deny</em>. Arrow keys + <kbd>Enter</kbd> to pick;
+      <kbd>Tab</kbd> cycles persistence on a highlighted row.</li>
+  <li><kbd>Esc</kbd> cancels mid-tool: harness aborts the agent run, the
+      child process (or in-flight RPC) gets a cancel signal.</li>
+  <li>Tool-call cards expand to show output preview on success; full error
+      on failure.</li>
+  <li>Slash command: <code>/tools</code> lists active tools and their policies.</li>
+  <li><strong>Status line</strong> shows cumulative usage, format depends
+      on pricing state:
+      <ul>
+        <li>All turns priced (paid): <code>in:8,431 out:1,243 cache:6,200 &middot; $0.18 &middot; 12.3k/200k</code></li>
+        <li>All turns priced (free, e.g. Ollama): cost omitted &mdash; <code>in:8,431 out:1,243 &middot; 12.3k/200k</code></li>
+        <li>Some turns unpriced: <code>$0.18 +3 unpriced</code> &mdash; the known floor plus a count</li>
+        <li>All turns unpriced: <code>&mdash; &middot; 7 turns unpriced</code> &mdash; tokens shown, cost suppressed</li>
+      </ul>
+      Narrow terminals collapse to <code>12.3k/200k &middot; $0.18</code> (or the appropriate variant).</li>
+</ul>
+</div>
+<div>
+<h5>ACP at M3</h5>
+<ul>
+  <li>Outbound <code>session/request_permission</code> issued before each
+      gated tool. Map our (<code>ScopeOption</code> &times; allowed
+      persistence levels) matrix to ACP's <code>RequestPermissionOptions</code>:
+      one option per <em>(scope, persistence)</em> pair, plus
+      <em>Allow once</em> and <em>Deny</em>. The editor surfaces these as
+      its own UI; the selected <code>optionId</code> tells us whether to
+      allow once, allow always with which (scope, persistence), or deny.
+      <code>tool.max_persistence()</code> bounds which pairs we emit.</li>
+  <li>Outbound <code>fs/write_text_file</code> for <code>write</code> and
+      indirectly via <code>edit</code>.</li>
+  <li>Outbound <code>terminal/create</code>, <code>terminal/output</code>,
+      <code>terminal/wait_for_exit</code>, <code>terminal/kill</code>,
+      <code>terminal/release</code> for <code>bash</code>.</li>
+  <li>If the client's capabilities did not advertise <code>terminal</code>,
+      <code>bash</code> is not even registered as a tool for this session
+      &mdash; the system prompt won't mention it.</li>
+</ul>
+</div>
+</div>
+
+<h2 id="cancellation">Cancellation, end to end</h2>
+
+<p>
+  Cancellation now matters because tools may take seconds or minutes.
+  <code>Session</code> holds a <code>CancellationToken</code>; cancelling
+  it:
+</p>
+
+<ol class="steps">
+  <li>Causes the agent-rig stream to terminate at the next yield point.</li>
+  <li>Triggers each in-flight tool's <code>execute</code> future to be dropped (Rust async drop cleans up the spawned child, the in-flight RPC, etc.).</li>
+  <li>For <code>bash</code>, <code>host.terminal_kill(handle)</code> on cancel ensures the OS process actually dies.</li>
+  <li>Emits a <code>SessionEvent::Error { message: "cancelled" }</code> for the frontends to render appropriately.</li>
+</ol>
+
+<h2 id="tasks">Implementation tasks</h2>
+
+<ol class="steps">
+  <li>Extend <code>Tool</code> with <code>permission_required()</code>, <code>build_permission_request()</code>, <code>matches_scope()</code>, and <code>max_persistence()</code>. Define <code>PermissionRequest</code>, <code>ScopeOption</code>, <code>Scope</code>, <code>Persistence</code>, <code>Permission</code> in <code>arnes-core::frontend</code>.</li>
+  <li>Add <code>PermissionAllowlist</code> on <code>Session</code> with three lanes (session/workspace/global); consult all three in <code>Session::prompt</code> before each gated tool call; append to the session lane on <code>AllowAlways</code> for V1. Workspace/global add disk reads/writes in V2/V3.</li>
+  <li>Add a tiny <code>cmd_glob_matches</code> helper (whitespace tokens, <code>*</code> wildcard) and a <code>glob_matches</code> wrapper over <code>globset::Glob</code>.</li>
+  <li>Implement <code>write_text_file</code>, <code>terminal_*</code> on both <code>LocalHost</code> and <code>AcpHost</code>.</li>
+  <li>Add three tools to <code>arnes-core::tools</code>: <code>write</code>, <code>edit</code>, <code>bash</code>.</li>
+  <li>Update <code>Session::prompt</code>: consult policy &amp; cache; emit <code>SessionEvent::ToolCall*</code>; pump cancellation through.</li>
+  <li>TUI: permission modal component; Esc cancellation; tool-card output preview; <code>/tools</code> slash command.</li>
+  <li>ACP: outbound <code>session/request_permission</code>; map outcome to <code>Permission</code> enum.</li>
+  <li>ACP capability gating: omit unsupported tools from the registry at session start.</li>
+</ol>
+
+<h2 id="testing">Testing checklist</h2>
+
+<ul>
+  <li><strong>Unit:</strong> each tool against <code>InMemoryEnv</code>. Bash needs an <code>InMemoryEnv</code> extension that records spawned commands and returns canned exit codes/output.</li>
+  <li><strong>Edit:</strong> zero-match, multi-match, multi-edit, edits-that-reference-prior-edit-output. All-or-nothing rollback verified.</li>
+  <li><strong>Permission flow:</strong> scripted LLM emits a <code>bash</code> tool_use; <code>RecordingFrontend</code> returns <em>Deny</em>; verify the harness emits a synthetic <code>ToolResult::error("user denied")</code> instead of executing.</li>
+  <li><strong>Scope matching:</strong> the user approves <code>AllowAlways(CommandPattern "cargo *")</code> for the first <code>cargo test</code>. The next call (<code>cargo build</code>) skips the modal. A subsequent <code>npm install</code> still prompts.</li>
+  <li><strong>Glob correctness:</strong> <code>PathGlob "src/**"</code> matches <code>src/main.rs</code> and <code>src/a/b.rs</code> but not <code>tests/main.rs</code>. Exhaustive table of cases covered.</li>
+  <li><strong>Cancellation:</strong> kick off a long-running <code>bash</code> via scripted LLM; cancel mid-flight; assert child process dies and a <code>cancelled</code> event surfaces.</li>
+  <li><strong>ACP golden:</strong> a scenario where the client serves <code>fs/write_text_file</code>, denies a permission, approves the next. Assert outbound message sequence.</li>
+</ul>
+
+<h2 id="risks">Risks specific to M3</h2>
+
+<ul>
+  <li><strong>Process leaks on cancel.</strong> If the bash tool is dropped before <code>terminal_release</code>, the child may persist. Use a guard struct on the handle to enforce release-on-drop.</li>
+  <li><strong>Permission UX in ACP without an editor.</strong> Hand-written ACP test clients may not implement <code>request_permission</code>. Provide a CLI flag <code>--auto-allow-once</code> for headless testing (every prompt resolves to <code>AllowOnce</code>; nothing is added to the allowlist); document loudly that production must not use it.</li>
+  <li><strong>Scope-option overload.</strong> A bash call like <code>cargo test --workspace --all-features -- --nocapture</code> could generate eight prefix scopes. Cap at three (exact + two prefix depths) and pick depths by token usefulness, not raw count.</li>
+  <li><strong>Glob expressiveness vs surprise.</strong> A user picking <em>"any *.rs file"</em> from a write call in <code>src/</code> probably doesn't realize they just approved writes to <code>tests/foo.rs</code> and <code>vendor/leftpad.rs</code>. Label scopes literally (<em>"any *.rs file"</em> not <em>"Rust files"</em>); document this in user-facing docs when those exist.</li>
+  <li><strong>Edit ambiguity.</strong> Models will sometimes send <code>oldText</code> that legitimately appears multiple times in repetitive code. The "matched N times" error guides them to widen context; verify the error message is good.</li>
+  <li><strong>Output truncation correctness.</strong> Truncating mid-UTF-8 sequence corrupts output. Truncate on grapheme boundaries; tested by a Unicode-heavy fixture.</li>
+</ul>
+
+<div class="endstate">
+  <h4>End state of M3</h4>
+  <p>
+    "Rename <code>foo</code> to <code>bar</code> everywhere and run the
+    tests" works in both adapters. TUI users see permission modals; ACP
+    clients see <code>session/request_permission</code> requests. Bash
+    commands run locally for TUI, in the editor's integrated terminal for
+    ACP. With M1&ndash;M3 done, arnes is functionally a coding agent
+    &mdash; M4 onward is about making it pleasant, durable, and aware of
+    its context.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="m2.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">M2: First tool</span>
+  </a>
+  <a class="next" href="m4.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">M4: System prompt</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

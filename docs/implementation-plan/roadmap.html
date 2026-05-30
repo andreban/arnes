@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>arnes &mdash; roadmap</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<span class="eyebrow">Plan</span>
+<h1>Roadmap</h1>
+<p class="lead">
+  Nine milestones, each one leaves you with something you can try. The
+  organising principle: <strong>two frontends from day one</strong> &mdash;
+  the TUI and the ACP adapter grow together so the harness has two
+  independent consumers at every stage. Extensions and a few other niceties
+  are explicitly deferred.
+</p>
+
+<h2 id="two-clients">Two clients from day one</h2>
+
+<p>
+  The temptation when bootstrapping is to build one frontend, make it nice,
+  then bolt on a second later. We are not doing that. Every milestone after
+  M1 lands a capability and surfaces it in <em>both</em> the TUI and the
+  ACP adapter at the same time.
+</p>
+
+<p>
+  The reason is purely architectural hygiene. A single consumer of an
+  abstraction always pulls the abstraction toward itself: you cannot tell
+  the difference between a generally-useful method on the <code>Frontend</code>
+  trait and a method that happens to suit the only caller you have. With
+  two consumers &mdash; one rendering to a terminal, one speaking JSON-RPC
+  to an editor &mdash; that signal stays loud. If a change is awkward for
+  ACP, the trait is wrong.
+</p>
+
+<p>
+  The minimum-viable ACP surface at M1 is tiny: four methods plus one
+  notification. Real method weight (<code>fs/*</code>,
+  <code>terminal/*</code>, <code>session/request_permission</code>) lands
+  exactly when the tools that need them land, which keeps M1 small enough
+  to actually finish.
+</p>
+
+<h2 id="phasing">Phasing at a glance</h2>
+
+<div class="figure">
+<svg viewBox="0 0 760 300" role="img" aria-label="Roadmap phasing">
+  <defs>
+    <marker id="phr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b7384"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="10">
+
+    <!-- spine -->
+    <line x1="40" y1="150" x2="720" y2="150" stroke="#232936" stroke-width="2"/>
+
+    <!-- milestone dots -->
+    <g>
+      <circle cx="80"  cy="150" r="14" fill="#141821" stroke="#fbbf24" stroke-width="2"/>
+      <text   x="80"  y="154" text-anchor="middle" fill="#fbbf24">M1</text>
+      <circle cx="155" cy="150" r="14" fill="#141821" stroke="#fbbf24" stroke-width="2"/>
+      <text   x="155" y="154" text-anchor="middle" fill="#fbbf24">M2</text>
+      <circle cx="230" cy="150" r="14" fill="#141821" stroke="#fbbf24" stroke-width="2"/>
+      <text   x="230" y="154" text-anchor="middle" fill="#fbbf24">M3</text>
+      <circle cx="305" cy="150" r="14" fill="#141821" stroke="#fbbf24" stroke-width="2"/>
+      <text   x="305" y="154" text-anchor="middle" fill="#fbbf24">M4</text>
+      <circle cx="380" cy="150" r="14" fill="#141821" stroke="#fbbf24" stroke-width="2"/>
+      <text   x="380" y="154" text-anchor="middle" fill="#fbbf24">M5</text>
+      <circle cx="455" cy="150" r="14" fill="#141821" stroke="#fbbf24" stroke-width="2"/>
+      <text   x="455" y="154" text-anchor="middle" fill="#fbbf24">M6</text>
+      <circle cx="530" cy="150" r="14" fill="#141821" stroke="#fbbf24" stroke-width="2"/>
+      <text   x="530" y="154" text-anchor="middle" fill="#fbbf24">M7</text>
+      <circle cx="615" cy="150" r="14" fill="#141821" stroke="#34d399" stroke-width="2"/>
+      <text   x="615" y="154" text-anchor="middle" fill="#34d399">M8</text>
+      <circle cx="690" cy="150" r="14" fill="#141821" stroke="#34d399" stroke-width="2"/>
+      <text   x="690" y="154" text-anchor="middle" fill="#34d399">M9</text>
+    </g>
+
+    <!-- labels above (capability) -->
+    <g fill="#e4e8ef" text-anchor="middle" font-size="9">
+      <text x="80"  y="70">stream</text>
+      <text x="80"  y="82">chat</text>
+
+      <text x="155" y="70">read</text>
+      <text x="155" y="82">tool</text>
+
+      <text x="230" y="70">coding</text>
+      <text x="230" y="82">toolkit</text>
+
+      <text x="305" y="70">system</text>
+      <text x="305" y="82">prompt</text>
+
+      <text x="380" y="70">skills</text>
+
+      <text x="455" y="70">sessions</text>
+      <text x="455" y="82">on disk</text>
+
+      <text x="530" y="70">compact</text>
+      <text x="530" y="82">history</text>
+
+      <text x="615" y="70">HTTP</text>
+      <text x="615" y="82">/ WS</text>
+
+      <text x="690" y="70">GUI</text>
+    </g>
+
+    <!-- TUI lane below (sky) -->
+    <g fill="#38bdf8" text-anchor="middle" font-size="9">
+      <text x="80"  y="200">input/output</text>
+      <text x="155" y="200">tool card</text>
+      <text x="230" y="200">permission modal</text>
+      <text x="305" y="200">project rules</text>
+      <text x="380" y="200">/skill</text>
+      <text x="455" y="200">--continue</text>
+      <text x="530" y="200">/compact</text>
+      <text x="615" y="200">&mdash;</text>
+      <text x="690" y="200">&mdash;</text>
+    </g>
+    <text x="20" y="200" fill="#38bdf8" font-weight="700">TUI</text>
+
+    <!-- ACP lane below (violet) -->
+    <g fill="#a78bfa" text-anchor="middle" font-size="9">
+      <text x="80"  y="225">session/prompt</text>
+      <text x="155" y="225">fs/read</text>
+      <text x="230" y="225">terminal/* +req_perm</text>
+      <text x="305" y="225">(internal)</text>
+      <text x="380" y="225">(prompt)</text>
+      <text x="455" y="225">session/load</text>
+      <text x="530" y="225">_meta tag</text>
+      <text x="615" y="225">over WS</text>
+      <text x="690" y="225">&mdash;</text>
+    </g>
+    <text x="20" y="225" fill="#a78bfa" font-weight="700">ACP</text>
+
+    <!-- legend / footer -->
+    <text x="380" y="270" text-anchor="middle" fill="#6b7384" font-size="10">harness capabilities (M1-M7) drive both frontends in lockstep; HTTP and GUI follow once the core is stable.</text>
+    <text x="380" y="285" text-anchor="middle" fill="#6b7384" font-size="9">Extensions and MCP bridging are deferred (see bottom of page).</text>
+  </g>
+</svg>
+<div class="figure-caption">Single milestone track. Each milestone lands a harness capability and surfaces it in both the TUI and ACP frontends.</div>
+</div>
+
+<h2 id="m1"><a href="m1.html">M1 &mdash; agent-rig + minimal TUI + minimal ACP</a></h2>
+
+<p><strong>Goal.</strong> Stand up the workspace and prove the two-frontend architecture works.</p>
+<p><strong>Scope.</strong> Cargo workspace. <code>arnes-core</code> with <code>Frontend</code> and <code>Host</code> trait definitions. A <code>LocalHost</code> impl. A <code>Session</code> wrapper around <code>agent_rig::AgentRunner</code>. Two adapters wired up:</p>
+
+<div class="compare">
+<div>
+<h5>arnes-tui at M1</h5>
+<ul>
+  <li>ratatui + crossterm</li>
+  <li>An input box and a scrolling output pane &mdash; nothing else</li>
+  <li>Streams text deltas to the pane</li>
+</ul>
+</div>
+<div>
+<h5>arnes-acp at M1</h5>
+<ul>
+  <li>JSON-RPC 2.0 over stdio</li>
+  <li><code>initialize</code>, <code>session/new</code>, <code>session/prompt</code>, <code>session/cancel</code></li>
+  <li>Outbound <code>session/update</code> with text chunks only</li>
+</ul>
+</div>
+</div>
+
+<div class="note">
+  <strong>M1 JSON-RPC choice:</strong>
+  ACP needs bidirectional dispatch on stdio &mdash; arnes must be able to
+  send server-initiated requests back to the client (<code>fs/*</code>,
+  <code>terminal/*</code>) over the same channel it serves on. We start with
+  <code>jsonrpsee</code>; if its outbound-call ergonomics, cancellation
+  integration, or <code>_meta</code> propagation become a fight during M1,
+  we fall back to a hand-rolled ~350-line framer on
+  <code>tokio_util::codec::LinesCodec</code>. Roll-your-own is the
+  fallback, not the default. See
+  <a href="m1.html#jsonrpc">M1 &sect; JSON-RPC library</a> for the
+  fallback triggers.
+</div>
+
+<div class="endstate">
+  <h4>End state</h4>
+  <p>
+    <code>arnes</code> streams a Gemini reply into a ratatui pane.
+    Spawning <code>arnes-acp</code> as a child and piping JSON-RPC at it
+    produces the same reply as <code>session/update</code> notifications.
+    Same harness; two faces.
+  </p>
+</div>
+
+<h2 id="m2"><a href="m2.html">M2 &mdash; First tool (<code>read</code>)</a></h2>
+
+<p><strong>Goal.</strong> Prove tool-calling end-to-end through both adapters.</p>
+<p><strong>Scope.</strong> The <code>Tool</code> trait, <code>ToolRegistry</code>, and the first built-in tool (<code>read</code>) all in <code>arnes-core::tools</code>, taking <code>&amp;dyn Host</code>. Sequential execution.</p>
+
+<div class="compare">
+<div>
+<h5>arnes-tui at M2</h5>
+<ul>
+  <li>Tool-call card appears in the transcript</li>
+  <li>Card updates: pending &rarr; running &rarr; done</li>
+  <li>Uses <code>LocalHost</code> (reads files locally)</li>
+</ul>
+</div>
+<div>
+<h5>arnes-acp at M2</h5>
+<ul>
+  <li><code>session/update</code> tool_call variants emitted</li>
+  <li>Outbound <code>fs/read_text_file</code> callback to the client</li>
+  <li>Uses <code>AcpHost</code> (reads files via the editor's buffers)</li>
+</ul>
+</div>
+</div>
+
+<div class="endstate">
+  <h4>End state</h4>
+  <p>
+    In the TUI, "what's in my <code>Cargo.toml</code>?" results in a tool-call
+    card and a typed reply. In the ACP harness, the client receives a
+    tool_call update and a corresponding <code>fs/read_text_file</code>
+    request &mdash; same agent loop, same model, two different
+    <code>Host</code> impls.
+  </p>
+</div>
+
+<h2 id="m3"><a href="m3.html">M3 &mdash; Coding toolkit + permissions</a></h2>
+
+<p><strong>Goal.</strong> Move from read-only to a real coding agent.</p>
+<p><strong>Scope.</strong> Three more built-in tools: <code>write</code>, <code>edit</code> (anchor-text), <code>bash</code>. Per-tool permission policies. The <code>request_permission</code> path on the <code>Frontend</code> trait wired through.</p>
+
+<div class="compare">
+<div>
+<h5>arnes-tui at M3</h5>
+<ul>
+  <li>Modal dialog: allow / always-allow / deny</li>
+  <li><kbd>Esc</kbd> cancels mid-tool</li>
+  <li>Bash output truncated and shown inline</li>
+</ul>
+</div>
+<div>
+<h5>arnes-acp at M3</h5>
+<ul>
+  <li>Outbound <code>session/request_permission</code></li>
+  <li>Outbound <code>fs/write_text_file</code></li>
+  <li>Outbound <code>terminal/create</code>, <code>output</code>, <code>wait_for_exit</code>, <code>kill</code>, <code>release</code></li>
+</ul>
+</div>
+</div>
+
+<div class="endstate">
+  <h4>End state</h4>
+  <p>
+    Either frontend can drive a "rename <code>foo</code> to <code>bar</code>
+    everywhere and run tests" task. The TUI shows modals; the ACP client
+    receives <code>session/request_permission</code> requests. From here on,
+    the protocol surface is stable enough that further milestones rarely add
+    new ACP methods.
+  </p>
+</div>
+
+<h2 id="m4"><a href="m4.html">M4 &mdash; System prompt assembly</a></h2>
+
+<p><strong>Goal.</strong> Stop hard-coding the prompt; assemble it from inputs.</p>
+<p><strong>Scope.</strong> <code>SystemPromptBuilder</code>. Tool snippets + per-tool guidelines slot. <code>AGENTS.md</code> tree walk. Cwd + date footer. Cache by input hash; rebuild only when inputs change. Frontend capabilities propagated.</p>
+
+<p>
+  This milestone is server-internal &mdash; no new ACP methods. Both
+  adapters benefit equally; the proof is that the same prompt assembly
+  produces useful behaviour in both the TUI and the ACP client.
+</p>
+
+<div class="endstate">
+  <h4>End state</h4>
+  <p>
+    Run arnes in a Rust project and the prompt reflects the project's
+    conventions from <code>AGENTS.md</code>. Run it in a Python project and
+    the prompt rebuilds. Same in TUI and ACP modes.
+  </p>
+</div>
+
+<h2 id="m5"><a href="m5.html">M5 &mdash; Skills</a></h2>
+
+<p><strong>Goal.</strong> Conditional knowledge without prompt bloat.</p>
+<p><strong>Scope.</strong> <code>arnes-core::skills</code>. SKILL.md discovery from global and project directories. YAML frontmatter parse. <code>&lt;available_skills&gt;</code> XML block in the system prompt. Skills only advertised when <code>read</code> is active.</p>
+
+<p>
+  TUI gets a <code>/skill:&lt;name&gt;</code> slash command for explicit
+  invocation. ACP needs no new methods &mdash; skills surface through the
+  system prompt and load themselves via the existing
+  <code>fs/read_text_file</code> callback.
+</p>
+
+<div class="endstate">
+  <h4>End state</h4>
+  <p>
+    Drop a <code>SKILL.md</code> in <code>~/.arnes/skills/&lt;name&gt;/</code>.
+    The agent advertises it on every turn for ~20 tokens; loads it via
+    <code>read</code> only when a task matches. Works identically in both
+    frontends.
+  </p>
+</div>
+
+<h2 id="m6"><a href="m6.html">M6 &mdash; Sessions on disk</a></h2>
+
+<p><strong>Goal.</strong> Survive a restart.</p>
+<p><strong>Scope.</strong> <code>arnes-core::persist</code>. JSONL writer with header row + message rows + compaction rows. ULID session ids. Project-scoped session directories under <code>~/.arnes/sessions/{project-hash}/</code>. <code>--continue</code>, <code>--resume &lt;id&gt;</code>, <code>--resume</code> (picker) CLI flags.</p>
+
+<div class="compare">
+<div>
+<h5>arnes-tui at M6</h5>
+<ul>
+  <li><code>arnes -c</code> picks up most recent</li>
+  <li>Picker UI for <code>--resume</code></li>
+</ul>
+</div>
+<div>
+<h5>arnes-acp at M6</h5>
+<ul>
+  <li><code>session/load</code> handler implemented</li>
+  <li>Resume returns the full content blocks to rehydrate the client's view</li>
+</ul>
+</div>
+</div>
+
+<div class="endstate">
+  <h4>End state</h4>
+  <p>
+    Quit mid-task in either frontend, restart, resume the same session. The
+    JSONL log is readable text on disk; you can <code>cat</code> it.
+  </p>
+</div>
+
+<h2 id="m7"><a href="m7.html">M7 &mdash; Compaction</a></h2>
+
+<p><strong>Goal.</strong> Long sessions survive context exhaustion.</p>
+<p><strong>Scope.</strong> <code>arnes-core::compact</code>. Token estimation. Threshold trigger at the top of <code>Session::prompt</code> (only between turns). Structured-summary prompt. History rewrite preserving last K turns. JSONL <code>Compaction</code> row recorded; raw history retained.</p>
+
+<p>
+  TUI surfaces a one-line "compacted" notice and exposes a <code>/compact</code>
+  command. ACP carries the same information via a custom <code>_meta</code>
+  field on <code>session/update</code> &mdash; informative only; the client
+  can render it however it likes.
+</p>
+
+<div class="endstate">
+  <h4>End state</h4>
+  <p>
+    A multi-day session no longer hits a context wall. With M6 + M7,
+    arnes is genuinely usable as a daily-driver agent through either
+    frontend.
+  </p>
+</div>
+
+<h2 id="m8"><a href="m8.html">M8 &mdash; HTTP / WebSockets adapter</a></h2>
+
+<p><strong>Goal.</strong> Make arnes networked.</p>
+<p><strong>Scope.</strong> <code>arnes-http</code> crate. axum server. <code>/v1</code> REST routes (sessions CRUD, prompt, cancel, compact). <code>/v1/sessions/{id}/ws</code> streaming socket with arnes-native frame vocabulary. Bearer-token auth. CORS allow-list. <code>SessionRegistry</code> with per-session locking.</p>
+
+<p>
+  Once upstream ACP ships its HTTP/WS transport spec, we mount the
+  <em>same</em> router that <code>arnes-acp</code> uses for stdio behind a
+  WebSocket route. The handler code is transport-agnostic by design; only
+  the framing changes.
+</p>
+
+<div class="endstate">
+  <h4>End state</h4>
+  <p>
+    <code>arnes-serve --bind 127.0.0.1:7878 --token $T</code> stays up.
+    A browser page or a script can drive a session over REST + WS. Multiple
+    concurrent sessions per server. Foundation in place for ACP-over-WS.
+  </p>
+</div>
+
+<h2 id="m9"><a href="m9.html">M9 &mdash; GUI</a></h2>
+
+<p><strong>Goal.</strong> The fourth face.</p>
+<p><strong>Scope.</strong> Pick one of the three paths from the <a href="adapter-gui.html#three-paths">GUI adapter page</a> (Tauri, native, or web-on-HTTP). <code>arnes-gui</code> crate (or a separate frontend project with no new Rust if we pick web-on-HTTP). <code>GuiFrontend</code> with permission modal, transcript widget, input box. Rich diffs and inline images via <code>FrontendCapabilities</code>.</p>
+
+<div class="endstate">
+  <h4>End state</h4>
+  <p>
+    A desktop or browser app you can use as your primary coding-agent UI.
+    Same harness, more pixels.
+  </p>
+</div>
+
+<h2 id="testing">Parallel workstream: testing infrastructure</h2>
+
+<p>
+  The two-clients-from-day-one approach gives you interactive testing for
+  free (any milestone is something you can <em>do</em>). Automated testing
+  is a separate but cheap workstream:
+</p>
+
+<table>
+  <thead><tr><th>Piece</th><th>Lands</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>RecordingFrontend</code></td>
+      <td>during M2</td>
+      <td>Mock <code>Frontend</code> impl in <code>arnes-core/tests/</code> that captures every event for assertions.</td>
+    </tr>
+    <tr>
+      <td><code>InMemoryEnv</code></td>
+      <td>during M2</td>
+      <td>Mock <code>Host</code> with a fake filesystem and a fake terminal &mdash; no real processes.</td>
+    </tr>
+    <tr>
+      <td>Scripted LLM</td>
+      <td>during M3</td>
+      <td>An <code>LlmModel</code> impl for agent-rig that replays canned responses; deterministic loop testing without an API key.</td>
+    </tr>
+    <tr>
+      <td>ACP test client</td>
+      <td>during M3</td>
+      <td>A tiny Rust integration test that spawns <code>arnes-acp</code>, drives the JSON-RPC dance, asserts on outbound requests. Replaces "a real editor" for ACP CI.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  With this set in place, every subsequent milestone gets regression
+  coverage on both adapters automatically.
+</p>
+
+<h2 id="other-workstreams">Other parallel workstreams</h2>
+
+<table>
+  <thead><tr><th>Workstream</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Additional providers</strong></td><td>Contribute Anthropic and OpenAI adapters to agent-rig (or maintain local wrappers if upstream cannot accept them yet). Any time after M1.</td></tr>
+    <tr><td><strong>Token usage &amp; cost tracking</strong></td><td>Lands incrementally: types &amp; pricing registry at M1, TUI status line at M3, JSONL row at M6, compaction-trigger upgrade at M7, HTTP endpoint at M8, GUI panel at M9. Pricing data is the ongoing maintenance concern &mdash; bundled defaults will go stale; user overrides via <code>~/.arnes/pricing.toml</code>; for unrecognized models the system surfaces <em>"unknown"</em> rather than zero.</td></tr>
+    <tr><td><strong>Documentation</strong></td><td>User-facing docs &mdash; man pages for the CLI, READMEs per crate. The book and this plan are reference; users want usage docs.</td></tr>
+    <tr><td><strong>Telemetry hooks</strong></td><td>Internal event taps the operator can opt into. Matters most after M8 when arnes runs as a long-lived server.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="deferred">Deferred</h2>
+
+<p>
+  Things explicitly out of the V1 plan. The architecture accommodates them;
+  we just don't build them now.
+</p>
+
+<div class="note">
+  <strong>Designed for, not built.</strong> For sub-agents in particular,
+  the V1 type system is fully sub-agent-aware (<code>AgentId</code>,
+  per-<code>(agent, model)</code> usage, principal-aware permissions, the
+  <code>spawn_subagent</code> stub on <code>Session</code>) so that
+  landing the implementation post-V1 fills in <code>unimplemented!()</code>
+  bodies and adds variants to in-tree enums rather than refactoring the
+  protocol surface. See
+  <a href="core.html#future-compat">core.html &sect; Future-compatibility:
+  sub-agents</a> for the design contract.
+</div>
+
+<table>
+  <thead><tr><th>Capability</th><th>Why deferred</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Sub-agents as first-class tools</td>
+      <td>agent-rig already supports the mechanics (a Tool whose <code>execute()</code> runs a nested agent loop). What V1 doesn't ship: nested event propagation, per-agent permission scoping beyond <code>Principal::Any</code>, sub-agent rows in JSONL, GUI rendering of nested activity. <strong>The trait surface is sub-agent-ready from M1</strong> &mdash; the implementation is the work-item, not the design.</td>
+    </tr>
+    <tr>
+      <td>Extensions</td>
+      <td>The delivery mechanism in Rust (cdylib, sub-process IPC, embedded scripting) is a sub-design effort, and we have no concrete user need yet. The <a href="core.html#extensions-module">extensions module spec</a> stays in the architecture for when we revisit.</td>
+    </tr>
+    <tr>
+      <td>MCP bridging in ACP</td>
+      <td>ACP allows clients to advertise MCP servers; bridging them into our tool registry is its own feature. Add after the core ACP surface is stable in production.</td>
+    </tr>
+    <tr>
+      <td>Multi-tenant HTTP isolation</td>
+      <td>V1 HTTP server assumes single trust boundary. Sandboxing or remote workers come up only when there is a multi-tenant deployment to design against.</td>
+    </tr>
+    <tr>
+      <td>Inline images in the TUI</td>
+      <td>Useful but a big native-protocol yak (Kitty/iTerm2). The GUI gets images for free at M9.</td>
+    </tr>
+    <tr>
+      <td>Branching sessions</td>
+      <td>The JSONL format carries <code>id</code> and <code>parent_id</code> from M6 so this can land later without a format break, but we don't expose branching UX in V1.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="what-success-looks-like">What success looks like, day by day</h2>
+
+<ul>
+  <li><strong>Morning.</strong> <code>arnes -c</code> picks up yesterday's session. You spend two hours; arnes does most of the typing.</li>
+  <li><strong>Midday.</strong> You switch to your editor. The editor talks to <code>arnes-acp</code> running as a child; same session, same model, same skills, same JSONL log.</li>
+  <li><strong>Afternoon.</strong> You push the morning's branch to CI. A GitHub action posts to <code>arnes-serve</code> over HTTP: <em>"summarize the changes in this PR."</em> arnes reads the diff, returns a paragraph.</li>
+  <li><strong>Evening.</strong> Same browser tab pointed at the same <code>arnes-serve</code> &mdash; a GUI session from the couch. The harness has no idea which mouth is speaking, and that is the entire point of the architecture.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="adapter-gui.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">GUI</span>
+  </a>
+  <a class="next" href="index.html">
+    <span class="pager-label">Up &uarr;</span>
+    <span class="pager-title">Back to introduction</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>arnes &mdash; implementation plan</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+
+  <div class="nav-group">
+    <h4>Overview</h4>
+    <ul>
+      <li><a href="index.html">Introduction</a></li>
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <h4>Architecture</h4>
+    <ul>
+      <li><a href="architecture.html">Modular design</a></li>
+      <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <h4>Adapters</h4>
+    <ul>
+      <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+      <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+      <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+      <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <h4>Plan</h4>
+    <ul>
+      <li><a href="roadmap.html">Roadmap</a></li>
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <h4>Milestones</h4>
+    <ul>
+      <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+      <li><a href="m2.html">M2: First tool</a></li>
+      <li><a href="m3.html">M3: Coding toolkit</a></li>
+      <li><a href="m4.html">M4: System prompt</a></li>
+      <li><a href="m5.html">M5: Skills</a></li>
+      <li><a href="m6.html">M6: Sessions</a></li>
+      <li><a href="m7.html">M7: Compaction</a></li>
+      <li><a href="m8.html">M8: HTTP / WS</a></li>
+      <li><a href="m9.html">M9: GUI</a></li>
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <h4>Reference</h4>
+    <ul>
+      <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+    </ul>
+  </div>
+</aside>
+
+<main class="main">
+
+<span class="eyebrow">Implementation plan</span>
+<h1>arnes &mdash; a modular coding harness in Rust</h1>
+<p class="lead">
+  This is the plan for building <strong>arnes</strong> (from Portuguese
+  <em>arn&ecirc;s</em>, "harness") &mdash; a coding agent harness in Rust,
+  built on top of <a href="https://github.com/andreban/agent-rig">agent-rig</a>
+  for the LLM runtime, and designed from day one to be exposed through
+  multiple frontends: a TUI, the Agent Client Protocol, HTTP/WebSockets, and
+  eventually a GUI.
+</p>
+
+<h2 id="what-we-are-building">What we are building</h2>
+
+<p>
+  The same coding harness, behind four different faces:
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 380" role="img" aria-label="arnes hexagonal architecture">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+    </marker>
+  </defs>
+
+  <!-- core hexagon -->
+  <g>
+    <polygon points="380,110 470,160 470,260 380,310 290,260 290,160"
+             fill="#141821" stroke="#fbbf24" stroke-width="1.5"/>
+    <text x="380" y="200" text-anchor="middle" fill="#fbbf24" font-weight="700" font-family="ui-monospace, monospace" font-size="14">arnes-core</text>
+    <text x="380" y="220" text-anchor="middle" fill="#9aa3b3" font-size="10" font-family="ui-monospace, monospace">session - tools - prompt</text>
+    <text x="380" y="234" text-anchor="middle" fill="#9aa3b3" font-size="10" font-family="ui-monospace, monospace">persistence - compaction</text>
+    <text x="380" y="248" text-anchor="middle" fill="#9aa3b3" font-size="10" font-family="ui-monospace, monospace">extensions - skills</text>
+  </g>
+
+  <!-- agent-rig below -->
+  <rect x="290" y="335" width="180" height="32" rx="6" fill="#141821" stroke="#34d399"/>
+  <text x="380" y="356" text-anchor="middle" fill="#34d399" font-weight="700" font-family="ui-monospace, monospace" font-size="11">agent-rig (LLM runtime)</text>
+  <line x1="380" y1="310" x2="380" y2="333" stroke="#9aa3b3" stroke-width="1.2"/>
+
+  <!-- four adapters around -->
+  <g font-family="ui-monospace, monospace" font-size="11">
+    <!-- TUI (top-left) -->
+    <rect x="60" y="80" width="160" height="60" rx="10" fill="#141821" stroke="#38bdf8"/>
+    <text x="140" y="106" text-anchor="middle" fill="#38bdf8" font-weight="700">TUI</text>
+    <text x="140" y="124" text-anchor="middle" fill="#9aa3b3" font-size="10">ratatui + crossterm</text>
+    <line x1="220" y1="120" x2="288" y2="180" stroke="#9aa3b3" stroke-width="1.2" marker-end="url(#ar)"/>
+
+    <!-- ACP (top-right) -->
+    <rect x="540" y="80" width="160" height="60" rx="10" fill="#141821" stroke="#a78bfa"/>
+    <text x="620" y="106" text-anchor="middle" fill="#a78bfa" font-weight="700">ACP</text>
+    <text x="620" y="124" text-anchor="middle" fill="#9aa3b3" font-size="10">stdio JSON-RPC</text>
+    <line x1="540" y1="120" x2="472" y2="180" stroke="#9aa3b3" stroke-width="1.2" marker-end="url(#ar)"/>
+
+    <!-- HTTP/WS (bottom-left) -->
+    <rect x="60" y="280" width="160" height="60" rx="10" fill="#141821" stroke="#34d399"/>
+    <text x="140" y="306" text-anchor="middle" fill="#34d399" font-weight="700">HTTP / WS</text>
+    <text x="140" y="324" text-anchor="middle" fill="#9aa3b3" font-size="10">axum + tower</text>
+    <line x1="220" y1="300" x2="288" y2="240" stroke="#9aa3b3" stroke-width="1.2" marker-end="url(#ar)"/>
+
+    <!-- GUI (bottom-right) -->
+    <rect x="540" y="280" width="160" height="60" rx="10" fill="#141821" stroke="#fbbf24"/>
+    <text x="620" y="306" text-anchor="middle" fill="#fbbf24" font-weight="700">GUI</text>
+    <text x="620" y="324" text-anchor="middle" fill="#9aa3b3" font-size="10">stack TBD</text>
+    <line x1="540" y1="300" x2="472" y2="240" stroke="#9aa3b3" stroke-width="1.2" marker-end="url(#ar)"/>
+  </g>
+
+  <!-- host on the side -->
+  <g font-family="ui-monospace, monospace" font-size="10">
+    <rect x="20" y="200" width="120" height="34" rx="6" fill="#0f1217" stroke="#6b7384"/>
+    <text x="80" y="221" text-anchor="middle" fill="#e4e8ef">LocalHost</text>
+    <line x1="140" y1="216" x2="288" y2="216" stroke="#6b7384" stroke-width="1" stroke-dasharray="3 3"/>
+
+    <rect x="620" y="200" width="120" height="34" rx="6" fill="#0f1217" stroke="#6b7384"/>
+    <text x="680" y="221" text-anchor="middle" fill="#e4e8ef">AcpHost</text>
+    <line x1="620" y1="216" x2="472" y2="216" stroke="#6b7384" stroke-width="1" stroke-dasharray="3 3"/>
+
+    <text x="80"  y="252" text-anchor="middle" fill="#6b7384" font-size="9">tools call OS</text>
+    <text x="680" y="252" text-anchor="middle" fill="#6b7384" font-size="9">tools call back to client</text>
+  </g>
+</svg>
+<div class="figure-caption">
+  Hexagonal: a single core, four adapters in front, two interchangeable hosts behind the tools, and agent-rig under the floor.
+</div>
+</div>
+
+<h2 id="grounding">Grounding in the book</h2>
+
+<p>
+  The companion <a href="../build-your-own-harness/index.html">Build Your
+  Own Harness</a> describes the conceptual model in ten chapters. This plan
+  picks up exactly where that book leaves off and turns the concepts into a
+  concrete Rust implementation. The shape stays identical:
+</p>
+
+<table>
+  <thead><tr><th>Book chapter</th><th>arnes module / adapter</th></tr></thead>
+  <tbody>
+    <tr><td>1. Streaming LLM client</td><td><code>agent-rig</code> (already exists)</td></tr>
+    <tr><td>2. Your first tool call</td><td><code>arnes-core::tools</code></td></tr>
+    <tr><td>3. The agent loop</td><td><code>agent-rig::AgentRunner</code> + thin <code>Session</code> wrapper</td></tr>
+    <tr><td>4. A real coding toolkit</td><td><code>arnes-core::tools</code> (read, write, edit, bash) using <code>Host</code></td></tr>
+    <tr><td>5. The system prompt</td><td><code>arnes-core::prompt</code></td></tr>
+    <tr><td>6. Sessions: save &amp; resume</td><td><code>arnes-core::session</code> (JSONL)</td></tr>
+    <tr><td>7. A live terminal UI</td><td><code>arnes-tui</code> (adapter)</td></tr>
+    <tr><td>8. Extensions</td><td><code>arnes-core::extensions</code> &mdash; <em>deferred</em>, see <a href="roadmap.html#deferred">roadmap</a></td></tr>
+    <tr><td>9. Skills</td><td><code>arnes-core::skills</code></td></tr>
+    <tr><td>10. Compaction</td><td><code>arnes-core::compaction</code></td></tr>
+    <tr><td>&mdash; (new)</td><td><code>arnes-acp</code>, <code>arnes-http</code>, <code>arnes-gui</code></td></tr>
+  </tbody>
+</table>
+
+<h2 id="what-this-doc-is">What this document is and is not</h2>
+
+<div class="compare">
+<div>
+<h5>What this is</h5>
+<ul>
+  <li>An architectural plan: crate split, interfaces, data flow.</li>
+  <li>A phased roadmap with end-states per milestone.</li>
+  <li>A concrete mapping from book chapters to Rust modules.</li>
+  <li>A method-by-method map for the ACP adapter.</li>
+</ul>
+</div>
+<div>
+<h5>What this is not</h5>
+<ul>
+  <li>Code. No <code>.rs</code> files yet &mdash; just decisions.</li>
+  <li>A schedule. Milestones are ordered; durations are not estimated.</li>
+  <li>An API freeze. Names and signatures will shift as we implement.</li>
+  <li>A vendor selection (the GUI stack is intentionally left open).</li>
+</ul>
+</div>
+</div>
+
+<h2 id="reading-order">Reading order</h2>
+
+<ol class="steps">
+  <li>
+    <a href="architecture.html"><strong>Modular design</strong></a> &mdash;
+    the ports-and-adapters split, the two key traits (<code>Frontend</code>
+    and <code>Host</code>), and the Cargo workspace layout.
+  </li>
+  <li>
+    <a href="core.html"><strong>arnes-core</strong></a> &mdash; the harness
+    crate that holds everything not specific to a frontend: session, prompt,
+    persistence, compaction, extensions, skills.
+  </li>
+  <li>
+    The four adapter chapters &mdash; each is independently readable:
+    <a href="adapter-tui.html">TUI</a>,
+    <a href="adapter-acp.html">ACP</a>,
+    <a href="adapter-http.html">HTTP / WebSockets</a>,
+    <a href="adapter-gui.html">GUI</a>.
+  </li>
+  <li>
+    <a href="roadmap.html"><strong>Roadmap</strong></a> &mdash; the order we
+    build things and what works at the end of each milestone.
+  </li>
+</ol>
+
+<h2 id="key-decisions">Key decisions, up front</h2>
+
+<table>
+  <thead><tr><th>Decision</th><th>Choice</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Language</td>
+      <td>Rust</td>
+      <td>agent-rig is Rust; ACP/HTTP servers want async + good ecosystem.</td>
+    </tr>
+    <tr>
+      <td>LLM runtime</td>
+      <td>agent-rig</td>
+      <td>Provider-agnostic, streaming, parallel tools, structured output, auth hook. Saves Chapters 1&ndash;3 of the book.</td>
+    </tr>
+    <tr>
+      <td>Tool host</td>
+      <td>Trait with two impls: <code>LocalHost</code> and <code>AcpHost</code></td>
+      <td>ACP delegates filesystem and terminal to the client; tools must not hard-code OS calls.</td>
+    </tr>
+    <tr>
+      <td>Frontends</td>
+      <td>Implement a small <code>Frontend</code> trait</td>
+      <td>Lets <code>arnes-core</code> drive any of TUI / ACP / HTTP / GUI without conditionals.</td>
+    </tr>
+    <tr>
+      <td>Workspace</td>
+      <td>Cargo workspace, many small crates</td>
+      <td>Adapters opt into core; users only build what they use.</td>
+    </tr>
+    <tr>
+      <td>Persistence</td>
+      <td>JSONL session logs</td>
+      <td>See Book Chapter 6. Append-only, crash-safe, human-readable.</td>
+    </tr>
+    <tr>
+      <td>Providers (Phase 1)</td>
+      <td>Gemini + Ollama (what agent-rig ships)</td>
+      <td>Anthropic/OpenAI added later as agent-rig features or local adapters.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="open-questions">Open questions, intentionally deferred</h2>
+
+<ul>
+  <li>
+    <strong>GUI stack.</strong> Tauri (share the binary, web UI inside),
+    egui / iced (native), or a web app talking to the HTTP/WS adapter. Pick
+    when we get there; the modular design makes any of them work.
+  </li>
+  <li>
+    <strong>Permission UX</strong> in non-TUI adapters. ACP has
+    <code>session/request_permission</code>; HTTP/GUI need their own
+    equivalent. Briefly addressed per adapter; design fully when M8 lands.
+  </li>
+</ul>
+
+<div class="endstate">
+  <h4>You are about to read</h4>
+  <p>
+    A workshop manual, not a sales pitch. Each page below is short enough to
+    print, structured around decisions and the rationale behind them.
+    Skim the architecture page first; then dive into whichever adapter you
+    are most interested in building.
+  </p>
+</div>
+
+<div class="site-footer">
+  Plan for the <code>arnes</code> coding harness. Companion to the
+  <a href="../build-your-own-harness/index.html">Build Your Own Harness</a>
+  book at <code>docs/build-your-own-harness/</code>.
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

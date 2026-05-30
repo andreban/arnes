@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 4 &mdash; A real coding toolkit</title>
+<link rel="stylesheet" href="../assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">π</span>
+    <span>Build Your Own Harness</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part I &mdash; Foundation</h4><ul>
+    <li><a href="01-streaming-client.html">1. Streaming LLM client</a></li>
+    <li><a href="02-first-tool.html">2. Your first tool call</a></li>
+    <li><a href="03-agent-loop.html">3. The agent loop</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part II &mdash; A real coding agent</h4><ul>
+    <li><a href="04-coding-toolkit.html">4. A real coding toolkit</a></li>
+    <li><a href="05-system-prompt.html">5. The system prompt</a></li>
+    <li><a href="06-sessions.html">6. Sessions: save &amp; resume</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part III &mdash; Making it real</h4><ul>
+    <li><a href="07-live-tui.html">7. A live terminal UI</a></li>
+    <li><a href="08-extensions.html">8. Extensions</a></li>
+    <li><a href="09-skills.html">9. Skills</a></li>
+    <li><a href="10-compaction.html">10. Compaction</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="agent">
+  <span class="eyebrow">Chapter 4 &middot; Part II</span>
+  <h1>A real coding toolkit</h1>
+  <p class="lead">
+    A read-only agent is half an agent. To make changes &mdash; to actually do
+    the thing the user asked &mdash; the model needs to write files, edit
+    them, and run commands. In this chapter we add the three tools that
+    matter, and confront the design questions each one forces you to answer.
+  </p>
+</div>
+
+<h2 id="tool-design">Tool design is product design</h2>
+
+<p>
+  By now the mechanics of adding a tool are routine: name, description,
+  schema, executor. The interesting decisions are about <em>shape</em>:
+</p>
+
+<ul>
+  <li>What inputs does the tool accept? Few and explicit, or many and lenient?</li>
+  <li>What does success look like? Silence? A confirmation? Some output?</li>
+  <li>What does failure look like? An error string, structured details, both?</li>
+  <li>What is the worst thing this tool can do? Are you OK with the model doing it?</li>
+</ul>
+
+<p>
+  These are not abstract. The choices ripple straight back to model behaviour.
+  A bad <code>bash</code> tool teaches the model to babysit it; a good one
+  fades into the background.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 280" role="img" aria-label="The three tools">
+  <g font-family="ui-monospace, monospace" font-size="11">
+    <rect x="40"  y="40" width="220" height="200" rx="12" fill="#141821" stroke="#a78bfa" stroke-opacity="0.6"/>
+    <text x="150" y="70" text-anchor="middle" fill="#a78bfa" font-weight="700" font-size="13">bash</text>
+    <text x="150" y="90" text-anchor="middle" fill="#9aa3b3" font-size="10">execute a command</text>
+    <g fill="#e4e8ef" font-size="11">
+      <text x="60" y="120">input:  command, timeout</text>
+      <text x="60" y="138">output: stdout + stderr,</text>
+      <text x="60" y="152">         truncated</text>
+      <text x="60" y="180">risk:   total. the model</text>
+      <text x="60" y="194">         can do anything</text>
+      <text x="60" y="208">         you can do.</text>
+    </g>
+
+    <rect x="280" y="40" width="220" height="200" rx="12" fill="#141821" stroke="#fbbf24" stroke-opacity="0.6"/>
+    <text x="390" y="70" text-anchor="middle" fill="#fbbf24" font-weight="700" font-size="13">write</text>
+    <text x="390" y="90" text-anchor="middle" fill="#9aa3b3" font-size="10">create or overwrite a file</text>
+    <g fill="#e4e8ef" font-size="11">
+      <text x="300" y="120">input:  path, content</text>
+      <text x="300" y="138">output: byte count</text>
+      <text x="300" y="156">         on success</text>
+      <text x="300" y="180">risk:   destroys whatever</text>
+      <text x="300" y="194">         was at the path.</text>
+      <text x="300" y="208">         no undo built in.</text>
+    </g>
+
+    <rect x="520" y="40" width="220" height="200" rx="12" fill="#141821" stroke="#34d399" stroke-opacity="0.6"/>
+    <text x="630" y="70" text-anchor="middle" fill="#34d399" font-weight="700" font-size="13">edit</text>
+    <text x="630" y="90" text-anchor="middle" fill="#9aa3b3" font-size="10">precise in-place change</text>
+    <g fill="#e4e8ef" font-size="11">
+      <text x="540" y="120">input:  path, [{ oldText,</text>
+      <text x="540" y="136">           newText }, ...]</text>
+      <text x="540" y="158">output: applied edits</text>
+      <text x="540" y="180">risk:   modest. fails loud</text>
+      <text x="540" y="194">         when text doesn't</text>
+      <text x="540" y="208">         match.</text>
+    </g>
+  </g>
+</svg>
+<div class="figure-caption">Three tools, three risk profiles, three different jobs. Reach for the smallest one that does the job.</div>
+</div>
+
+<h2 id="bash">bash &mdash; the dangerous one</h2>
+
+<p>
+  The instinct is to make <code>bash</code> a thin pass-through:
+  command goes in, all output comes out. That fails in three ways:
+</p>
+
+<ol>
+  <li>
+    <strong>It runs forever.</strong> A model that runs <code>npm install</code>
+    or a long test suite needs to be cut off if it gets stuck. Always
+    parameterize a timeout (and use a sensible default like 120 seconds).
+  </li>
+  <li>
+    <strong>It produces too much output.</strong> A command that dumps a
+    50,000-line log will blow your context window on a single tool call. Cap
+    the output and tell the model you truncated:
+  </li>
+  <li>
+    <strong>It is unaware of the working directory.</strong> If the harness
+    spawns a new shell for each call, every command runs in a fresh
+    <code>cwd</code>. <code>cd</code> in one call does not persist into the
+    next. Pick a model: either run each command from the project root and
+    accept that <code>cd</code> is broken, or maintain a virtual cwd that the
+    harness applies to every spawn.
+  </li>
+</ol>
+
+<p>A reasonable implementation:</p>
+
+<pre><code>const bash: ToolDecl = {
+  name: "bash",
+  description: "Run a shell command. Returns combined stdout/stderr, truncated to ~1000 lines.",
+  parameters: {
+    type: "object",
+    properties: {
+      command: { type: "string" },
+      timeout_seconds: { type: "number", description: "Default 120, max 600." },
+    },
+    required: ["command"],
+  },
+};
+
+async function runBash({ command, timeout_seconds = 120 }) {
+  const proc = spawn("bash", ["-c", command], { cwd, env: process.env });
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  const MAX = 200_000;
+  proc.stdout.on("data", b =&gt; { if (bytes &lt; MAX) { chunks.push(b); bytes += b.length; } });
+  proc.stderr.on("data", b =&gt; { if (bytes &lt; MAX) { chunks.push(b); bytes += b.length; } });
+
+  const timer = setTimeout(() =&gt; proc.kill("SIGTERM"), timeout_seconds * 1000);
+  const code = await new Promise&lt;number&gt;(r =&gt; proc.on("exit", c =&gt; r(c ?? -1)));
+  clearTimeout(timer);
+
+  let out = Buffer.concat(chunks).toString("utf8");
+  if (bytes &gt;= MAX) out += "\n\n[output truncated]";
+  return `exit ${code}\n${out}`;
+}</code></pre>
+
+<div class="warn">
+  <strong>Stop and think about this.</strong> A coding agent with a
+  <code>bash</code> tool can <code>rm -rf $HOME</code>, exfiltrate your
+  credentials, install backdoors, or spend money. Pi runs without sandboxing
+  by default and relies on the user's review of each step. That is a real
+  trade-off. If your harness is going to ship to anyone but yourself, design
+  the safety story before you ship: an allowlist, a confirmation prompt for
+  destructive commands, a container boundary, or simply no <code>bash</code>
+  at all.
+</div>
+
+<h2 id="write">write &mdash; the simple one</h2>
+
+<p>
+  <code>write</code> is the easiest tool to get right and the easiest to get
+  subtly wrong. Right:
+</p>
+
+<pre><code>const write: ToolDecl = {
+  name: "write",
+  description: "Create a new file or completely overwrite an existing one. " +
+               "Use only for new files or complete rewrites. For surgical changes, use edit.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string" },
+      content: { type: "string" },
+    },
+    required: ["path", "content"],
+  },
+};
+
+async function runWrite({ path, content }) {
+  await fs.mkdir(dirname(path), { recursive: true });
+  await fs.writeFile(path, content, "utf8");
+  return `wrote ${content.length} bytes to ${path}`;
+}</code></pre>
+
+<p>
+  The description is doing real work there. Without the second sentence, the
+  model will use <code>write</code> to make a one-line change to a 5,000-line
+  file, re-emitting all 5,000 lines. That is slow, expensive, and bad for the
+  user's diff history. Spell out the boundary; the model will respect it.
+</p>
+
+<h2 id="edit">edit &mdash; the precise one</h2>
+
+<p>
+  <code>edit</code> is where harnesses differ most. Two reasonable shapes:
+</p>
+
+<div class="compare">
+<div>
+<h5>Diff-based</h5>
+<p>Send a unified diff. The harness applies it with patch semantics.
+<strong>Pro:</strong> familiar format, supports moves. <strong>Con:</strong>
+line-number drift; the model has to count lines accurately, which it is bad at.</p>
+</div>
+<div>
+<h5>Text-anchor based</h5>
+<p>Send <code>{ oldText, newText }</code> pairs. The harness finds
+<code>oldText</code> in the file and replaces it. <strong>Pro:</strong> the
+model just quotes existing text. No line numbers. <strong>Con:</strong>
+ambiguous matches must be rejected; the model must include enough
+surrounding context to disambiguate.</p>
+</div>
+</div>
+
+<p>
+  Text-anchor is what most modern harnesses (including pi) settle on. It
+  matches how the model thinks &mdash; the model can quote text it just read
+  &mdash; and the failure modes are easy to surface: <em>"oldText matched zero
+  times"</em> or <em>"oldText matched three times; be more specific."</em>
+</p>
+
+<pre><code>const edit: ToolDecl = {
+  name: "edit",
+  description: "Make precise edits to a file. Each edit replaces an exact " +
+               "occurrence of oldText with newText. oldText must appear " +
+               "exactly once in the file (use enough context to disambiguate).",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string" },
+      edits: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            oldText: { type: "string" },
+            newText: { type: "string" },
+          },
+          required: ["oldText", "newText"],
+        },
+      },
+    },
+    required: ["path", "edits"],
+  },
+};
+
+async function runEdit({ path, edits }) {
+  let text = await fs.readFile(path, "utf8");
+  for (const [i, { oldText, newText }] of edits.entries()) {
+    const occurrences = text.split(oldText).length - 1;
+    if (occurrences === 0) throw new Error(`edit ${i}: oldText not found`);
+    if (occurrences &gt; 1)  throw new Error(`edit ${i}: oldText matched ${occurrences} times`);
+    text = text.replace(oldText, newText);
+  }
+  await fs.writeFile(path, text, "utf8");
+  return `applied ${edits.length} edit(s) to ${path}`;
+}</code></pre>
+
+<p>
+  Two protective details there:
+</p>
+
+<ul>
+  <li><strong>All-or-nothing.</strong> If any edit fails, none are applied. The error message tells the model what went wrong so it can retry.</li>
+  <li><strong>Edits apply sequentially to the buffer.</strong> The first edit may produce text that the second edit then references. This is convenient for the model; just document it so it knows.</li>
+</ul>
+
+<h2 id="error-shape">The shape of an error</h2>
+
+<p>
+  Tool errors are tool results, not exceptions (we said this in Chapter 2 and
+  it bears repeating). What an error <em>contains</em> matters as much as how
+  it is signaled:
+</p>
+
+<table>
+  <thead><tr><th>Bad error</th><th>Good error</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>EACCES</code></td>
+      <td><code>cannot write to /etc/hosts: permission denied. Run as root or pick a different path.</code></td>
+    </tr>
+    <tr>
+      <td><code>edit failed</code></td>
+      <td><code>edit 2: oldText "import foo from './bar'" not found in src/main.ts. The current import is "import foo from '../bar'".</code></td>
+    </tr>
+    <tr>
+      <td><code>timeout</code></td>
+      <td><code>command killed after 120s. Last 50 lines of output were: ...</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  The model is trying to recover. Give it what it needs to recover.
+</p>
+
+<h2 id="confirmation">A note on confirmation</h2>
+
+<p>
+  Some harnesses prompt the user to approve every <code>bash</code> or
+  <code>write</code> call. Some only prompt for destructive commands. Some never
+  prompt. There is no right answer; there is a trade-off between safety and
+  flow. Pick a default for your harness, but build the plumbing so users can
+  choose. Confirmation is just another event listener: when a
+  <code>tool_start</code> event fires for a flagged tool, block the loop on a
+  user response, then either continue or report a synthetic
+  <em>"user cancelled"</em> error back to the model.
+</p>
+
+<div class="prod">
+  <span class="prod-label">In pi's code</span>
+  <p>
+    Pi's three tools live at
+    <code>packages/coding-agent/src/core/tools/bash.ts</code>,
+    <code>write.ts</code>, and <code>edit.ts</code>. Notable extras: bash
+    truncates by line count <em>and</em> bytes (whichever hits first), saves
+    full output to a temp file when truncated; edit refuses overlapping
+    <code>oldText</code> matches and rejects edits that look like multi-line
+    diffs the model should have batched. The
+    <code>promptGuidelines</code> field on each tool definition
+    is what teaches the model the "use write for new files, edit for surgical
+    changes" rule.
+  </p>
+</div>
+
+<div class="endstate">
+  <h4>What you have now</h4>
+  <p>
+    A coding agent that can read, write, edit, and run commands. Ask it to
+    add a new field to a config and update the parser; it will read the
+    config, read the parser, edit both, and run the test suite. This is the
+    full <em>functional</em> shape of a coding harness &mdash; everything from
+    here on is making it pleasant, safe, and durable.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="03-agent-loop.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">3. The agent loop</span>
+  </a>
+  <a class="next" href="05-system-prompt.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">5. The system prompt</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

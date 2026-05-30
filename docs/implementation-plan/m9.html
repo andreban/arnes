@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>M9 &mdash; GUI</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">Milestone 9 &middot; The fourth face</span>
+  <h1>GUI</h1>
+  <p class="lead">
+    The last milestone. The same harness as M7, exposed through a graphical
+    interface. Stack choice is intentionally local &mdash; the modular
+    design means the GUI is just another <code>Frontend</code> impl, and
+    none of the work below changes if we switch toolkits later.
+  </p>
+</div>
+
+<h2 id="why-last">Why M9 is last</h2>
+
+<p>
+  Two reasons. First, by M8 we have HTTP/WS &mdash; which means the simplest
+  GUI option (a browser app talking to <code>arnes-serve</code>) is free
+  the moment that adapter ships. Second, every GUI stack imposes its own
+  asymmetric maintenance burden, and we'd rather absorb that <em>after</em>
+  the harness is genuinely complete than risk derailing core milestones.
+</p>
+
+<h2 id="pick-stack">First: pick a stack</h2>
+
+<p>
+  Three viable paths, described in detail on the
+  <a href="adapter-gui.html#three-paths">adapter page</a>. M9 begins with
+  a one-page ADR documenting the choice and the trade-off accepted.
+  Defaults the plan leans toward, in order of cheapness:
+</p>
+
+<table>
+  <thead><tr><th>Stack</th><th>Cheapest because</th><th>Catches</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Web app on <code>arnes-http</code></td>
+      <td>Zero new Rust. M8 already exists. Use any web framework you like for the front-end.</td>
+      <td>Requires <code>arnes-serve</code> running. Two processes (browser + server). Permission UX in the browser.</td>
+    </tr>
+    <tr>
+      <td>Tauri</td>
+      <td>Web UI inside a system webview. arnes-core in-process via Tauri command bridge. Single binary distribution.</td>
+      <td>Webview baggage on each OS. Some UI work in JS/TS.</td>
+    </tr>
+    <tr>
+      <td>egui or iced (native)</td>
+      <td>Pure Rust. Single binary. No webview. Fast.</td>
+      <td>All UI work in Rust. Smaller widget library than the web.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  The rest of this milestone assumes the <strong>web-on-HTTP</strong>
+  path. If we pick differently, the implementation tasks shift but the
+  shape of <code>GuiFrontend</code> (the trait impl) and the
+  <code>FrontendCapabilities</code> advertisement do not.
+</p>
+
+<h2 id="layout">Layout</h2>
+
+<div class="figure">
+<svg viewBox="0 0 760 320" role="img" aria-label="GUI layout">
+  <g font-family="ui-monospace, monospace" font-size="10">
+    <rect x="40" y="20" width="680" height="280" rx="10" fill="#0f1217" stroke="#fbbf24" stroke-opacity="0.5"/>
+
+    <!-- left sidebar: sessions -->
+    <rect x="40" y="20" width="180" height="280" fill="#141821" stroke="#232936"/>
+    <text x="55" y="44" fill="#fbbf24" font-weight="700">sessions</text>
+    <text x="55" y="68" fill="#9aa3b3">today</text>
+    <text x="55" y="84" fill="#e4e8ef">- refactor auth</text>
+    <text x="55" y="100" fill="#e4e8ef">- fix migration</text>
+    <text x="55" y="120" fill="#9aa3b3">yesterday</text>
+    <text x="55" y="136" fill="#e4e8ef">- summarize README</text>
+    <text x="55" y="152" fill="#e4e8ef">- draft 0.3 notes</text>
+    <text x="55" y="178" fill="#9aa3b3">earlier</text>
+    <text x="55" y="194" fill="#e4e8ef">- ...</text>
+
+    <!-- main area -->
+    <text x="240" y="44" fill="#9aa3b3">user: rename foo to bar everywhere</text>
+
+    <text x="240" y="74" fill="#34d399">assistant</text>
+    <text x="240" y="90" fill="#e4e8ef">Let me find all the usages first.</text>
+
+    <rect x="240" y="106" width="460" height="40" rx="6" fill="#1a1f2a" stroke="#a78bfa" stroke-opacity="0.6"/>
+    <text x="252" y="124" fill="#a78bfa">bash</text>
+    <text x="252" y="140" fill="#9aa3b3">$ rg -n &apos;\\bfoo\\b&apos; src/</text>
+
+    <text x="240" y="172" fill="#e4e8ef">Found in src/main.rs and src/lib.rs. Here&apos;s the diff:</text>
+
+    <!-- inline diff card -->
+    <rect x="240" y="184" width="460" height="64" rx="6" fill="#0f1217" stroke="#34d399" stroke-opacity="0.5"/>
+    <text x="252" y="200" fill="#34d399">edit  src/main.rs</text>
+    <text x="252" y="216" fill="#e4e8ef">- fn foo() {</text>
+    <text x="252" y="230" fill="#e4e8ef">+ fn bar() {</text>
+
+    <!-- bottom: input -->
+    <line x1="220" y1="260" x2="720" y2="260" stroke="#232936"/>
+    <rect x="240" y="270" width="460" height="22" rx="6" fill="#141821" stroke="#fbbf24"/>
+    <text x="252" y="285" fill="#fbbf24">&gt;</text>
+    <text x="267" y="285" fill="#e4e8ef">_</text>
+  </g>
+</svg>
+<div class="figure-caption">Sessions sidebar, transcript with rich rendering, input at the bottom. Same shape as the TUI, more pixels and richer media.</div>
+</div>
+
+<h2 id="frontend">GuiFrontend</h2>
+
+<p>
+  Identical surface to <code>HttpFrontend</code> and <code>TuiFrontend</code>
+  &mdash; the trait does not know it's driving a browser:
+</p>
+
+<pre><code>// Web-on-HTTP: GuiFrontend lives on the server side. The browser is a
+// WebSocket client. There is no new arnes crate; we just write a web
+// project that consumes M8's WS.
+
+// Tauri / native variant: arnes-gui crate.
+pub struct GuiFrontend {
+    state: Arc&lt;Mutex&lt;GuiState&gt;&gt;,
+    redraw: Arc&lt;dyn Fn() + Send + Sync&gt;,
+}
+
+#[async_trait]
+impl Frontend for GuiFrontend {
+    async fn on_event(&amp;self, ev: SessionEvent) {
+        self.state.lock().await.apply(ev);
+        (self.redraw)();
+    }
+    async fn request_permission(&amp;self, req: PermissionRequest) -&gt; Permission {
+        // Open modal, await user choice via oneshot, return decision.
+    }
+    fn capabilities(&amp;self) -&gt; FrontendCapabilities {
+        FrontendCapabilities {
+            markdown: true,
+            images: true,
+            embedded_resource: true,
+            permission_ui: true,
+        }
+    }
+}</code></pre>
+
+<h2 id="rich-rendering">Rich rendering enabled by capabilities</h2>
+
+<p>
+  The web frontend advertises capabilities the TUI can't &mdash;
+  <code>images: true</code>, <code>embedded_resource: true</code> &mdash;
+  and the system prompt picks them up. Tools that produce images can
+  emit them as <code>ContentBlock::Image</code> and the GUI will render
+  them inline. The diff display for <code>edit</code> can be a real
+  side-by-side instead of plain text.
+</p>
+
+<p>
+  Three rendering upgrades the GUI gets that the TUI deliberately skips:
+</p>
+
+<ul>
+  <li><strong>Real markdown.</strong> Headings, lists, code blocks with syntax highlighting via <code>highlight.js</code> or a Rust port.</li>
+  <li><strong>Structured diffs.</strong> <code>edit</code> tool emissions render as a real diff view (line-by-line, additions/removals coloured).</li>
+  <li><strong>Drag-and-drop attachments.</strong> Drop a file or image into the input box to attach it as a <code>ContentBlock::Image</code> or <code>ContentBlock::EmbeddedResource</code> in the next user message.</li>
+  <li><strong>Usage panel.</strong> A sidebar widget breaks down current session usage: input / output / cache / thinking tokens, known cost (or <em>"&mdash; (N turns unpriced)"</em> if any), context-window percentage, per-turn sparkline. Unknown-cost turns surface as a distinct visual state, not collapsed to zero.</li>
+</ul>
+
+<h2 id="permission-ui">Permission UX, GUI flavour</h2>
+
+<p>
+  A modal dialog over the transcript with three buttons (Allow, Always for
+  this tool, Deny) and a 60-character preview of the input. Same trait
+  method as the TUI's curses modal; native widget instead of an ASCII box.
+</p>
+
+<h2 id="auth-and-multi-tenant">Auth in the browser</h2>
+
+<p>
+  If the GUI is the browser path: the page asks for the bearer token on
+  first load, stores in <code>localStorage</code>, attaches to every
+  HTTP and WS request. This is V1's "single trust boundary" model:
+  whoever can open the page can drive the harness. Anything more (per-user
+  accounts, OAuth, ...) is post-V1.
+</p>
+
+<h2 id="tasks">Implementation tasks (web-on-HTTP path)</h2>
+
+<ol class="steps">
+  <li>Pick a stack; write the ADR. No new arnes crate if web-on-HTTP.</li>
+  <li>If web-on-HTTP: set up a small front-end project (any framework you like) under <code>web/</code> in the repo. Vite + plain TS is plenty.</li>
+  <li>Connect to <code>arnes-serve</code> via the M8 WebSocket. Render frames into a typed transcript view.</li>
+  <li>Implement markdown rendering and syntax highlighting in the transcript.</li>
+  <li>Implement the permission modal as a real dialog component; round-trip via the WS <code>permission_response</code> frame.</li>
+  <li>Implement the sessions sidebar: fetch <code>GET /v1/sessions</code>; click to load via <code>POST /v1/sessions/.../prompt</code> after attaching the WS.</li>
+  <li>Implement drag-and-drop file attachments &mdash; encode as content blocks in the next outbound prompt frame.</li>
+  <li>Document the M8 <code>FrontendCapabilities</code> the WS frontend advertises; ensure the system prompt builder consumes them server-side.</li>
+  <li>Smoke test against a real Gemini-backed <code>arnes-serve</code>; daily-driver use for a week before declaring M9 done.</li>
+</ol>
+
+<h2 id="tasks-tauri">Implementation tasks (Tauri path, if chosen instead)</h2>
+
+<ol class="steps">
+  <li>Create <code>arnes-gui</code> crate; add Tauri dependency.</li>
+  <li>Implement <code>GuiFrontend</code> wired to Tauri's event emitter; <code>Session</code> lives in the Rust side.</li>
+  <li>Front-end work is the same as the web-on-HTTP path; only the transport differs (Tauri commands instead of WS).</li>
+  <li>Build for macOS, Linux, Windows; document signing requirements per OS.</li>
+</ol>
+
+<h2 id="testing">Testing checklist</h2>
+
+<ul>
+  <li><strong>Smoke:</strong> open the GUI; prompt; watch the reply stream.</li>
+  <li><strong>Permission:</strong> trigger a destructive bash; modal appears; allow proceeds, deny rolls back to a clean error.</li>
+  <li><strong>Reconnect:</strong> kill the WS; verify the GUI shows "disconnected" state and reconnects when the server is back, re-attaching to the same session.</li>
+  <li><strong>Rich rendering:</strong> assert markdown, code blocks, diffs, and images all render correctly.</li>
+  <li><strong>Multi-session:</strong> open three sessions in three tabs against the same server; verify isolation.</li>
+</ul>
+
+<h2 id="risks">Risks specific to M9</h2>
+
+<ul>
+  <li><strong>Sunk cost on the wrong stack.</strong> Mitigation: the choice is reversible because <code>Frontend</code> is the only contract. Switching from web-on-HTTP to Tauri later means a new crate and a port of the front-end; the core doesn't move.</li>
+  <li><strong>Browser security model.</strong> Be careful with token storage and CORS. Document threat model: the GUI is for a single trusted user; do not deploy with arbitrary origins allowed.</li>
+  <li><strong>Maintenance burden.</strong> A GUI is a long-tail commitment. Be conservative with features; resist the urge to add settings panels and theme editors until users ask.</li>
+</ul>
+
+<div class="endstate">
+  <h4>End state of M9</h4>
+  <p>
+    Open the GUI (browser or desktop); see your sessions in a sidebar;
+    open one; prompt; watch a richly-rendered reply with inline diffs and
+    a working permission modal. Same harness as M1&ndash;M7, behind the
+    fourth face. The architecture promise &mdash; one core, many
+    consumers &mdash; is realized.
+  </p>
+</div>
+
+<h2 id="end">After M9</h2>
+
+<p>
+  The V1 plan is complete. What lives beyond it &mdash; extensions, MCP
+  bridging, multi-tenant HTTP, branching sessions, inline TUI images
+  &mdash; is enumerated on the <a href="roadmap.html#deferred">roadmap's
+  Deferred section</a>. Each is its own sub-plan; none of them require
+  rearchitecting what we have built.
+</p>
+
+<div class="pager">
+  <a class="prev" href="m8.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">M8: HTTP / WS</span>
+  </a>
+  <a class="next" href="roadmap.html">
+    <span class="pager-label">Up &uarr;</span>
+    <span class="pager-title">Back to roadmap</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

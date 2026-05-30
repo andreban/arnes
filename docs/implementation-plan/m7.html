@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>M7 &mdash; Compaction</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="agent">
+  <span class="eyebrow">Milestone 7 &middot; Durability</span>
+  <h1>Compaction</h1>
+  <p class="lead">
+    When the context window fills, summarize and continue. The harness
+    compresses the long tail of tool results and intermediate messages
+    into a structured summary, retains the most recent turns verbatim,
+    and the session keeps going. Indefinite-length sessions become real.
+  </p>
+</div>
+
+<h2 id="why">Why M7 is the last harness-capability milestone</h2>
+
+<p>
+  M1&ndash;M6 deliver a working agent. M7 is the difference between an
+  agent that works for thirty minutes and one that runs all afternoon.
+  The mechanism is small and well-scoped, but unlocks the
+  daily-driver experience &mdash; right before we shift to network and
+  GUI adapters.
+</p>
+
+<h2 id="new-module">arnes-core::compact</h2>
+
+<pre><code>// arnes-core/src/compact.rs
+
+pub struct Compactor {
+    pub trigger_ratio: f32,        // default 0.75
+    pub keep_recent: usize,        // default 6
+    pub summary_prompt: Cow&lt;'static, str&gt;,
+    pub model_window: u32,         // tokens; configured per-model
+}
+
+impl Compactor {
+    pub fn should_compact(&amp;self, history: &amp;[Message]) -&gt; bool;
+    pub fn approx_tokens(&amp;self, history: &amp;[Message]) -&gt; u32;
+
+    pub async fn run(
+        &amp;self,
+        history: &amp;[Message],
+        runner: &amp;AgentRunner,
+        progress: ProgressSink,
+    ) -&gt; Result&lt;Compacted&gt;;
+}
+
+pub struct Compacted {
+    pub summary_text: String,
+    pub kept_recent: Vec&lt;Message&gt;,
+    pub original_message_count: usize,
+    pub tokens_freed: u32,
+}
+
+pub struct CompactionEntry {
+    pub id: Ulid,
+    pub timestamp: u64,
+    pub summary_text: String,
+    pub original_message_ids: Vec&lt;Ulid&gt;,
+    pub kept_message_ids: Vec&lt;Ulid&gt;,
+    pub tokens_freed: u32,
+}</code></pre>
+
+<h2 id="token-counting">Token estimation</h2>
+
+<p>
+  Two sources contribute. The session's running <code>CumulativeUsage</code>
+  (M1) carries <em>actual</em> input-token counts reported by the provider
+  for prior turns &mdash; far more accurate than any heuristic. For the
+  about-to-be-sent user message we still need an estimate. A
+  <code>TokenCounter</code> trait lets the two combine, and lets us swap
+  in real tokenizers later without rewriting <code>Compactor</code>.
+</p>
+
+<pre><code>pub trait TokenCounter: Send + Sync {
+    fn count(&amp;self, history: &amp;[Message]) -&gt; u32;
+}
+
+pub struct CharsHeuristicCounter;
+impl TokenCounter for CharsHeuristicCounter {
+    fn count(&amp;self, history: &amp;[Message]) -&gt; u32 {
+        let chars: usize = history.iter().map(|m| m.char_len()).sum();
+        ((chars + 3) / 4) as u32
+    }
+}</code></pre>
+
+<p>
+  In practice the trigger combines both: prior turns' actual input tokens
+  from <code>cumulative_usage.input_tokens</code> + heuristic estimate of
+  the pending user message + a small constant for tool declarations and
+  the system prompt. The heuristic-only fallback applies when no prior
+  turn has run yet.
+</p>
+
+<h2 id="trigger">When to trigger</h2>
+
+<p>
+  Three conditions must hold simultaneously:
+</p>
+
+<ol class="steps">
+  <li>Token estimate &ge; <code>model_window * trigger_ratio</code>.</li>
+  <li>The session is <strong>between turns</strong>. Specifically: not in the middle of a tool_use / tool_result pair. Compacting mid-turn breaks the protocol &mdash; the model has emitted a tool call and is waiting for its result; cutting that pair leaves the next turn malformed.</li>
+  <li>The most recent message is a user message (we are about to start a new turn). This is the canonical safe point.</li>
+</ol>
+
+<div class="note">
+  <strong>Compaction is per-agent.</strong> The trigger evaluates one agent's
+  history against that agent's model window. V1 only ever runs the root
+  agent so this is invisible. Post-V1 sub-agents each maintain their own
+  history and compact independently. <code>Compactor::should_compact</code>
+  takes an <code>&amp;AgentHistory</code> (single-agent slice) from V1
+  onward, even though V1 only ever passes the root's slice &mdash; same
+  reasoning as elsewhere: the function signature stays right so the
+  post-V1 expansion is additive.
+</div>
+
+<pre><code>impl Session&lt;F, E&gt; {
+    pub async fn prompt(&amp;mut self, input: String) -&gt; Result&lt;()&gt; {
+        self.history.push(Message::user(input));
+
+        if let Some(c) = self.compactor.as_ref() {
+            if c.should_compact(&amp;self.history) {
+                self.run_compaction().await?;
+            }
+        }
+
+        // ... rest of the turn ...
+    }
+}</code></pre>
+
+<h2 id="summary-prompt">The summary prompt</h2>
+
+<p>
+  Compaction quality is summary-prompt quality. Asking for structured
+  output &mdash; not free text &mdash; reliably preserves the right things.
+</p>
+
+<pre><code>pub const DEFAULT_SUMMARY_PROMPT: &amp;str = r#"
+You are about to be replaced by a fresh instance of yourself, which will
+inherit the summary you produce now instead of the full transcript.
+
+Produce that summary now. Include, in this order:
+
+1. THE GOAL: What is the user trying to accomplish? One short paragraph.
+2. KEY DECISIONS: Concrete decisions made so far (chosen approach, rejected
+   alternatives, important constraints). Bullet list.
+3. STATE OF THE WORLD: Files read / edited / created with paths; commands
+   run with outcomes; anything else the new instance needs to know about
+   the state of the project. Bullet list.
+4. OPEN QUESTIONS: Anything raised and not resolved. Bullet list.
+5. NEXT STEP: What is the very next action the new instance should take?
+   One sentence.
+
+Be specific. The new instance has none of the original context; assume it
+will only know what you write here.
+"#;</code></pre>
+
+<h2 id="rewriting-history">Rewriting the history</h2>
+
+<pre><code>async fn run_compaction(&amp;mut self) -&gt; Result&lt;()&gt; {
+    let compactor = self.compactor.as_ref().unwrap();
+    let original = self.history.clone();
+
+    // Ask the model to summarize.
+    let compacted = compactor.run(&amp;original, &amp;self.runner, self.progress()).await?;
+
+    // Notify the frontends BEFORE rewriting state.
+    self.frontend.on_event(SessionEvent::Compacted {
+        message_count: original.len(),
+        tokens_freed: compacted.tokens_freed,
+    }).await;
+
+    // Rewrite in-memory state.
+    self.history = vec![
+        Message::user_synthetic(&amp;format!(
+            "[compaction summary] The previous transcript was compacted to fit the \
+             context window. The summary below stands in for it.\n\n{}",
+            compacted.summary_text
+        )),
+    ];
+    self.history.extend(compacted.kept_recent);
+
+    // Persist the compaction event to disk; original messages stay in the JSONL.
+    if let Some(w) = self.writer.as_mut() {
+        w.append(SessionRow::Compaction(CompactionEntry {
+            id: Ulid::new(),
+            timestamp: now_unix(),
+            summary_text: compacted.summary_text,
+            original_message_ids: /* IDs of compressed messages */,
+            kept_message_ids: /* IDs of preserved messages */,
+            tokens_freed: compacted.tokens_freed,
+        })).await?;
+    }
+    Ok(())
+}</code></pre>
+
+<p>
+  Critical: <strong>the JSONL on disk is not rewritten</strong>. Original
+  messages remain in the file. The compaction row records that an
+  in-memory reorganization happened. Future <code>--continue</code>
+  semantics: resume from the in-memory representation as of the last
+  compaction, not from a replay of every original row. The full history is
+  always recoverable for inspection.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 280" role="img" aria-label="Compaction in memory vs on disk">
+  <g font-family="ui-monospace, monospace" font-size="10">
+
+    <text x="180" y="22" text-anchor="middle" fill="#fbbf24" font-weight="700">in memory</text>
+    <text x="580" y="22" text-anchor="middle" fill="#a78bfa" font-weight="700">on disk (session.jsonl)</text>
+
+    <!-- in-memory before -->
+    <rect x="40" y="40" width="280" height="80" rx="8" fill="#141821" stroke="#fbbf24" stroke-opacity="0.5"/>
+    <text x="55" y="58" fill="#9aa3b3">before:</text>
+    <g fill="#e4e8ef">
+      <text x="55" y="76">u1, a1, u2, a2, ... u14, a14</text>
+      <text x="55" y="92" fill="#fbbf24">~180k tokens</text>
+      <text x="55" y="108" fill="#6b7384">(28 messages)</text>
+    </g>
+
+    <!-- in-memory after -->
+    <rect x="40" y="140" width="280" height="120" rx="8" fill="#141821" stroke="#34d399" stroke-opacity="0.6"/>
+    <text x="55" y="158" fill="#9aa3b3">after:</text>
+    <g fill="#e4e8ef">
+      <text x="55" y="178">[compaction summary]</text>
+      <text x="55" y="196">u12, a12, u13, a13, u14, a14</text>
+      <text x="55" y="216" fill="#34d399">~22k tokens</text>
+      <text x="55" y="232" fill="#6b7384">(7 messages, 6 kept + summary)</text>
+    </g>
+
+    <!-- on-disk (single column showing it grew) -->
+    <rect x="420" y="40" width="320" height="220" rx="8" fill="#141821" stroke="#a78bfa" stroke-opacity="0.5"/>
+    <g fill="#9aa3b3" font-size="9">
+      <text x="435" y="58">{header}</text>
+      <text x="435" y="74">{message u1}</text>
+      <text x="435" y="90">{message a1}</text>
+      <text x="435" y="106">...</text>
+      <text x="435" y="122">{message u14}</text>
+      <text x="435" y="138">{message a14}</text>
+      <text x="435" y="158" fill="#34d399">{compaction summary_text, ids}  &lt;-- new row, appended</text>
+      <text x="435" y="180">{message u15}     &lt;-- next user message</text>
+      <text x="435" y="196">{message a15}</text>
+      <text x="435" y="216">...</text>
+    </g>
+    <text x="430" y="246" fill="#6b7384" font-size="9">file grows append-only; nothing is rewritten or deleted</text>
+  </g>
+</svg>
+<div class="figure-caption">In-memory state shrinks; the file on disk only grows. Compaction is a marker, not a rewrite.</div>
+</div>
+
+<h2 id="frontends">Surfacing compaction</h2>
+
+<div class="compare">
+<div>
+<h5>TUI at M7</h5>
+<ul>
+  <li>A subtle one-line notice in the transcript: <em>"[compacted: 28 messages → 7, freed ~158k tokens]"</em>.</li>
+  <li><code>/compact</code> slash command to trigger manually before the threshold.</li>
+  <li>Optional <code>/inspect</code> command to view the summary the model produced.</li>
+</ul>
+</div>
+<div>
+<h5>ACP at M7</h5>
+<ul>
+  <li>Emit a <code>session/update</code> notification with a custom
+      <code>_meta</code> field carrying compaction info. Editors that
+      understand it can render a marker; those that don't, ignore it.</li>
+  <li>No new method &mdash; intentionally minimal protocol surface.</li>
+</ul>
+</div>
+</div>
+
+<h2 id="resume-semantics">Resume semantics revisited</h2>
+
+<p>
+  Loading a session that contains compaction rows is more involved than M6:
+</p>
+
+<ol class="steps">
+  <li>Read all rows top to bottom.</li>
+  <li>Find the last <code>Compaction</code> row.</li>
+  <li>Rebuild in-memory history as: synthetic summary message + kept_message_ids (looked up in the message rows).</li>
+  <li>Apply any messages that came <em>after</em> the last compaction row verbatim.</li>
+</ol>
+
+<p>
+  <code>load_session</code> from M6 grows this behaviour. A flag
+  <code>load_full = true</code> lets debug tooling rebuild the original
+  full history (every message, ignoring compactions) for inspection.
+</p>
+
+<h2 id="tasks">Implementation tasks</h2>
+
+<ol class="steps">
+  <li>Create <code>arnes-core::compact</code> with <code>Compactor</code>, <code>TokenCounter</code>, <code>Compacted</code>, <code>CompactionEntry</code>.</li>
+  <li>Add <code>SessionEvent::Compacted</code> variant.</li>
+  <li>Extend <code>SessionRow</code> with <code>Compaction</code> variant (the format actually grew at M6 for this; M7 finally writes the variant).</li>
+  <li>In <code>Session::prompt</code>: top-of-method check; if compacting, call <code>run_compaction</code> before continuing.</li>
+  <li>Implement <code>run_compaction</code>: ask the model via a fresh agent-rig call with the summary prompt; await; rewrite in-memory history; emit event; append disk row.</li>
+  <li>Extend <code>load_session</code> to honour compaction rows; add the <code>load_full</code> debug flag.</li>
+  <li>TUI: render the notice on <code>SessionEvent::Compacted</code>; <code>/compact</code> slash command calls <code>Session::compact()</code> public API.</li>
+  <li>ACP: emit <code>session/update</code> with <code>_meta</code> field on <code>Compacted</code>.</li>
+  <li>CLI: <code>--compaction-ratio</code> and <code>--keep-recent</code> override flags; <code>--no-compaction</code> disables (debug only).</li>
+</ol>
+
+<h2 id="testing">Testing checklist</h2>
+
+<ul>
+  <li><strong>Trigger correctness:</strong> token counter under threshold &rarr; no compaction; over threshold &rarr; compaction. Edge: mid-tool turn must not compact even when over threshold.</li>
+  <li><strong>Summary structure:</strong> scripted LLM returns a known structured summary; assert in-memory state rewrites correctly with summary + last K turns.</li>
+  <li><strong>Round-trip after compaction:</strong> write a session through one compaction; close; load; assert the loaded in-memory state matches what was active when closed.</li>
+  <li><strong>load_full debug:</strong> same file loaded with the flag returns every original message ignoring the compaction.</li>
+  <li><strong>Repeated compaction:</strong> drive a session through two compactions; ensure the second compresses the first's summary plus the intervening tail without errors.</li>
+  <li><strong>ACP _meta:</strong> assert the outbound notification has the expected shape; assert a hand-written client that ignores _meta still functions.</li>
+</ul>
+
+<h2 id="risks">Risks specific to M7</h2>
+
+<ul>
+  <li><strong>Summary loses load-bearing detail.</strong> If the summary says "use snake_case" but not <em>where</em>, the next instance forgets. The structured prompt mitigates; the only real fix is improving the prompt iteratively.</li>
+  <li><strong>Cascading compactions degrade quality.</strong> Each pass is lossy; three passes is summarizing summaries of summaries. For sessions that compact more than twice, consider surfacing a <em>"long session, consider starting fresh"</em> hint to the user.</li>
+  <li><strong>Mid-turn compaction.</strong> The check is between-turn; a stray code path could break this. Add an assertion at the top of <code>run_compaction</code> that the last message is a user message and emit a loud error if not.</li>
+  <li><strong>Token estimate drift.</strong> The 4-chars heuristic gets worse with code-heavy content. Watch for over-aggressive triggering; consider per-model overrides.</li>
+</ul>
+
+<div class="endstate">
+  <h4>End state of M7</h4>
+  <p>
+    A multi-day coding session does not hit a context wall. Compaction
+    happens automatically at threshold; surfaces as a one-line notice in
+    the TUI and a <code>_meta</code> tag in ACP <code>session/update</code>;
+    the JSONL on disk retains the full history for inspection. With M1
+    through M7 done, arnes is functionally complete as a daily-driver
+    coding agent.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="m6.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">M6: Sessions</span>
+  </a>
+  <a class="next" href="m8.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">M8: HTTP / WS</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

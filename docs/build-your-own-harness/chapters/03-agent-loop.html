@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 3 &mdash; The agent loop</title>
+<link rel="stylesheet" href="../assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">π</span>
+    <span>Build Your Own Harness</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part I &mdash; Foundation</h4><ul>
+    <li><a href="01-streaming-client.html">1. Streaming LLM client</a></li>
+    <li><a href="02-first-tool.html">2. Your first tool call</a></li>
+    <li><a href="03-agent-loop.html">3. The agent loop</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part II &mdash; A real coding agent</h4><ul>
+    <li><a href="04-coding-toolkit.html">4. A real coding toolkit</a></li>
+    <li><a href="05-system-prompt.html">5. The system prompt</a></li>
+    <li><a href="06-sessions.html">6. Sessions: save &amp; resume</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part III &mdash; Making it real</h4><ul>
+    <li><a href="07-live-tui.html">7. A live terminal UI</a></li>
+    <li><a href="08-extensions.html">8. Extensions</a></li>
+    <li><a href="09-skills.html">9. Skills</a></li>
+    <li><a href="10-compaction.html">10. Compaction</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="agent">
+  <span class="eyebrow">Chapter 3 &middot; Part I</span>
+  <h1>The agent loop</h1>
+  <p class="lead">
+    Chapter 2 gave you a model that can call one tool, then answer. Real tasks
+    need more than that. The agent loop is the small piece of control flow
+    that turns a one-shot tool call into open-ended problem solving:
+    <em>"Keep going until you have a real answer."</em>
+  </p>
+</div>
+
+<h2 id="why-a-loop">Why a loop?</h2>
+
+<p>
+  Consider this prompt:
+  <em>"Find the file that defines our database connection and tell me how it
+  is configured."</em>
+</p>
+
+<p>
+  No single tool call answers that. The model needs to list the project, read
+  a few candidates, follow imports, then summarize. It will issue several tool
+  calls, each one informed by the results of the previous ones. Your harness
+  has to be willing to keep running them until the model says it is finished.
+</p>
+
+<p>
+  That is the loop. It has exactly two states.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 320" role="img" aria-label="The agent loop">
+  <defs>
+    <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+    </marker>
+  </defs>
+
+  <g font-family="ui-monospace, monospace" font-size="11">
+    <!-- start node -->
+    <circle cx="80" cy="160" r="22" fill="#141821" stroke="#fbbf24"/>
+    <text x="80" y="164" text-anchor="middle" fill="#fbbf24">start</text>
+
+    <!-- call LLM -->
+    <rect x="160" y="130" width="180" height="60" rx="10" fill="#141821" stroke="#34d399"/>
+    <text x="250" y="158" text-anchor="middle" fill="#34d399" font-weight="700">call LLM</text>
+    <text x="250" y="176" text-anchor="middle" fill="#9aa3b3" font-size="10">stream reply, build message</text>
+
+    <!-- decision -->
+    <polygon points="430,160 480,120 530,160 480,200" fill="#141821" stroke="#fbbf24"/>
+    <text x="480" y="155" text-anchor="middle" fill="#fbbf24" font-size="10">any</text>
+    <text x="480" y="170" text-anchor="middle" fill="#fbbf24" font-size="10">tool_use?</text>
+
+    <!-- yes: run tools -->
+    <rect x="580" y="130" width="160" height="60" rx="10" fill="#141821" stroke="#a78bfa"/>
+    <text x="660" y="158" text-anchor="middle" fill="#a78bfa" font-weight="700">run tools</text>
+    <text x="660" y="176" text-anchor="middle" fill="#9aa3b3" font-size="10">append results</text>
+
+    <!-- done -->
+    <circle cx="480" cy="270" r="22" fill="#141821" stroke="#34d399"/>
+    <text x="480" y="274" text-anchor="middle" fill="#34d399">done</text>
+
+    <!-- arrows -->
+    <line x1="102" y1="160" x2="158" y2="160" stroke="#9aa3b3" stroke-width="1.5" marker-end="url(#ar3)"/>
+    <line x1="340" y1="160" x2="428" y2="160" stroke="#9aa3b3" stroke-width="1.5" marker-end="url(#ar3)"/>
+    <line x1="530" y1="160" x2="578" y2="160" stroke="#9aa3b3" stroke-width="1.5" marker-end="url(#ar3)"/>
+    <text x="555" y="152" fill="#34d399" font-size="10">yes</text>
+
+    <!-- back edge -->
+    <path d="M 660 190 C 660 250, 350 250, 250 195" fill="none" stroke="#9aa3b3" stroke-width="1.5" marker-end="url(#ar3)" stroke-dasharray="0"/>
+    <text x="460" y="245" fill="#9aa3b3" font-size="10">loop</text>
+
+    <!-- no -->
+    <line x1="480" y1="200" x2="480" y2="246" stroke="#9aa3b3" stroke-width="1.5" marker-end="url(#ar3)"/>
+    <text x="495" y="225" fill="#a78bfa" font-size="10">no</text>
+  </g>
+</svg>
+<div class="figure-caption">Two states, one decision. The whole loop fits in your head.</div>
+</div>
+
+<h2 id="the-loop">The loop, in twelve lines</h2>
+
+<pre><code>async function runAgent(messages: Message[], tools: ToolDecl[]) {
+  while (true) {
+    const assistant = await streamAssistantReply(messages, tools);
+    messages.push(assistant);
+
+    const toolCalls = assistant.content.filter(c =&gt; c.type === "tool_use");
+    if (toolCalls.length === 0) return; // model gave a final answer
+
+    const results = await Promise.all(toolCalls.map(executeOne));
+    messages.push({ role: "user", content: results });
+  }
+}</code></pre>
+
+<p>
+  That is the whole thing. Two states (talk, run), one branch (any tool calls
+  this turn?). Everything you will add for the rest of this book sits around
+  that twelve-line core; the core itself almost never changes.
+</p>
+
+<h2 id="stop-reason">Knowing when the model is done</h2>
+
+<p>
+  In Chapter 1 we read individual stream events; we also need to look at the
+  <em>terminator</em>. Most providers send a final event carrying a
+  <code>stop_reason</code>. The values you care about:
+</p>
+
+<table>
+  <thead><tr><th>Stop reason</th><th>What it means</th><th>What you do</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>end_turn</code></td>
+      <td>The model is done speaking.</td>
+      <td>If there are tool calls, run them. If not, exit the loop.</td>
+    </tr>
+    <tr>
+      <td><code>tool_use</code></td>
+      <td>The model paused specifically to wait for tool results.</td>
+      <td>Run the tools, send results, continue.</td>
+    </tr>
+    <tr>
+      <td><code>max_tokens</code></td>
+      <td>You hit the output token limit mid-reply.</td>
+      <td>Surface this to the user. The reply is truncated and likely useless.</td>
+    </tr>
+    <tr>
+      <td><code>stop_sequence</code></td>
+      <td>A stop sequence you configured fired.</td>
+      <td>Treat like <code>end_turn</code>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  In practice the simple <em>"any tool calls?"</em> check from the snippet
+  above does the right thing in almost every case. The stop reason is for
+  diagnostics and for catching the broken cases.
+</p>
+
+<h2 id="parallel">Parallel tool calls</h2>
+
+<p>
+  A single assistant turn can contain multiple <code>tool_use</code> blocks.
+  When that happens, do not run them one at a time. Run them concurrently.
+  Modern models specifically batch independent calls (three file reads, two
+  greps) precisely because the harness is supposed to fan them out.
+</p>
+
+<pre><code>const results = await Promise.all(
+  toolCalls.map(async (call) =&gt; {
+    try {
+      const output = await executors[call.name](call.input);
+      return { type: "tool_result", toolCallId: call.id, content: output };
+    } catch (err) {
+      return { type: "tool_result", toolCallId: call.id, content: String(err), isError: true };
+    }
+  })
+);</code></pre>
+
+<p>
+  But: <strong>order in the response matters</strong>. The
+  <code>tool_result</code> blocks must appear in the same order as the
+  <code>tool_use</code> blocks the model emitted. <code>Promise.all</code>
+  preserves index order, which is exactly what you want. If you ever switch to
+  a queue-based model, sort by index before sending.
+</p>
+
+<p>
+  Some tools should never run in parallel &mdash; anything that mutates shared
+  state (a tool that changes the working directory, a tool that pops dialogs).
+  Mark those tools <code>executionMode: "sequential"</code> and degrade to
+  serial when any sequential tool is present in the batch.
+</p>
+
+<h2 id="safety">Three things you must guard against</h2>
+
+<p>
+  An unbounded loop driven by a probabilistic system is a recipe for runaway
+  behaviour. Three guards keep it tame:
+</p>
+
+<ol class="steps">
+  <li>
+    <strong>A turn cap.</strong> Bail out after, say, 50 turns of pure tool
+    use with no final answer. The model is stuck or the task is impossible;
+    either way, hand control back to the user.
+  </li>
+  <li>
+    <strong>An abort signal.</strong> Pipe an <code>AbortSignal</code> through
+    the loop and into your tool executors so the user can press
+    <kbd>Ctrl-C</kbd> and have everything stop cleanly &mdash; the in-flight
+    HTTP request, the bash process, the file write. Without this, the user is
+    a hostage to the model.
+  </li>
+  <li>
+    <strong>Visible progress.</strong> Print which tool is being called and a
+    short preview of its input. A silent loop that hangs for thirty seconds is
+    indistinguishable from a crash. The model is doing things; show that.
+  </li>
+</ol>
+
+<h2 id="events">Emitting events</h2>
+
+<p>
+  As your harness grows, more parts of it will care about what is happening
+  inside the loop: the UI wants to draw tool-call cards, the session log wants
+  to record each message, an extension might want to veto a tool. Push that
+  curiosity out of the loop itself by emitting events instead of calling those
+  systems directly:
+</p>
+
+<pre><code>type AgentEvent =
+  | { type: "turn_start" }
+  | { type: "message"; message: Message }
+  | { type: "tool_start"; call: ToolUseBlock }
+  | { type: "tool_end"; result: ToolResultBlock }
+  | { type: "turn_end" };</code></pre>
+
+<p>
+  The loop emits; subscribers react. In Chapter 7 your TUI subscribes to
+  redraw on each event. In Chapter 6 your session writer subscribes to append
+  every message to disk. In Chapter 8 your extension runtime subscribes to
+  every event and forwards them to extensions. One emitter; many independent
+  consumers.
+</p>
+
+<div class="prod">
+  <span class="prod-label">In pi's code</span>
+  <p>
+    Pi's loop lives in
+    <code>packages/agent/src/agent-loop.ts</code> &mdash; a few hundred lines
+    of TypeScript, but if you squint you can see the same twelve-line skeleton
+    in there. The richer parts are the event vocabulary
+    (<code>turn_start</code>, <code>message_update</code>,
+    <code>tool_execution_start</code>, &hellip;), the
+    sequential/parallel mode logic, and a "steering"/"follow-up" mechanism
+    that lets the user inject messages mid-flight. The
+    <code>Agent</code> class in
+    <code>packages/agent/src/agent.ts</code> wraps the loop with mutable
+    state, subscribers, and lifecycle methods.
+  </p>
+</div>
+
+<div class="endstate">
+  <h4>What you have now</h4>
+  <p>
+    A genuine research agent. Give it a single file path and ask for an
+    explanation of the surrounding module; it will read, follow imports, read
+    more, and produce a synthesis. With just <code>read_file</code> in its
+    toolbox, that is already useful. The next chapter is about giving it
+    enough tools to <em>change</em> things, not just describe them.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="02-first-tool.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">2. Your first tool call</span>
+  </a>
+  <a class="next" href="04-coding-toolkit.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">4. A real coding toolkit</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

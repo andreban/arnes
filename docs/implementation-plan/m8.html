@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>M8 &mdash; HTTP / WebSockets</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="ai">
+  <span class="eyebrow">Milestone 8 &middot; Networked</span>
+  <h1>HTTP / WebSockets adapter</h1>
+  <p class="lead">
+    Mount arnes behind a single axum server: REST routes for
+    request/response shapes, a WebSocket route per session for
+    streaming. Designed so that ACP-over-WS slots in as a
+    second route tree the moment upstream lands the transport spec.
+  </p>
+</div>
+
+<h2 id="why">Why M8 after the harness is complete</h2>
+
+<p>
+  With M1&ndash;M7 done, the harness is a finished daily-driver. M8 is the
+  first milestone aimed at <em>other people's</em> machines &mdash; remote
+  agents, headless CI, browser UIs. We do this only after the local story
+  is solid, so the network surface inherits a working core rather than
+  exposing a half-built one.
+</p>
+
+<h2 id="new-crate">arnes-http crate</h2>
+
+<pre><code>crates/arnes-http/
+├── src/
+│   ├── lib.rs              # public run() entry point
+│   ├── routes/
+│   │   ├── mod.rs
+│   │   ├── health.rs       # GET /healthz
+│   │   ├── sessions.rs     # CRUD routes
+│   │   ├── prompt.rs       # POST .../prompt (non-streaming)
+│   │   └── ws.rs           # WebSocket upgrade handler
+│   ├── registry.rs         # SessionRegistry
+│   ├── frontend.rs         # HttpFrontend (per-WS-connection)
+│   ├── auth.rs             # Bearer-token middleware
+│   └── error.rs            # ApiError -&gt; status code mapping
+├── tests/
+└── Cargo.toml              # depends on axum, tower-http, tokio-tungstenite</code></pre>
+
+<h2 id="endpoints">REST endpoints, V1</h2>
+
+<table>
+  <thead><tr><th>Method &amp; path</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /healthz</code></td><td>200 OK with build info. No auth.</td></tr>
+    <tr><td><code>GET /v1/sessions</code></td><td>List sessions (id, title, created, last activity).</td></tr>
+    <tr><td><code>POST /v1/sessions</code></td><td>Create. Body: <code>{ model, cwd, tools?, mode? }</code>. Returns session id.</td></tr>
+    <tr><td><code>GET /v1/sessions/{id}</code></td><td>Metadata + cumulative usage (tokens, known cost, unpriced-turn count) + paginated history.</td></tr>
+    <tr><td><code>DELETE /v1/sessions/{id}</code></td><td>Close session and delete its JSONL.</td></tr>
+    <tr><td><code>POST /v1/sessions/{id}/prompt</code></td><td>Non-streaming prompt. Returns the final assistant message after the loop.</td></tr>
+    <tr><td><code>POST /v1/sessions/{id}/cancel</code></td><td>Cancel the in-flight prompt.</td></tr>
+    <tr><td><code>POST /v1/sessions/{id}/compact</code></td><td>Force compaction now.</td></tr>
+    <tr><td><code>GET /v1/sessions/{id}/ws</code></td><td>WebSocket upgrade. Streaming session view.</td></tr>
+    <tr><td><code>GET /v1/tools</code></td><td>List active tools and their schemas.</td></tr>
+    <tr><td><code>GET /v1/skills</code></td><td>List loaded skills.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="websocket">WebSocket frame vocabulary</h2>
+
+<p>
+  The frame types align deliberately with ACP's <code>session/update</code>
+  variants so a future ACP-over-WS handler can share most of the encoding
+  logic.
+</p>
+
+<h3 id="client-to-server">Client &rarr; server</h3>
+
+<pre><code>{ "type": "prompt", "content": [ { "type": "text", "text": "..." } ] }
+{ "type": "cancel" }
+{ "type": "set_mode", "mode": "ask" }
+{ "type": "permission_response", "id": "...", "decision": "allow" | "deny" | "always_allow" }</code></pre>
+
+<h3 id="server-to-client">Server &rarr; client</h3>
+
+<pre><code>{ "type": "agent_message_chunk",   "text": "..." }
+{ "type": "agent_thought_chunk",   "text": "..." }
+{ "type": "tool_call",             "id": "...", "name": "bash", "input": {...}, "status": "pending" }
+{ "type": "tool_call_update",      "id": "...", "status": "running"|"completed"|"failed", "result"?: {...} }
+{ "type": "permission_request",    "id": "...", "tool": "bash", "input": {...}, "summary": "..." }
+{ "type": "turn_end",              "stop_reason": "end_turn", "usage": { ... } }
+{ "type": "session_usage",         "cumulative": { ... } }   // cumulative after the turn
+{ "type": "compacted",             "tokens_freed": 158000, "message_count": 28 }
+{ "type": "error",                 "message": "..." }</code></pre>
+
+<h2 id="frontend">HttpFrontend</h2>
+
+<pre><code>// arnes-http/src/frontend.rs
+
+pub struct HttpFrontend {
+    tx: mpsc::UnboundedSender&lt;ServerFrame&gt;,
+    pending_perms: Mutex&lt;HashMap&lt;Uuid, oneshot::Sender&lt;Permission&gt;&gt;&gt;,
+}
+
+#[async_trait]
+impl Frontend for HttpFrontend {
+    async fn on_event(&amp;self, ev: SessionEvent) {
+        let _ = self.tx.send(ev.into_server_frame());
+    }
+
+    async fn request_permission(&amp;self, req: PermissionRequest) -&gt; Permission {
+        let id = Uuid::new_v4();
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.pending_perms.lock().await.insert(id, resp_tx);
+        let _ = self.tx.send(ServerFrame::PermissionRequest { id, req });
+        match tokio::time::timeout(Duration::from_secs(120), resp_rx).await {
+            Ok(Ok(p)) =&gt; p,
+            _ =&gt; Permission::Deny,  // timed out or socket dropped
+        }
+    }
+}</code></pre>
+
+<p>
+  One <code>HttpFrontend</code> per WebSocket connection. If the socket
+  drops mid-flight, in-flight permission requests time out and become
+  denies; the session itself stays alive (the client can reconnect via a
+  fresh WS upgrade and re-attach).
+</p>
+
+<h2 id="registry">SessionRegistry</h2>
+
+<pre><code>// arnes-http/src/registry.rs
+
+pub struct SessionRegistry {
+    sessions: DashMap&lt;Ulid, Arc&lt;Mutex&lt;Session&lt;HttpFrontend, LocalHost&gt;&gt;&gt;&gt;,
+    busy:     DashMap&lt;Ulid, ()&gt;,  // session id is here while a prompt is in flight
+    idle_timeout: Duration,
+}
+
+impl SessionRegistry {
+    pub fn create(&amp;self, opts: NewSessionOpts) -&gt; Result&lt;Ulid&gt;;
+    pub fn get(&amp;self, id: Ulid) -&gt; Option&lt;Arc&lt;Mutex&lt;Session&lt;...&gt;&gt;&gt;&gt;;
+    pub fn delete(&amp;self, id: Ulid) -&gt; Result&lt;()&gt;;
+
+    /// Try to mark busy. Returns Err(Conflict) if already busy.
+    pub fn try_acquire(&amp;self, id: Ulid) -&gt; Result&lt;BusyGuard&gt;;
+
+    /// Background task: evict idle sessions.
+    pub fn spawn_gc(self: Arc&lt;Self&gt;);
+}</code></pre>
+
+<p>
+  One <code>Session</code> may have multiple attached WebSocket viewers
+  (read-only), but only one writer. <code>POST .../prompt</code> and
+  <code>WS prompt</code> frames both call <code>try_acquire</code>;
+  concurrent calls get <code>409 Conflict</code>.
+</p>
+
+<h2 id="auth">Auth and CORS</h2>
+
+<p>
+  V1 auth: single bearer token configured at server start. Every request
+  (including WS upgrade) must carry <code>Authorization: Bearer
+  &lt;token&gt;</code>; mismatch returns 401. The <code>/healthz</code>
+  endpoint is the only exception.
+</p>
+
+<pre><code>let app = Router::new()
+    .route("/healthz", get(health))
+    .nest("/v1", v1_router())
+    .layer(tower_http::cors::CorsLayer::new()
+        .allow_origin(cli.cors_origins)        // explicit allow-list
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([AUTHORIZATION, CONTENT_TYPE]))
+    .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
+    .layer(tower_http::trace::TraceLayer::new_for_http());</code></pre>
+
+<p>
+  No TLS in the binary. Operators run the server behind a reverse proxy
+  (caddy, nginx, traefik) that terminates TLS. Document this prominently.
+</p>
+
+<h2 id="acp-over-ws">Hook for ACP-over-WS (deferred but designed in)</h2>
+
+<p>
+  When upstream lands the ACP transport spec, we add a second route tree:
+</p>
+
+<pre><code>let app = app.route("/acp/ws", get(acp_ws_upgrade));
+
+async fn acp_ws_upgrade(ws: WebSocketUpgrade, State(registry): State&lt;...&gt;) -&gt; Response {
+    ws.on_upgrade(|socket| async move {
+        let (tx, rx) = json_rpc_framing_over_ws(socket);
+        // Hand the channel to the SAME router that arnes-acp uses for stdio.
+        arnes_acp::serve(tx, rx, registry).await;
+    })
+}</code></pre>
+
+<p>
+  Because <code>arnes-acp</code>'s router is transport-agnostic, the
+  handler code is unchanged. Only the framing differs.
+</p>
+
+<h2 id="host">Host in HTTP mode</h2>
+
+<p>
+  V1: <code>LocalHost</code>. The server has full local-filesystem and
+  process access. Suitable for self-hosted single-trust-boundary
+  deployments. Documented limitation: do not expose
+  <code>arnes-serve</code> to untrusted users without a sandboxed
+  <code>Host</code> impl (out of scope for V1).
+</p>
+
+<h2 id="tasks">Implementation tasks</h2>
+
+<ol class="steps">
+  <li>Create the <code>arnes-http</code> crate; add axum and tower-http as deps.</li>
+  <li>Implement <code>SessionRegistry</code> with per-session locking, idle GC.</li>
+  <li>Implement REST routes (sessions CRUD, prompt, cancel, compact, tools, skills, healthz).</li>
+  <li>Implement WS upgrade and frame serialization. Define the server-side <code>ServerFrame</code> enum mirroring <code>SessionEvent</code> with the permission_request addition.</li>
+  <li>Implement <code>HttpFrontend</code> with the pending-permissions map and oneshot reply channel.</li>
+  <li>Auth middleware (constant-time token compare); CORS layer; trace layer.</li>
+  <li>Add a <code>main.rs</code> to <code>arnes-http</code> so it produces the <code>arnes-serve</code> binary. Flags: <code>--bind &lt;addr&gt;</code>, <code>--token &lt;t&gt;</code>, <code>--cors-origin &lt;origin&gt;</code>, plus the shared <code>CommonOpts</code>.</li>
+  <li>Write an example browser page (~150 lines of HTML+JS, dropped under <code>examples/</code>) that connects to the WS and renders a basic transcript. Useful for smoke testing; not shipped as a real GUI.</li>
+  <li>Integration test: spin up the server in-process; make REST calls with <code>reqwest</code>; connect WS with <code>tokio-tungstenite</code>; drive a scripted scenario end-to-end.</li>
+</ol>
+
+<h2 id="testing">Testing checklist</h2>
+
+<ul>
+  <li><strong>Routes:</strong> happy path on every endpoint; 401 without token; 404 for missing session; 409 on concurrent prompt.</li>
+  <li><strong>WS:</strong> upgrade succeeds with token; prompt frame triggers stream of update frames; permission round-trip works.</li>
+  <li><strong>Cancel:</strong> POST /cancel mid-prompt; verify the WS receives a cancel/error frame and the registry releases the busy lock.</li>
+  <li><strong>Idle GC:</strong> spin up sessions, advance time, verify eviction.</li>
+  <li><strong>CORS:</strong> request from disallowed origin rejected; allowed origin succeeds.</li>
+  <li><strong>Auth timing:</strong> constant-time compare (no measurable timing difference between mismatched tokens of equal length).</li>
+  <li><strong>Reconnect:</strong> drop the WS mid-stream; reconnect with the same session id; verify the session is still alive.</li>
+</ul>
+
+<h2 id="risks">Risks specific to M8</h2>
+
+<ul>
+  <li><strong>Long-running prompts vs HTTP timeouts.</strong> Reverse proxies often kill idle HTTP connections after 30&ndash;60s. The non-streaming <code>POST .../prompt</code> may exceed this. Document recommended proxy settings; suggest WS for any prompt expected to last more than a few seconds.</li>
+  <li><strong>Backpressure on the WS.</strong> If a client falls behind on event consumption, the unbounded channel grows. Bound the channel (1000 frames?) and disconnect slow clients.</li>
+  <li><strong>Permission timeouts.</strong> 120s default is arbitrary. Make configurable; reaching the timeout should surface a clear error frame.</li>
+  <li><strong>Server crash mid-prompt.</strong> The JSONL log captures messages turn-by-turn; mid-turn loss is OK because partial assistant messages were never appended. Session state survives the crash.</li>
+</ul>
+
+<div class="endstate">
+  <h4>End state of M8</h4>
+  <p>
+    <code>arnes-serve --bind 127.0.0.1:7878 --token $T</code> stays up
+    for a workday. A simple browser page connects via WebSocket and renders
+    a usable transcript. A shell script can spin up a one-shot session
+    with <code>curl</code>. The hook for ACP-over-WS is in place;
+    plugging it in is a small change when upstream is ready.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="m7.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">M7: Compaction</span>
+  </a>
+  <a class="next" href="m9.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">M9: GUI</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

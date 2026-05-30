@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 10 &mdash; Compaction</title>
+<link rel="stylesheet" href="../assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">π</span>
+    <span>Build Your Own Harness</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part I &mdash; Foundation</h4><ul>
+    <li><a href="01-streaming-client.html">1. Streaming LLM client</a></li>
+    <li><a href="02-first-tool.html">2. Your first tool call</a></li>
+    <li><a href="03-agent-loop.html">3. The agent loop</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part II &mdash; A real coding agent</h4><ul>
+    <li><a href="04-coding-toolkit.html">4. A real coding toolkit</a></li>
+    <li><a href="05-system-prompt.html">5. The system prompt</a></li>
+    <li><a href="06-sessions.html">6. Sessions: save &amp; resume</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part III &mdash; Making it real</h4><ul>
+    <li><a href="07-live-tui.html">7. A live terminal UI</a></li>
+    <li><a href="08-extensions.html">8. Extensions</a></li>
+    <li><a href="09-skills.html">9. Skills</a></li>
+    <li><a href="10-compaction.html">10. Compaction</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="agent">
+  <span class="eyebrow">Chapter 10 &middot; Part III</span>
+  <h1>Compaction</h1>
+  <p class="lead">
+    A long enough session will eventually hit the model's context window. The
+    naive failure is a hard wall: requests start being rejected, the user has
+    to start over, the work is gone. Compaction is the technique that turns
+    the wall into a smooth slope: when you are running out of room, ask the
+    model to summarize what just happened, replace the history with the
+    summary, and keep going.
+  </p>
+</div>
+
+<h2 id="the-wall">The shape of the wall</h2>
+
+<p>
+  Every model has a context window measured in tokens: 200,000 is common at
+  the time of writing, larger windows exist, and the long tail of older or
+  cheaper models sits well below. Each request sends:
+</p>
+
+<ul>
+  <li>The system prompt.</li>
+  <li>Every prior message in the conversation.</li>
+  <li>The tool declarations.</li>
+</ul>
+
+<p>
+  Tool results &mdash; long file contents, bash output &mdash; balloon the
+  history much faster than the conversational text would suggest. Twenty
+  turns of "agent reads a file, edits it, runs tests" can comfortably reach
+  100,000 tokens. At some threshold, you either compact or you fail.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 280" role="img" aria-label="Compaction before/after">
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <!-- before -->
+    <text x="180" y="22" text-anchor="middle" fill="#fbbf24" font-weight="700">before compaction</text>
+    <rect x="40" y="40" width="280" height="200" rx="10" fill="#141821" stroke="#fbbf24"/>
+
+    <!-- a stack of message blocks -->
+    <g>
+      <rect x="60"  y="56" width="240" height="14" fill="#0f1217" stroke="#1a1f2a"/>
+      <rect x="60"  y="74" width="240" height="14" fill="#0f1217" stroke="#1a1f2a"/>
+      <rect x="60"  y="92" width="240" height="32" fill="#a78bfa" fill-opacity="0.18" stroke="#1a1f2a"/>
+      <rect x="60"  y="128" width="240" height="14" fill="#0f1217" stroke="#1a1f2a"/>
+      <rect x="60"  y="146" width="240" height="40" fill="#a78bfa" fill-opacity="0.18" stroke="#1a1f2a"/>
+      <rect x="60"  y="190" width="240" height="14" fill="#0f1217" stroke="#1a1f2a"/>
+      <rect x="60"  y="208" width="240" height="24" fill="#fbbf24" fill-opacity="0.2" stroke="#1a1f2a"/>
+    </g>
+    <text x="180" y="252" text-anchor="middle" fill="#9aa3b3" font-size="10">28 messages, 187,432 tokens, near the limit</text>
+
+    <!-- arrow -->
+    <text x="380" y="120" text-anchor="middle" fill="#fbbf24" font-size="14">&rarr;</text>
+    <text x="380" y="140" text-anchor="middle" fill="#6b7384" font-size="10">summarize</text>
+    <text x="380" y="156" text-anchor="middle" fill="#6b7384" font-size="10">+ keep tail</text>
+
+    <!-- after -->
+    <text x="580" y="22" text-anchor="middle" fill="#34d399" font-weight="700">after compaction</text>
+    <rect x="440" y="40" width="280" height="200" rx="10" fill="#141821" stroke="#34d399"/>
+
+    <g>
+      <rect x="460" y="56"  width="240" height="80" fill="#34d399" fill-opacity="0.2" stroke="#1a1f2a"/>
+      <text x="580" y="100" text-anchor="middle" fill="#34d399" font-size="11" font-weight="700">[ compaction summary ]</text>
+      <text x="580" y="116" text-anchor="middle" fill="#9aa3b3" font-size="9">goal, decisions, files touched,</text>
+      <text x="580" y="128" text-anchor="middle" fill="#9aa3b3" font-size="9">open questions</text>
+
+      <rect x="460" y="146" width="240" height="14" fill="#0f1217" stroke="#1a1f2a"/>
+      <rect x="460" y="164" width="240" height="24" fill="#a78bfa" fill-opacity="0.18" stroke="#1a1f2a"/>
+      <rect x="460" y="192" width="240" height="14" fill="#0f1217" stroke="#1a1f2a"/>
+      <rect x="460" y="210" width="240" height="22" fill="#fbbf24" fill-opacity="0.2" stroke="#1a1f2a"/>
+    </g>
+    <text x="580" y="252" text-anchor="middle" fill="#9aa3b3" font-size="10">5 messages, ~18,000 tokens, room to keep going</text>
+  </g>
+</svg>
+<div class="figure-caption">A long tail of tool results becomes one compact summary, then a few preserved recent messages so the agent can continue smoothly.</div>
+</div>
+
+<h2 id="the-mechanism">The mechanism, end to end</h2>
+
+<p>
+  Compaction is three steps. None of them require new infrastructure; you
+  reuse the same LLM client and event system you already have.
+</p>
+
+<ol class="steps">
+  <li>
+    <strong>Decide it is time.</strong> Approximate the current token count.
+    If it exceeds some threshold (say 75% of the model's window), trigger.
+    The threshold should be high enough that you do not compact unnecessarily
+    and low enough that the next user message cannot push you over.
+  </li>
+  <li>
+    <strong>Ask the model to summarize itself.</strong> Send the full history
+    plus a structured prompt asking for a summary of what has happened. The
+    response is your replacement.
+  </li>
+  <li>
+    <strong>Swap the history.</strong> Replace the long history with: the
+    summary (as a single user-role message labeled clearly), the last
+    <em>K</em> messages (to preserve recent context), and keep going.
+  </li>
+</ol>
+
+<h2 id="counting">Counting tokens (approximately)</h2>
+
+<p>
+  Exact token counting requires the model's tokenizer. Approximating &mdash; 1
+  token per ~4 characters of English text, or per ~0.75 words &mdash; is good
+  enough for a threshold check. The threshold is a soft trigger, not a hard
+  contract; being off by 20% on the count is fine.
+</p>
+
+<pre><code>function approxTokens(messages: Message[]): number {
+  let chars = 0;
+  for (const m of messages) {
+    for (const block of m.content) {
+      if (block.type === "text") chars += block.text.length;
+      else if (block.type === "tool_result") chars += block.content.length;
+      else chars += JSON.stringify(block).length;
+    }
+  }
+  return Math.ceil(chars / 4);
+}
+
+const CONTEXT_LIMIT = 200_000;
+const TRIGGER_AT    = 0.75;  // compact when 75% full
+
+function shouldCompact(messages: Message[]): boolean {
+  return approxTokens(messages) &gt; CONTEXT_LIMIT * TRIGGER_AT;
+}</code></pre>
+
+<p>
+  If you have access to the model's actual tokenizer or to the
+  <code>usage</code> field in API responses, use it instead. The
+  approximation is for when you do not.
+</p>
+
+<h2 id="the-summary-prompt">The summary prompt</h2>
+
+<p>
+  The quality of compaction is the quality of the summary prompt. Vague
+  prompts produce vague summaries that leave the agent confused about what
+  it was doing. A good prompt asks for <em>structured</em> output:
+</p>
+
+<pre><code>const SUMMARY_PROMPT = `
+You are about to be replaced by a fresh instance of yourself, which will
+inherit a summary of what we have discussed instead of the full transcript.
+
+Produce that summary now. Include, in this order:
+
+1. THE GOAL: What is the user trying to accomplish? One short paragraph.
+2. KEY DECISIONS: List concrete decisions made so far (chosen approach,
+   rejected alternatives, important constraints). Bullet list.
+3. STATE OF THE WORLD: What files have been read, edited, or created? What
+   commands have been run? Anything else the new instance needs to know
+   about the state of the project. Bullet list with paths.
+4. OPEN QUESTIONS: Anything that was raised and not resolved. Bullet list.
+5. NEXT STEP: What is the very next action the new instance should take?
+   One sentence.
+
+Be specific. The new instance has none of the original context; assume it
+will only know what you write here.
+`.trim();</code></pre>
+
+<p>
+  Run a fresh model call with the same history plus this as a final user
+  message. The reply is the summary.
+</p>
+
+<pre><code>async function compact(messages: Message[]): Promise&lt;Message[]&gt; {
+  const summarized = await complete([
+    ...messages,
+    { role: "user", content: [{ type: "text", text: SUMMARY_PROMPT }] },
+  ]);
+
+  const summary = extractText(summarized);  // pull the assistant text out
+
+  const KEEP_RECENT = 4;
+  const tail = messages.slice(-KEEP_RECENT);
+
+  return [
+    {
+      role: "user",
+      content: [{ type: "text", text:
+        "[compaction summary &mdash; the previous transcript was compacted to fit " +
+        "the context window. The summary below stands in for it.]\n\n" + summary
+      }],
+    },
+    ...tail,
+  ];
+}</code></pre>
+
+<p>
+  Three details to notice:
+</p>
+
+<ul>
+  <li>
+    <strong>The summary lives in a user-role message, not the system prompt.</strong>
+    System prompts are for instructions, not facts. A clearly-labeled user
+    message reads to the model as <em>"context provided to me at the start
+    of this conversation,"</em> which is exactly the right framing.
+  </li>
+  <li>
+    <strong>Keep the recent tail.</strong> Compacting all the way to the
+    summary loses fidelity. The last few messages let the agent pick up
+    mid-thought. A small K (say 4&ndash;8) is plenty.
+  </li>
+  <li>
+    <strong>The label matters.</strong> The bracketed prefix tells the model
+    what it is reading. Without it, the model sometimes treats the summary as
+    a continuation of the conversation rather than a replacement for it.
+  </li>
+</ul>
+
+<h2 id="ux">The user experience</h2>
+
+<p>
+  Compaction is not invisible. The user will notice that you summarized;
+  treat that as a feature, not a bug. Surface it:
+</p>
+
+<ul>
+  <li>
+    <strong>Announce it.</strong> Print a one-line notice in the transcript:
+    <code>[compacted: 28 messages &rarr; 5, freed ~170k tokens]</code>. Now
+    the user knows why their session feels slightly different.
+  </li>
+  <li>
+    <strong>Persist the original.</strong> Your JSONL session log (Chapter 6)
+    should keep every original message <em>and</em> record the compaction as
+    its own row. The on-disk history is the truth; in-memory is a working
+    set. <code>--continue</code> from a compacted session resumes with the
+    in-memory state (summary + tail), not the raw log.
+  </li>
+  <li>
+    <strong>Make it manual too.</strong> A <code>/compact</code> command lets
+    the user force compaction before the threshold &mdash; useful when
+    starting a new sub-task and wanting a clean slate without losing the
+    session.
+  </li>
+</ul>
+
+<h2 id="failure-modes">Things that will go wrong</h2>
+
+<p>
+  Even with a good summary prompt, compaction has failure modes worth
+  anticipating:
+</p>
+
+<ul>
+  <li>
+    <strong>The model loses thread mid-tool-call.</strong> If you compact in
+    the middle of a turn where the assistant has emitted tool calls but you
+    have not yet returned the results, the protocol breaks. Only compact
+    between turns &mdash; after a clean <code>end_turn</code> or before the
+    user's next message.
+  </li>
+  <li>
+    <strong>The summary becomes load-bearing for state.</strong> If the
+    summary says <em>"we decided to use snake_case"</em> but does not say
+    <em>which file</em>, the new instance forgets. Including a "files
+    touched with their current relevant state" section in the prompt mostly
+    fixes this.
+  </li>
+  <li>
+    <strong>Repeated compaction degrades quality.</strong> A session that
+    compacts three times is summarizing summaries of summaries; loss
+    compounds. For sessions long enough to need this, suggest the user start
+    fresh and pass a brief recap manually.
+  </li>
+</ul>
+
+<div class="prod">
+  <span class="prod-label">In pi's code</span>
+  <p>
+    Pi's compaction lives in
+    <code>packages/agent/src/harness/compaction.ts</code>. The trigger
+    threshold, the summary prompt, and the tail size are all configurable.
+    Pi also implements <em>branch summaries</em>: when you fork a session
+    (Chapter 6's tree model), the branch point gets a short summary so you
+    can return to it later without paying the original context cost. The
+    user-facing <code>/compact</code> command lives in the coding-agent
+    package; it ties into the same primitive.
+  </p>
+</div>
+
+<h2 id="end">You are done</h2>
+
+<p>
+  That is the whole stack. From <em>"send some messages to an LLM"</em> in
+  Chapter 1 to <em>"a multi-day coding session that survives context limits,
+  persists across restarts, and can be extended without touching your
+  codebase"</em> in Chapter 10. Each layer was small. Together they are a
+  real coding harness.
+</p>
+
+<p>
+  The shape of the thing is now permanent in your head:
+</p>
+
+<ul>
+  <li>A loop with two states (talk, run).</li>
+  <li>A vocabulary of typed content blocks (text, tool_use, tool_result).</li>
+  <li>A composed system prompt assembled from slots.</li>
+  <li>An event bus that everything optional subscribes to.</li>
+  <li>An append-only log as the source of truth.</li>
+  <li>A small host API for extensions, and a markdown-on-disk format for
+      skills.</li>
+</ul>
+
+<p>
+  Most languages will give you a different idiom for each of those, but the
+  decomposition is the same. Go build it.
+</p>
+
+<div class="endstate">
+  <h4>What you have now</h4>
+  <p>
+    A complete coding harness. It edits files, runs commands, holds a session
+    across days, presents a live TUI, accepts user-written extensions and
+    skills, and gracefully outlives the model's context window. You can use
+    it daily. You can give it to others. You can extend it without rewriting
+    it. <em>The next interesting thing you will build with it has nothing to
+    do with this book.</em>
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="09-skills.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">9. Skills</span>
+  </a>
+  <a class="next" href="../index.html">
+    <span class="pager-label">Up &uarr;</span>
+    <span class="pager-title">Back to introduction</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

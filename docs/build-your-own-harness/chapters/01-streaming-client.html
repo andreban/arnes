@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 1 &mdash; Streaming LLM client</title>
+<link rel="stylesheet" href="../assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">π</span>
+    <span>Build Your Own Harness</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part I &mdash; Foundation</h4><ul>
+    <li><a href="01-streaming-client.html">1. Streaming LLM client</a></li>
+    <li><a href="02-first-tool.html">2. Your first tool call</a></li>
+    <li><a href="03-agent-loop.html">3. The agent loop</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part II &mdash; A real coding agent</h4><ul>
+    <li><a href="04-coding-toolkit.html">4. A real coding toolkit</a></li>
+    <li><a href="05-system-prompt.html">5. The system prompt</a></li>
+    <li><a href="06-sessions.html">6. Sessions: save &amp; resume</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part III &mdash; Making it real</h4><ul>
+    <li><a href="07-live-tui.html">7. A live terminal UI</a></li>
+    <li><a href="08-extensions.html">8. Extensions</a></li>
+    <li><a href="09-skills.html">9. Skills</a></li>
+    <li><a href="10-compaction.html">10. Compaction</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="ai">
+  <span class="eyebrow">Chapter 1 &middot; Part I</span>
+  <h1>Streaming LLM client</h1>
+  <p class="lead">
+    Before tools, before sessions, before any of the things that make a coding
+    agent <em>useful</em>, you need the one piece without which nothing else
+    works: a small program that can talk to a language model and print its reply
+    as it arrives.
+  </p>
+</div>
+
+<h2 id="the-contract">The contract</h2>
+
+<p>
+  Every modern LLM provider exposes roughly the same shape, and that shape is
+  what we are going to lean on. You can think of the model as a black box with
+  two interfaces:
+</p>
+
+<div class="compare">
+<div>
+<h5>Request</h5>
+<p>A conversation: an ordered list of messages, each tagged with a role
+(<code>user</code>, <code>assistant</code>, sometimes <code>system</code>),
+each carrying some content (text, for now).</p>
+</div>
+<div>
+<h5>Response</h5>
+<p>A stream of events describing the model's reply as it is generated:
+<em>"a message started"</em>, <em>"here is a chunk of text"</em>, <em>"the
+message is done"</em>.</p>
+</div>
+</div>
+
+<p>
+  That is it. Provider differences (header names, exact JSON shapes, where the
+  API key goes) are surface details. The shape is universal.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 280" role="img" aria-label="Streaming request/response">
+  <defs>
+    <marker id="ar1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+    </marker>
+  </defs>
+
+  <g font-family="ui-monospace, monospace" font-size="11">
+    <rect x="40"  y="30" width="180" height="40" rx="8" fill="#141821" stroke="#fbbf24"/>
+    <text x="130" y="55" text-anchor="middle" fill="#fbbf24" font-weight="700">Your harness</text>
+
+    <rect x="540" y="30" width="180" height="40" rx="8" fill="#141821" stroke="#34d399"/>
+    <text x="630" y="55" text-anchor="middle" fill="#34d399" font-weight="700">LLM endpoint</text>
+
+    <!-- request -->
+    <line x1="220" y1="50" x2="538" y2="50" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#ar1)"/>
+    <text x="380" y="42" text-anchor="middle" fill="#9aa3b3">POST /messages  { messages: [...] }</text>
+
+    <!-- stream events -->
+    <g stroke="#34d399" stroke-width="1.5">
+      <line x1="538" y1="100" x2="222" y2="100" marker-end="url(#ar1)"/>
+      <line x1="538" y1="130" x2="222" y2="130" marker-end="url(#ar1)"/>
+      <line x1="538" y1="160" x2="222" y2="160" marker-end="url(#ar1)"/>
+      <line x1="538" y1="190" x2="222" y2="190" marker-end="url(#ar1)"/>
+      <line x1="538" y1="220" x2="222" y2="220" marker-end="url(#ar1)"/>
+      <line x1="538" y1="250" x2="222" y2="250" marker-end="url(#ar1)"/>
+    </g>
+    <g fill="#9aa3b3" text-anchor="end">
+      <text x="538" y="95">message_start</text>
+      <text x="538" y="125">text_delta "Hel"</text>
+      <text x="538" y="155">text_delta "lo, w"</text>
+      <text x="538" y="185">text_delta "orld!"</text>
+      <text x="538" y="215">message_stop</text>
+      <text x="538" y="245">[done]</text>
+    </g>
+
+    <!-- timeline -->
+    <line x1="130" y1="70" x2="130" y2="260" stroke="#232936" stroke-dasharray="3 3"/>
+    <line x1="630" y1="70" x2="630" y2="260" stroke="#232936" stroke-dasharray="3 3"/>
+    <text x="20"  y="270" fill="#6b7384" font-size="9">time</text>
+  </g>
+</svg>
+<div class="figure-caption">One request, many response events. The harness prints each text chunk as it arrives.</div>
+</div>
+
+<h2 id="messages">Messages</h2>
+
+<p>
+  A message is a tuple of <code>role</code> and <code>content</code>. The
+  content is a list of blocks &mdash; right now just text blocks, but the same
+  list will hold <em>tool calls</em> in Chapter 2 and <em>images</em>,
+  <em>tool results</em>, and <em>thinking</em> in later chapters. Plan for it
+  now; you will thank yourself.
+</p>
+
+<pre><code>type Role = "user" | "assistant" | "system";
+
+type ContentBlock =
+  | { type: "text"; text: string };
+
+interface Message {
+  role: Role;
+  content: ContentBlock[];
+}</code></pre>
+
+<p>
+  Why a list of blocks instead of a single string? Because future content
+  &mdash; tool calls, images, the model's "thinking" &mdash; will not fit in a
+  string. A list of typed blocks scales; a string does not.
+</p>
+
+<h2 id="the-stream">The stream</h2>
+
+<p>
+  Most providers stream responses as Server-Sent Events (SSE) over HTTP. Each
+  event is a JSON object terminated by a blank line. You parse the line, decide
+  what kind of event it is, and act on it.
+</p>
+
+<p>The events you care about right now:</p>
+
+<table>
+  <thead><tr><th>Event</th><th>What you do with it</th></tr></thead>
+  <tbody>
+    <tr><td><code>message_start</code></td><td>Start a fresh assistant message buffer.</td></tr>
+    <tr><td><code>text_delta</code></td><td>Append the chunk to the buffer; print it to stdout.</td></tr>
+    <tr><td><code>message_stop</code></td><td>The reply is complete; push the buffered message onto the history.</td></tr>
+  </tbody>
+</table>
+
+<p>
+  The exact event names vary by provider. The shape does not.
+</p>
+
+<h2 id="implementation">Putting it together</h2>
+
+<p>
+  Below is the entire client &mdash; in TypeScript, but in any modern language
+  it is the same thirty-ish lines.
+</p>
+
+<pre><code>async function* streamReply(messages: Message[]) {
+  const res = await fetch(LLM_URL, {
+    method: "POST",
+    headers: { authorization: `Bearer ${API_KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({ model: MODEL, stream: true, messages }),
+  });
+
+  // SSE parsing: split the byte stream on blank lines, parse JSON, yield.
+  const decoder = new TextDecoder();
+  let buf = "";
+  for await (const chunk of res.body!) {
+    buf += decoder.decode(chunk);
+    let i;
+    while ((i = buf.indexOf("\n\n")) !== -1) {
+      const frame = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      const line = frame.split("\n").find(l =&gt; l.startsWith("data: "));
+      if (!line) continue;
+      const payload = line.slice(6);
+      if (payload === "[DONE]") return;
+      yield JSON.parse(payload);
+    }
+  }
+}</code></pre>
+
+<p>
+  Now wrap it in a REPL. Read a line, append it as a user message, stream the
+  reply while printing chunks, push the completed assistant message back onto
+  the history. Repeat.
+</p>
+
+<pre><code>const messages: Message[] = [];
+
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+for await (const line of rl) {
+  messages.push({ role: "user", content: [{ type: "text", text: line }] });
+
+  let buf = "";
+  for await (const event of streamReply(messages)) {
+    if (event.type === "text_delta") {
+      process.stdout.write(event.text);
+      buf += event.text;
+    }
+  }
+  process.stdout.write("\n");
+
+  messages.push({ role: "assistant", content: [{ type: "text", text: buf }] });
+}</code></pre>
+
+<p>
+  Run it. Type a question. Watch tokens stream in. Reply to its reply. You have
+  a chat application. The hard part of every subsequent chapter is changing
+  what happens between the request going out and the events coming in.
+</p>
+
+<h2 id="things-to-notice">Three things to notice before moving on</h2>
+
+<ol>
+  <li>
+    <strong>The model has no memory.</strong> Every request resends the full
+    history. The "conversation" lives in your array, not on the server. This
+    will be true for every chapter in the book.
+  </li>
+  <li>
+    <strong>Streaming is a UX choice, not a correctness one.</strong> You could
+    request a non-streamed response and print it after it lands. Streaming
+    matters because waiting eight seconds in silence feels broken; watching
+    text appear does not.
+  </li>
+  <li>
+    <strong>You are already 80% of the way to "tool use."</strong> A tool call
+    is just another kind of content block in the stream. We will add it in the
+    next chapter and the parser stays almost the same.
+  </li>
+</ol>
+
+<div class="prod">
+  <span class="prod-label">In pi's code</span>
+  <p>
+    Pi's equivalent of this chapter is <code>packages/ai/src/stream.ts</code>
+    (the public <code>stream()</code> / <code>complete()</code> entry points)
+    and the per-provider implementations in
+    <code>packages/ai/src/providers/</code>. The big picture is the same: build
+    a request, open a streaming connection, parse SSE frames into a typed event
+    stream, accumulate into a final message. Pi adds normalized events across
+    providers, cost accounting, and abort handling on top.
+  </p>
+</div>
+
+<div class="endstate">
+  <h4>What you have now</h4>
+  <p>
+    A working chat REPL. You can hold a multi-turn conversation; tokens stream
+    in as they are produced; history accumulates across turns. It does nothing
+    except chat &mdash; but it is a real, live LLM application running in
+    your terminal.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="../index.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">Introduction</span>
+  </a>
+  <a class="next" href="02-first-tool.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">2. Your first tool call</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

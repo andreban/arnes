@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 8 &mdash; Extensions</title>
+<link rel="stylesheet" href="../assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">π</span>
+    <span>Build Your Own Harness</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part I &mdash; Foundation</h4><ul>
+    <li><a href="01-streaming-client.html">1. Streaming LLM client</a></li>
+    <li><a href="02-first-tool.html">2. Your first tool call</a></li>
+    <li><a href="03-agent-loop.html">3. The agent loop</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part II &mdash; A real coding agent</h4><ul>
+    <li><a href="04-coding-toolkit.html">4. A real coding toolkit</a></li>
+    <li><a href="05-system-prompt.html">5. The system prompt</a></li>
+    <li><a href="06-sessions.html">6. Sessions: save &amp; resume</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part III &mdash; Making it real</h4><ul>
+    <li><a href="07-live-tui.html">7. A live terminal UI</a></li>
+    <li><a href="08-extensions.html">8. Extensions</a></li>
+    <li><a href="09-skills.html">9. Skills</a></li>
+    <li><a href="10-compaction.html">10. Compaction</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">Chapter 8 &middot; Part III</span>
+  <h1>Extensions</h1>
+  <p class="lead">
+    Everything in your harness so far ships with the binary. That is fine for
+    you, the author. But every user has a different workflow, different
+    services, different little tools. Letting them extend the harness without
+    forking it is what turns a useful CLI into a platform.
+  </p>
+</div>
+
+<h2 id="what-is-an-extension">What is an extension?</h2>
+
+<p>
+  An extension is a piece of code that, when loaded, gets to add tools,
+  observe events, modify prompts, register commands, or contribute UI &mdash;
+  without the harness knowing about it ahead of time. The shape that has
+  emerged across editor-extension systems for thirty years is the same one
+  that works here:
+</p>
+
+<ol>
+  <li>The harness scans known directories for extension files.</li>
+  <li>Each file exports a single <code>register(host)</code> function.</li>
+  <li>The harness calls <code>register</code> at startup, passing a
+      <em>host</em> object with the extension API.</li>
+  <li>The extension uses the host to contribute things and subscribe to
+      events.</li>
+</ol>
+
+<p>
+  No bespoke plugin manifest, no separate config language. The extension is a
+  small program that talks to a small interface.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 320" role="img" aria-label="Extension lifecycle">
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <!-- harness column -->
+    <rect x="30" y="40" width="200" height="240" rx="12" fill="#141821" stroke="#fbbf24"/>
+    <text x="130" y="64" text-anchor="middle" fill="#fbbf24" font-weight="700">harness</text>
+
+    <text x="50" y="92"  fill="#9aa3b3">1. scan ~/.pi/extensions/</text>
+    <text x="50" y="116" fill="#9aa3b3">2. import each file</text>
+    <text x="50" y="140" fill="#9aa3b3">3. call register(host)</text>
+    <text x="50" y="164" fill="#9aa3b3">4. run agent loop</text>
+    <text x="50" y="188" fill="#9aa3b3">5. emit events</text>
+    <text x="50" y="212" fill="#9aa3b3">6. on shutdown:</text>
+    <text x="62" y="228" fill="#9aa3b3">   call dispose()</text>
+
+    <!-- host bus -->
+    <rect x="290" y="40" width="160" height="240" rx="12" fill="#141821" stroke="#a78bfa"/>
+    <text x="370" y="64" text-anchor="middle" fill="#a78bfa" font-weight="700">host API</text>
+
+    <g fill="#e4e8ef" font-size="10">
+      <text x="305" y="92"  >addTool(decl, fn)</text>
+      <text x="305" y="112" >on(event, handler)</text>
+      <text x="305" y="132" >addCommand("/foo", fn)</text>
+      <text x="305" y="152" >appendSystemPrompt(s)</text>
+      <text x="305" y="172" >contributeSkill(path)</text>
+      <text x="305" y="192" >disposable(() =&gt; ...)</text>
+    </g>
+
+    <!-- extensions column -->
+    <rect x="510" y="40" width="220" height="240" rx="12" fill="#141821" stroke="#34d399"/>
+    <text x="620" y="64" text-anchor="middle" fill="#34d399" font-weight="700">extension files</text>
+
+    <g fill="#e4e8ef" font-size="10">
+      <text x="525" y="100">linear-tool.ts</text>
+      <text x="525" y="118">  - addTool("linear_search", ...)</text>
+      <text x="525" y="146">notify-on-done.ts</text>
+      <text x="525" y="164">  - on("agent_end", desktopNotify)</text>
+      <text x="525" y="192">house-style.ts</text>
+      <text x="525" y="210">  - appendSystemPrompt("use 2 spaces")</text>
+      <text x="525" y="238">slash-deploy.ts</text>
+      <text x="525" y="256">  - addCommand("/deploy", ...)</text>
+    </g>
+
+    <!-- arrows -->
+    <line x1="232" y1="160" x2="288" y2="160" stroke="#9aa3b3" stroke-width="1.4"/>
+    <line x1="452" y1="160" x2="508" y2="160" stroke="#9aa3b3" stroke-width="1.4"/>
+  </g>
+</svg>
+<div class="figure-caption">The harness owns the loop and the events. Extensions reach in through a small host API.</div>
+</div>
+
+<h2 id="the-host-api">The host API</h2>
+
+<p>
+  This is the contract you commit to. Keep it small and keep it stable;
+  extensions written against it should keep working as your harness evolves.
+</p>
+
+<pre><code>interface ExtensionHost {
+  // contributions
+  addTool(decl: ToolDecl, execute: (input: any) =&gt; Promise&lt;string&gt;): void;
+  addCommand(name: string, handler: (args: string) =&gt; Promise&lt;void&gt;): void;
+  appendSystemPrompt(text: string): void;
+  contributeSkill(path: string): void;
+
+  // event subscription
+  on&lt;E extends keyof EventMap&gt;(event: E, handler: (e: EventMap[E]) =&gt; void): void;
+
+  // cleanup
+  disposable(fn: () =&gt; void | Promise&lt;void&gt;): void;
+
+  // facts about the environment
+  readonly cwd: string;
+  readonly sessionId: string;
+}</code></pre>
+
+<p>
+  Four properties that make this work in practice:
+</p>
+
+<ul>
+  <li>
+    <strong>One host per extension.</strong> Each <code>register()</code> call
+    gets a fresh host bound to that extension. The host remembers what was
+    contributed so the harness can attribute and dispose of it later.
+  </li>
+  <li>
+    <strong>Contributions are reversible.</strong> Every <code>addTool</code>
+    has a matching <code>removeTool</code> the host can call on shutdown. The
+    extension does not own the registry; the host does.
+  </li>
+  <li>
+    <strong>Events flow one way.</strong> Extensions can <em>observe</em>
+    almost everything but should not block the loop indefinitely. Async
+    handlers are fine; ten-second handlers are not.
+  </li>
+  <li>
+    <strong>The API is your version-1 contract.</strong> Once an extension
+    relies on a method, you cannot remove it without breaking the extension.
+    Take this seriously; resist clever shortcuts.
+  </li>
+</ul>
+
+<h2 id="lifecycle-events">Lifecycle events worth exposing</h2>
+
+<p>
+  Most extensions hook one or two events. The events you ship determine the
+  range of useful extensions someone can write. A reasonable starter set:
+</p>
+
+<table>
+  <thead><tr><th>Event</th><th>Use cases</th></tr></thead>
+  <tbody>
+    <tr><td><code>session_start</code></td><td>Load credentials, open connections, set per-session state.</td></tr>
+    <tr><td><code>before_agent_start</code></td><td>Inspect or mutate the system prompt for this run.</td></tr>
+    <tr><td><code>before_tool_call</code></td><td>Veto a tool call (return an error result without executing); audit logs; confirmation prompts.</td></tr>
+    <tr><td><code>after_tool_call</code></td><td>Post-process tool output; add structured metadata.</td></tr>
+    <tr><td><code>message</code></td><td>Pipe transcript to an external sink: Slack, file, telemetry.</td></tr>
+    <tr><td><code>agent_end</code></td><td>Desktop notification, save artefacts, run a checker.</td></tr>
+    <tr><td><code>session_shutdown</code></td><td>Cleanly close anything the extension opened.</td></tr>
+  </tbody>
+</table>
+
+<p>
+  Notice the symmetry with the agent-loop events from Chapter 3. That is not a
+  coincidence: the extension system is just <em>a way to let user code
+  subscribe to the same events your TUI already subscribes to</em>. You did
+  the hard work earlier; you are wiring up a new consumer.
+</p>
+
+<h2 id="loading">Loading extensions</h2>
+
+<p>
+  The mechanics depend on your language. In Node/Bun with TypeScript-on-the-fly,
+  you can load <code>.ts</code> files directly:
+</p>
+
+<pre><code>const EXT_DIRS = [
+  join(os.homedir(), ".pi", "extensions"),
+  join(process.cwd(), ".pi", "extensions"),
+];
+
+async function loadExtensions(harness: Harness) {
+  for (const dir of EXT_DIRS) {
+    if (!await exists(dir)) continue;
+    for (const entry of await fs.readdir(dir)) {
+      if (!entry.endsWith(".ts") &amp;&amp; !entry.endsWith(".js")) continue;
+      const path = join(dir, entry);
+      const mod = await import(path);
+      if (typeof mod.register !== "function") continue;
+      const host = harness.createHost(entry);
+      await mod.register(host);
+    }
+  }
+}</code></pre>
+
+<p>
+  Two design choices worth being explicit about:
+</p>
+
+<ul>
+  <li><strong>Global vs project.</strong> Honour both. Global extensions
+  (<code>~/.pi/extensions</code>) follow the user everywhere. Project
+  extensions (<code>./.pi/extensions</code>) are scoped to one repo. Project
+  takes precedence on conflict.</li>
+  <li><strong>Loading is sequential.</strong> Resist the urge to parallelize.
+  Extensions can have side-effects on each other (registering the same
+  command name); ordering is a feature, not a bug.</li>
+</ul>
+
+<h2 id="example">A small example end-to-end</h2>
+
+<p>
+  Here is a complete extension that gives the agent a way to ask the user a
+  question. The harness has the TUI; the extension just wires it to a tool.
+</p>
+
+<pre><code>// ~/.pi/extensions/ask-user.ts
+
+export async function register(host: ExtensionHost) {
+  host.addTool(
+    {
+      name: "ask_user",
+      description: "Ask the user a clarifying question and wait for their reply. " +
+                   "Use sparingly; prefer to make a reasonable assumption and proceed.",
+      parameters: {
+        type: "object",
+        properties: { question: { type: "string" } },
+        required: ["question"],
+      },
+    },
+    async ({ question }) =&gt; {
+      const answer = await host.ui.prompt(question);  // blocks until user replies
+      return answer || "(user did not answer)";
+    },
+  );
+}</code></pre>
+
+<p>
+  Drop that one file in <code>~/.pi/extensions/</code>. Next time you start
+  the harness, the agent has a new tool. No fork, no rebuild, no registry.
+</p>
+
+<h2 id="trust">Extensions are code; treat them like code</h2>
+
+<p>
+  An extension runs in the same process as your harness. It has full access
+  to the user's filesystem, your process's environment, and the LLM's
+  history. That is the deal: extensions are powerful precisely because they
+  are not sandboxed.
+</p>
+
+<p>
+  Document the trust model clearly. The user is installing code, not data.
+  Recommend they read extensions before installing. Suggest signing if your
+  ecosystem grows. The pi runtime, for example, refuses to load extensions
+  from npm packages by default unless the user passes an explicit
+  <code>--trust</code> flag.
+</p>
+
+<h2 id="declared-not-just-coded">Declared, not just coded</h2>
+
+<p>
+  Some kinds of extension are nicer as <em>data</em> than as code:
+  guidelines, prompts, themes, skills. For those, surface a declarative
+  contribution API:
+</p>
+
+<pre><code>// extension contributes a markdown file, not a function:
+host.contributeSkill("./skills/postgres-migrations/SKILL.md");
+host.contributePromptTemplate("./prompts/code-review.md");
+host.contributeTheme("./themes/dracula.json");</code></pre>
+
+<p>
+  The harness handles all the filesystem walking, parsing, and registration.
+  The extension author writes a tiny <code>register()</code> that points at
+  the data. Skills are important enough to be the entire next chapter.
+</p>
+
+<div class="prod">
+  <span class="prod-label">In pi's code</span>
+  <p>
+    Pi's extension system lives at
+    <code>packages/coding-agent/src/core/extensions/</code>. The host shape
+    is in <code>types.ts</code>, the loader (filesystem scan + dynamic
+    import + jiti-based TypeScript compilation) in <code>loader.ts</code>,
+    and the event dispatcher in <code>runner.ts</code>. Pi exposes a much
+    richer host (custom commands, keybindings, even custom UI components via
+    pi-tui) and supports loading extensions from npm packages and Git URLs.
+    Real examples live in <code>packages/coding-agent/examples/extensions/</code>.
+  </p>
+</div>
+
+<div class="endstate">
+  <h4>What you have now</h4>
+  <p>
+    A harness that can grow without you. Power users can write a new tool in
+    twenty lines, drop it in a folder, and use it. Teams can ship a shared
+    extension that wires up their internal services. You, the harness author,
+    no longer have to ship every feature anyone might ever want. The next
+    chapter pushes this further: making capability addition possible
+    <em>without writing code at all</em>.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="07-live-tui.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">7. A live terminal UI</span>
+  </a>
+  <a class="next" href="09-skills.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">9. Skills</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

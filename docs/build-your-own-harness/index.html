@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Build Your Own Coding Harness</title>
+<link rel="stylesheet" href="assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">π</span>
+    <span>Build Your Own Harness</span>
+  </div>
+
+  <div class="nav-group">
+    <h4>Overview</h4>
+    <ul>
+      <li><a href="index.html">Introduction</a></li>
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <h4>Part I &mdash; Foundation</h4>
+    <ul>
+      <li><a href="chapters/01-streaming-client.html">1. Streaming LLM client</a></li>
+      <li><a href="chapters/02-first-tool.html">2. Your first tool call</a></li>
+      <li><a href="chapters/03-agent-loop.html">3. The agent loop</a></li>
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <h4>Part II &mdash; A real coding agent</h4>
+    <ul>
+      <li><a href="chapters/04-coding-toolkit.html">4. A real coding toolkit</a></li>
+      <li><a href="chapters/05-system-prompt.html">5. The system prompt</a></li>
+      <li><a href="chapters/06-sessions.html">6. Sessions: save &amp; resume</a></li>
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <h4>Part III &mdash; Making it real</h4>
+    <ul>
+      <li><a href="chapters/07-live-tui.html">7. A live terminal UI</a></li>
+      <li><a href="chapters/08-extensions.html">8. Extensions</a></li>
+      <li><a href="chapters/09-skills.html">9. Skills</a></li>
+      <li><a href="chapters/10-compaction.html">10. Compaction</a></li>
+    </ul>
+  </div>
+</aside>
+
+<main class="main">
+
+<span class="eyebrow">A 10-chapter walk-through</span>
+<h1>Build Your Own Coding Harness</h1>
+<p class="lead">
+  By the end of this book you will have built, from scratch, a working
+  command-line coding agent: an interactive program that talks to a language
+  model, runs tools on your behalf, edits your code, and survives long sessions.
+  Each chapter ends with a working program that does something the previous one
+  could not.
+</p>
+
+<h2 id="how-to-read">How to read this book</h2>
+
+<p>
+  The text is <strong>language-agnostic</strong>. Every concept is described in
+  plain prose, illustrated with diagrams, and made concrete with a small
+  TypeScript snippet you can read like pseudo-code. Use TypeScript, Python,
+  Go, Rust, OCaml &mdash; whichever is yours. The shape of the system is the
+  same.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 220" role="img" aria-label="What you will build">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+    </marker>
+  </defs>
+
+  <g font-family="ui-monospace, monospace" font-size="11">
+    <rect x="30"  y="80" width="120" height="60" rx="10" fill="#141821" stroke="#38bdf8"/>
+    <text x="90"  y="108" text-anchor="middle" fill="#38bdf8" font-weight="700">You</text>
+    <text x="90"  y="124" text-anchor="middle" fill="#9aa3b3">terminal user</text>
+
+    <rect x="210" y="40" width="200" height="140" rx="10" fill="#141821" stroke="#fbbf24"/>
+    <text x="310" y="64" text-anchor="middle" fill="#fbbf24" font-weight="700">Your harness</text>
+    <text x="310" y="82" text-anchor="middle" fill="#9aa3b3" font-size="10">the program you will write</text>
+    <g fill="#e4e8ef" font-size="10">
+      <text x="225" y="106">- reads your prompt</text>
+      <text x="225" y="122">- calls the LLM</text>
+      <text x="225" y="138">- runs tools</text>
+      <text x="225" y="154">- shows progress live</text>
+      <text x="225" y="170">- persists state</text>
+    </g>
+
+    <rect x="470" y="20" width="120" height="50" rx="10" fill="#141821" stroke="#34d399"/>
+    <text x="530" y="42" text-anchor="middle" fill="#34d399" font-weight="700">LLM</text>
+    <text x="530" y="58" text-anchor="middle" fill="#9aa3b3" font-size="10">streaming + tool use</text>
+
+    <rect x="470" y="90" width="120" height="50" rx="10" fill="#141821" stroke="#a78bfa"/>
+    <text x="530" y="112" text-anchor="middle" fill="#a78bfa" font-weight="700">Tools</text>
+    <text x="530" y="128" text-anchor="middle" fill="#9aa3b3" font-size="10">read - write - edit - bash</text>
+
+    <rect x="470" y="160" width="120" height="50" rx="10" fill="#141821" stroke="#9aa3b3"/>
+    <text x="530" y="182" text-anchor="middle" fill="#e4e8ef" font-weight="700">Disk</text>
+    <text x="530" y="198" text-anchor="middle" fill="#9aa3b3" font-size="10">sessions - skills - config</text>
+  </g>
+
+  <line x1="150" y1="110" x2="208" y2="110" stroke="#9aa3b3" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="410" y1="80"  x2="468" y2="50"  stroke="#9aa3b3" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="410" y1="115" x2="468" y2="115" stroke="#9aa3b3" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="410" y1="155" x2="468" y2="180" stroke="#9aa3b3" stroke-width="1.4" marker-end="url(#arr)"/>
+</svg>
+<div class="figure-caption">The harness is a small program sitting between the user and the outside world. That is all an agent is.</div>
+</div>
+
+<p>
+  Snippets are short and meant to illustrate &mdash; not to be copy-pasted into a
+  production codebase. They use Node 22+ / Bun built-ins (<code>fetch</code>,
+  <code>node:fs</code>, <code>process.stdin</code>) and assume an LLM that
+  exposes the now-standard streaming and tool-use API shape. The exact
+  provider does not matter; we treat the model as a black box with a known
+  contract.
+</p>
+
+<div class="prod">
+  <span class="prod-label">In pi's code</span>
+  <p>
+    Throughout the book, these callouts point you to where the real
+    <code>pi</code> agent does the same thing in production. The callouts are
+    optional &mdash; the book stands on its own &mdash; but if you want to see
+    a battle-tested version of what you just built, that is where to look.
+  </p>
+</div>
+
+<h2 id="chapters">The chapters</h2>
+
+<div class="card-grid">
+  <div class="card" data-accent="ai">
+    <span class="card-accent"></span>
+    <h3><a class="card-link" href="chapters/01-streaming-client.html"><span class="chapter-num">1</span>Streaming LLM client</a></h3>
+    <p>A tiny REPL that pipes your prompt to an LLM and streams the reply back, token by token. No tools yet &mdash; just the bones.</p>
+    <div class="card-meta">end state: chat REPL</div>
+  </div>
+
+  <div class="card" data-accent="ai">
+    <span class="card-accent"></span>
+    <h3><a class="card-link" href="chapters/02-first-tool.html"><span class="chapter-num">2</span>Your first tool call</a></h3>
+    <p>Teach the model to call a <code>read_file</code> function. Hand-execute it, feed the result back, watch it actually <em>do</em> something.</p>
+    <div class="card-meta">end state: model can read one file</div>
+  </div>
+
+  <div class="card" data-accent="agent">
+    <span class="card-accent"></span>
+    <h3><a class="card-link" href="chapters/03-agent-loop.html"><span class="chapter-num">3</span>The agent loop</a></h3>
+    <p>Wrap chapter 2 in a loop. The model keeps calling tools until it is done. Now it can investigate &mdash; not just answer.</p>
+    <div class="card-meta">end state: multi-step research agent</div>
+  </div>
+
+  <div class="card" data-accent="agent">
+    <span class="card-accent"></span>
+    <h3><a class="card-link" href="chapters/04-coding-toolkit.html"><span class="chapter-num">4</span>A real coding toolkit</a></h3>
+    <p>Add <code>bash</code>, <code>write</code>, and <code>edit</code>. Handle the subtleties: argument validation, errors, partial output.</p>
+    <div class="card-meta">end state: agent that can change your code</div>
+  </div>
+
+  <div class="card" data-accent="agent">
+    <span class="card-accent"></span>
+    <h3><a class="card-link" href="chapters/05-system-prompt.html"><span class="chapter-num">5</span>The system prompt</a></h3>
+    <p>Stop hard-coding the prompt. Compose it from tools, guidelines, project files, and the working directory.</p>
+    <div class="card-meta">end state: a focused, context-aware agent</div>
+  </div>
+
+  <div class="card" data-accent="coding">
+    <span class="card-accent"></span>
+    <h3><a class="card-link" href="chapters/06-sessions.html"><span class="chapter-num">6</span>Sessions: save and resume</a></h3>
+    <p>Append-only logs, JSONL, and the trick that lets <code>pi --continue</code> pick up exactly where you left off.</p>
+    <div class="card-meta">end state: persistent sessions</div>
+  </div>
+
+  <div class="card" data-accent="tui">
+    <span class="card-accent"></span>
+    <h3><a class="card-link" href="chapters/07-live-tui.html"><span class="chapter-num">7</span>A live terminal UI</a></h3>
+    <p>Replace plain stdout with a TUI: streaming output, a persistent input box, scrollback. Just enough to feel modern.</p>
+    <div class="card-meta">end state: interactive TUI</div>
+  </div>
+
+  <div class="card" data-accent="coding">
+    <span class="card-accent"></span>
+    <h3><a class="card-link" href="chapters/08-extensions.html"><span class="chapter-num">8</span>Extensions</a></h3>
+    <p>Let users drop a file in a folder to add tools, hooks, and commands without touching your harness.</p>
+    <div class="card-meta">end state: pluggable harness</div>
+  </div>
+
+  <div class="card" data-accent="coding">
+    <span class="card-accent"></span>
+    <h3><a class="card-link" href="chapters/09-skills.html"><span class="chapter-num">9</span>Skills</a></h3>
+    <p>On-demand instruction packs: markdown files the model loads only when relevant. Less prompt bloat, more capability.</p>
+    <div class="card-meta">end state: lazy-loaded expertise</div>
+  </div>
+
+  <div class="card" data-accent="agent">
+    <span class="card-accent"></span>
+    <h3><a class="card-link" href="chapters/10-compaction.html"><span class="chapter-num">10</span>Compaction</a></h3>
+    <p>When the context window fills, summarize and continue. Long-running tasks without falling off a cliff.</p>
+    <div class="card-meta">end state: indefinitely long sessions</div>
+  </div>
+</div>
+
+<h2 id="not-covered">What this book deliberately does not cover</h2>
+
+<ul>
+  <li><strong>Picking a specific LLM provider.</strong> The book treats the model as a contract. Wiring up a particular vendor's SDK is mechanical and well-documented by them.</li>
+  <li><strong>Multi-provider abstraction.</strong> Once your harness works against one provider, the abstraction layer is a small refactor. Pi's <code>packages/ai</code> is one good model to study afterwards.</li>
+  <li><strong>Production hardening.</strong> Rate limits, retries, structured logging, telemetry &mdash; all important, all out of scope. The book aims for <em>understanding</em>, not <em>operations</em>.</li>
+  <li><strong>Security boundaries.</strong> A coding agent that runs <code>bash</code> on the user's machine is a dangerous tool. We will discuss the shape of the problem in Chapter 4 but not solve it.</li>
+</ul>
+
+<h2 id="prereqs">Prerequisites</h2>
+
+<ul>
+  <li>Comfort with one mainstream programming language.</li>
+  <li>An LLM endpoint with streaming and tool-use support. Most modern providers fit.</li>
+  <li>A POSIX-ish terminal. Chapter 7 has some Windows-specific notes.</li>
+</ul>
+
+<p>Ready? <a href="chapters/01-streaming-client.html">Start with Chapter 1 &rarr;</a></p>
+
+<div class="site-footer">
+  Written as a companion to the <a href="https://pi.dev">pi</a> coding harness.
+  Production callouts reference paths inside <code>packages/coding-agent</code>,
+  <code>packages/agent</code>, <code>packages/ai</code>, and <code>packages/tui</code>.
+</div>
+
+</main>
+</div>
+<script src="assets/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>M1 &mdash; agent-rig + minimal TUI + minimal ACP</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">Milestone 1 &middot; Foundation</span>
+  <h1>agent-rig + minimal TUI + minimal ACP</h1>
+  <p class="lead">
+    Stand up the Cargo workspace; define the two key traits; bring up two
+    minimal frontends in parallel. By the end you have a working LLM
+    round-trip in both a ratatui input/output pair and a JSON-RPC server
+    on stdio &mdash; same harness, two faces.
+  </p>
+</div>
+
+<h2 id="why">Why this milestone exists first</h2>
+
+<p>
+  The whole architecture rests on the <code>Frontend</code> and
+  <code>Host</code> traits. Standing them up while they only need to
+  support streaming text &mdash; not tools, not permissions, not files
+  &mdash; is the cheapest possible validation of the design. Building two
+  consumers of the same harness immediately means we'll notice if a trait
+  feels TUI-shaped before we are deep into the implementation.
+</p>
+
+<h2 id="jsonrpc">JSON-RPC library: start with jsonrpsee, fall back if needed</h2>
+
+<p>
+  ACP requires bidirectional dispatch on a single channel: arnes must serve
+  inbound requests from the editor <em>and</em> send server-initiated
+  requests back to it (<code>fs/*</code>, <code>terminal/*</code>) over the
+  same stdio. Many Rust JSON-RPC crates handle only one direction
+  comfortably.
+</p>
+
+<p>
+  <strong>The decision:</strong> we start with <code>jsonrpsee</code>. If its
+  server-initiated dispatch turns out to be painful enough during M1 (or
+  later milestones) we fall back to a hand-rolled framer + dispatcher built
+  on <code>tokio_util::codec::LinesCodec</code>. Roll-your-own is the
+  <em>fallback</em>, not the default &mdash; the bug list and test matrix are
+  worth avoiding if jsonrpsee carries its weight.
+</p>
+
+<table>
+  <thead><tr><th>Candidate</th><th>Status</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>jsonrpsee</code></td>
+      <td><strong>Default choice</strong></td>
+      <td>Bidirectional supported; well-maintained; rich middleware. Server-initiated request API is verbose but workable.</td>
+    </tr>
+    <tr>
+      <td>Hand-rolled (LinesCodec + dispatcher)</td>
+      <td>Documented fallback</td>
+      <td>~350 lines total. Switch to this if jsonrpsee fights us on outbound calls, cancellation, or <code>_meta</code> propagation.</td>
+    </tr>
+    <tr>
+      <td><code>tower-lsp</code> internals</td>
+      <td>Considered, rejected</td>
+      <td>Bidirectional baked in but tied to LSP types; depopulating is significant work for no clear win over jsonrpsee.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  Concrete triggers for invoking the fallback during M1 implementation
+  (in <code>arnes-acp/src/transport/</code>):
+</p>
+
+<ul>
+  <li><code>AcpHost</code> outbound-call helpers (<code>fs/read_text_file</code>, <code>terminal/create</code>, &hellip;) need more than ~10 lines of boilerplate per method.</li>
+  <li>jsonrpsee's request-correlation machinery interferes with the per-session <code>CancellationToken</code> wiring.</li>
+  <li>Adding ACP-specific bits (the <code>_meta</code> field we'll need for compaction at M7) requires fighting the library's serialization layer.</li>
+</ul>
+
+<p>
+  If none of those happen, stay on jsonrpsee. Record the trade-off and any
+  triggers that <em>almost</em> fired in a one-page ADR
+  (<code>docs/adr/0001-jsonrpc-library.md</code>) for future maintainers.
+</p>
+
+<h2 id="workspace">Workspace layout</h2>
+
+<pre><code>arnes/
+├── Cargo.toml                    # workspace, members = [...]; rust-version pinned in [workspace.package]
+└── crates/
+    ├── arnes-core/
+    │   ├── src/
+    │   │   ├── lib.rs            # re-exports
+    │   │   ├── frontend.rs       # Frontend trait, SessionEvent, capabilities
+    │   │   ├── host.rs           # Host trait + LocalHost impl (next to trait)
+    │   │   ├── session.rs        # Session&lt;F, E&gt;, run loop wrapper
+    │   │   ├── message.rs        # Message, ContentBlock (text + tool stubs)
+    │   │   └── error.rs
+    │   ├── tests/
+    │   │   └── session_roundtrip.rs
+    │   └── Cargo.toml
+    ├── arnes-tui/                # ratatui app; binary `arnes`
+    └── arnes-acp/                # JSON-RPC server on stdio; binary `arnes-acp`
+        └── src/host.rs            # AcpHost: outbound JSON-RPC proxy</code></pre>
+
+<p>
+  Two binaries, one per adapter crate. The TUI binary is named
+  <code>arnes</code> (the daily driver); the ACP server is
+  <code>arnes-acp</code>, spawned by editors. <code>arnes-serve</code>
+  (HTTP) lands at M8; <code>arnes-gui</code> at M9. No central CLI
+  router.
+</p>
+
+<p>
+  Note where the two <code>Host</code> impls live:
+  <code>LocalHost</code> sits next to the trait in
+  <code>arnes-core::host</code> (it is ~200 lines of tokio wrappers; a
+  dedicated crate buys nothing); <code>AcpHost</code> sits inside
+  <code>arnes-acp</code> because it is tightly coupled to that adapter's
+  outbound JSON-RPC machinery.
+</p>
+
+<p>
+  The <code>arnes-core::tools</code> module does not exist yet &mdash;
+  it shows up at M2 with the first real tool. <code>LocalHost</code>
+  (in <code>arnes-core::host</code>) and <code>AcpHost</code> (in
+  <code>arnes-acp::host</code>) exist but expose only the
+  <code>Host</code> impl shell, since no tool yet calls into
+  them.
+</p>
+
+<h2 id="traits">Traits to define</h2>
+
+<p>
+  These are the signatures the rest of the project commits to. Get them
+  right enough to ship M1; expect minor refinements during M2&ndash;M3 as
+  real tools and real permission flows materialize.
+</p>
+
+<pre><code>// arnes-core/src/frontend.rs
+
+pub trait Frontend: Send + Sync {
+    async fn on_event(&amp;self, event: SessionEvent);
+    async fn request_permission(&amp;self, req: PermissionRequest) -&gt; Permission;
+    fn capabilities(&amp;self) -&gt; FrontendCapabilities { Default::default() }
+}
+
+pub enum AgentId {
+    Root,
+    SubAgent(Ulid),         // never minted at V1; reserved for post-V1 sub-agents
+}
+
+pub struct SessionEvent {
+    pub agent_id: AgentId,  // V1 always Root
+    pub depth:    u8,       // V1 always 0
+    pub kind:     EventKind,
+}
+
+pub enum EventKind {
+    AgentMessageDelta { text: String },
+    TurnStart,
+    TurnEnd { stop_reason: StopReason, usage: Usage },   // Usage carries agent_id + ModelKey + tokens + Option&lt;Cost&gt;
+    Error { message: String },
+    // M2 adds ToolCallStart/Update/End. Future SubAgentStart/SubAgentEnd
+    // land post-V1 via a sweep of in-tree match sites.
+}
+
+pub struct PermissionRequest { /* M3 fleshes out (scopes, summary); empty stub at M1 */ }
+
+pub enum Permission {
+    AllowOnce,
+    AllowAlways { scope: Scope, persistence: Persistence },     // Scope/Persistence are `()` stubs at M1
+    Deny,
+}
+pub struct FrontendCapabilities { /* empty at M1 */ }</code></pre>
+
+<pre><code>// arnes-core/src/host.rs
+
+pub trait Host: Send + Sync {
+    // M1: declare all methods but only require &lt;none&gt; at this milestone;
+    // every default impl returns ErrorKind::Unsupported.
+    async fn read_text_file(&amp;self, _: &amp;Path) -&gt; io::Result&lt;String&gt;        { unsupported() }
+    async fn write_text_file(&amp;self, _: &amp;Path, _: &amp;str) -&gt; io::Result&lt;()&gt;   { unsupported() }
+    async fn terminal_create(&amp;self, _: TerminalSpec) -&gt; io::Result&lt;TerminalHandle&gt; { unsupported() }
+    // ... others stubbed identically.
+}
+fn unsupported&lt;T&gt;() -&gt; io::Result&lt;T&gt; {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "not implemented in this milestone"))
+}</code></pre>
+
+<pre><code>// arnes-core/src/session.rs
+
+pub struct Session&lt;F: Frontend, H: Host&gt; {
+    pub agent_id: AgentId,        // V1: always Root
+    parent:       Option&lt;Weak&lt;Session&lt;F, H&gt;&gt;&gt;,   // V1: always None
+    frontend:     Arc&lt;F&gt;,
+    host:         Arc&lt;H&gt;,
+    runner:       agent_rig::runner::AgentRunner,
+    history:      Vec&lt;agent_rig::model::Message&gt;,
+    cancel:       CancellationToken,
+    model:        ModelKey,       // current backend+model for usage attribution
+}
+
+impl&lt;F, H&gt; Session&lt;F, H&gt; where F: Frontend, H: Host {
+    pub fn new(frontend: Arc&lt;F&gt;, host: Arc&lt;H&gt;, runner: AgentRunner, model: ModelKey) -&gt; Self {
+        // V1: agent_id = AgentId::Root, parent = None.
+    }
+
+    /// Reserved for post-V1. Body is unimplemented!() at M1; signature stable.
+    pub async fn spawn_subagent(&amp;self, _spec: SubAgentSpec) -&gt; Result&lt;SubAgentHandle&gt; {
+        unimplemented!("sub-agent spawning is post-V1")
+    }
+
+    pub async fn prompt(&amp;mut self, text: String) -&gt; Result&lt;()&gt; {
+        self.history.push(Message::user(text));
+        let mut stream = self.runner.run(&amp;self.agent_def(), self.history.clone());
+        self.emit(EventKind::TurnStart).await;
+        while let Some(ev) = stream.next().await {
+            // M1: only AgentEvent::TextDelta matters; everything else is parked.
+            if let AgentEvent::TextDelta(text) = ev.agent_event {
+                self.emit(EventKind::AgentMessageDelta { text }).await;
+            }
+        }
+        self.emit(EventKind::TurnEnd { /* stop_reason, usage with agent_id + model */ }).await;
+        Ok(())
+    }
+
+    pub fn cancel(&amp;self) { self.cancel.cancel() }
+}</code></pre>
+
+<h2 id="usage-stub">Usage subsystem stub</h2>
+
+<p>
+  Define the data shapes and the pricing-registry loader in
+  <code>arnes-core::usage</code>. Token tracking starts working at M1;
+  cost calculation works for the few models we seed; everything else is
+  <code>ModelCostInfo::Unknown</code> and surfaces as such.
+</p>
+
+<ul>
+  <li>Types: <code>ModelKey</code>, <code>Usage</code> (carries <code>agent_id</code> + <code>model</code>), <code>Cost</code>, <code>Micros</code>, <code>ModelCostInfo</code>, <code>ModelPricing</code>, <code>ModelUsage</code>, <code>CumulativeUsage</code> (indexed by <code>(AgentId, ModelKey)</code>). See <a href="core.html#usage-module">core.html &sect; usage</a> for the full shape.</li>
+  <li>Bundled pricing TOML at <code>arnes-core/data/pricing.toml</code>, seeded for the Gemini models we wire up at M1 and a wildcard <code>Free</code> entry for Ollama.</li>
+  <li><code>Session</code> reads token counts off agent-rig's stream at turn end, builds <code>Usage</code> with its own <code>agent_id</code> + the active <code>ModelKey</code>, computes <code>cost</code> via the registry, emits <code>EventKind::TurnEnd { stop_reason, usage }</code>.</li>
+  <li><code>Session::cumulative_usage() -&gt; CumulativeUsage</code> accessor for frontends. V1 only ever has one entry under <code>(AgentId::Root, model)</code>, but the per-(agent, model) map is the source of truth so post-V1 sub-agents and mid-session model switches are additive, not breaking.</li>
+  <li>Frontends at M1 don't have to render usage yet (M3 wires the TUI status line), but the data &mdash; including the per-model breakdown view via <code>cumulative_usage().by_model()</code> &mdash; is available.</li>
+</ul>
+
+<h2 id="tui-scope">TUI scope at M1</h2>
+
+<div class="figure">
+<svg viewBox="0 0 760 260" role="img" aria-label="M1 TUI layout">
+  <g font-family="ui-monospace, monospace" font-size="10">
+    <rect x="40" y="20" width="680" height="220" rx="10" fill="#0f1217" stroke="#38bdf8" stroke-opacity="0.5"/>
+
+    <text x="55" y="44" fill="#9aa3b3">user: hello</text>
+    <text x="55" y="70" fill="#34d399">assistant</text>
+    <text x="55" y="86" fill="#e4e8ef">Hi! How can I help you today?</text>
+    <text x="55" y="110" fill="#9aa3b3">user: what is 2+2?</text>
+    <text x="55" y="136" fill="#34d399">assistant</text>
+    <text x="55" y="152" fill="#e4e8ef">4.</text>
+    <text x="55" y="176" fill="#6b7384">(streaming)_</text>
+
+    <line x1="40" y1="200" x2="720" y2="200" stroke="#232936"/>
+    <rect x="55" y="210" width="650" height="22" rx="4" fill="#141821" stroke="#38bdf8"/>
+    <text x="65" y="225" fill="#38bdf8">&gt; </text>
+    <text x="80" y="225" fill="#e4e8ef">_</text>
+  </g>
+</svg>
+<div class="figure-caption">Two regions: scrolling transcript on top, single-line input on bottom. No status row, no slash commands, no tool cards yet.</div>
+</div>
+
+<ul>
+  <li>ratatui + crossterm. Three tokio tasks: input, agent, render (per <a href="adapter-tui.html#three-tasks">adapter-tui.html</a>).</li>
+  <li>Plain text rendering &mdash; no markdown, no syntax highlighting.</li>
+  <li><kbd>Enter</kbd> submits, <kbd>Ctrl-C</kbd> exits, <kbd>Esc</kbd> cancels the current turn if one is running.</li>
+  <li>No history scrollback (just whatever the terminal naturally shows).</li>
+  <li><code>TuiFrontend</code> auto-allows all permission requests (no sensitive tools exist yet).</li>
+</ul>
+
+<h2 id="acp-scope">ACP scope at M1</h2>
+
+<table>
+  <thead><tr><th>Method / notification</th><th>Behaviour at M1</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>initialize</code></td>
+      <td>Negotiate protocol version; advertise minimal agent capabilities (no fs, no terminal, no MCP); record client capabilities (advisory only at M1).</td>
+    </tr>
+    <tr>
+      <td><code>session/new</code></td>
+      <td>Construct a <code>Session&lt;AcpFrontend, AcpHost&gt;</code>; mint a ULID; return it. cwd from client may be ignored at M1.</td>
+    </tr>
+    <tr>
+      <td><code>session/prompt</code></td>
+      <td>Push the user message, call <code>session.prompt()</code>, return final <code>stop_reason</code>.</td>
+    </tr>
+    <tr>
+      <td><code>session/cancel</code></td>
+      <td>Notification; calls <code>session.cancel()</code>.</td>
+    </tr>
+    <tr>
+      <td><code>session/update</code></td>
+      <td>Outbound notification. Only <code>agent_message_chunk</code> variant emitted at M1.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  Everything else (<code>session/load</code>, <code>set_mode</code>,
+  <code>request_permission</code>, <code>fs/*</code>,
+  <code>terminal/*</code>) responds with JSON-RPC error
+  <code>-32601 Method not found</code> if asked. Capability flags signal
+  upfront that these aren't supported.
+</p>
+
+<h2 id="cli">CLI surface</h2>
+
+<pre><code>$ arnes                              # launch TUI
+$ arnes --model gemini-2.5-flash     # TUI with model override
+$ arnes-acp                          # speak ACP on stdio (editor-spawned)</code></pre>
+
+<p>
+  Each binary parses its own flags via <code>clap</code>. Common options
+  (<code>--model</code>, <code>--cwd</code>, &hellip;) live in a shared
+  <code>CommonOpts</code> struct in <code>arnes-core::cli</code> that
+  both binaries flatten into their own options via
+  <code>#[command(flatten)]</code>.
+</p>
+
+<h2 id="tasks">Implementation tasks, in order</h2>
+
+<p>
+  A coarse orientation list, in execution order. Each task corresponds
+  to one or more PRs in the detailed work plan.
+</p>
+
+<ol class="steps">
+  <li>Bootstrap the repo: <code>git init</code>, copy the planning docs into <code>docs/</code>, write the meta files (<code>README.md</code>, <code>AGENTS.md</code>, <code>CONTRIBUTING.md</code>, <code>LICENSE</code>, <code>.gitignore</code>), first commit on <code>main</code>.</li>
+  <li>Initialize the Cargo workspace; set an MSRV via <code>rust-version</code> in <code>[workspace.package]</code>; CI runs fmt/clippy/test.</li>
+  <li>Define <code>arnes-core</code> types: <code>Frontend</code>, <code>Host</code>, <code>Message</code>, and the usage subsystem with seed <code>pricing.toml</code>.</li>
+  <li>Wire <code>Session</code> around agent-rig's <code>AgentRunner</code>; land the mock <code>Frontend</code>/<code>Host</code> and scripted-LLM test scaffolding.</li>
+  <li>Bring up <code>jsonrpsee</code> for ACP transport (or fall back to a hand-rolled framer per the M1 triggers); land the four inbound methods + one outbound notification; commit the ADR.</li>
+  <li>Add a small <code>main.rs</code> to each of <code>arnes-tui</code> and <code>arnes-acp</code> so they produce binaries (<code>arnes</code> and <code>arnes-acp</code>). Wire the real Gemini provider; verify a real chat round-trip in both modes.</li>
+</ol>
+
+<div class="prod">
+  <span class="prod-label">Work plan</span>
+  <p>
+    For PR-by-PR breakdown &mdash; scope, files touched, acceptance gate
+    for each &mdash; see the
+    <a href="m1-plan.html"><strong>M1 work plan</strong></a>. Nine PRs,
+    each small enough to review, each leaves <code>main</code> in a
+    working state.
+  </p>
+</div>
+
+<h2 id="testing">Testing checklist</h2>
+
+<ul>
+  <li><strong>arnes-core unit:</strong> <code>Session::prompt</code> with mock <code>Frontend</code> + mock <code>Host</code> + agent-rig in "echo" mode. Assert event sequence: <code>TurnStart</code>, N&times;<code>AgentMessageDelta</code>, <code>TurnEnd</code>.</li>
+  <li><strong>arnes-acp golden:</strong> a JSON-lines transcript file (<code>tests/golden/m1_basic.jsonl</code>) with inbound requests and expected outbound notifications. Replay; diff.</li>
+  <li><strong>arnes-tui smoke:</strong> manual. Type "hello"; reply streams in.</li>
+  <li><strong>Lint:</strong> <code>cargo clippy --workspace --all-targets -- -D warnings</code>.</li>
+</ul>
+
+<h2 id="risks">Risks specific to M1</h2>
+
+<ul>
+  <li><strong>jsonrpsee turns out to be the wrong choice.</strong> Mitigation: the documented fallback (hand-rolled framer) is ~350 lines and the triggers are explicit, so the switch is a 2&ndash;3 day detour, not a redesign. The <code>arnes-acp::transport</code> module isolates the framing so the rest of the adapter is unaffected.</li>
+  <li><strong>agent-rig public API edges.</strong> If something we need isn't public, contribute a PR upstream rather than forking. Plan for one round-trip with upstream during M1.</li>
+  <li><strong>Trait premature lock-in.</strong> The traits will need at least one revision when M2/M3 land permissions and tool calls. Embrace that &mdash; do not over-design the trait now to avoid future changes.</li>
+</ul>
+
+<div class="endstate">
+  <h4>End state of M1</h4>
+  <p>
+    <code>arnes</code> drops you into a ratatui pane; type a question;
+    watch tokens stream into the upper region. In another terminal,
+    <code>echo '{"jsonrpc":"2.0",...}' | arnes-acp</code> produces the
+    same reply as <code>session/update</code> notifications. Same
+    <code>Session</code> code drives both. The <code>Frontend</code> trait
+    has two real consumers; the <code>Host</code> trait has its
+    skeleton ready for M2's first tool.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="roadmap.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">Roadmap</span>
+  </a>
+  <a class="next" href="m2.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">M2: First tool</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

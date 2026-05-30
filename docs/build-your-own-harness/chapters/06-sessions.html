@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 6 &mdash; Sessions: save and resume</title>
+<link rel="stylesheet" href="../assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">π</span>
+    <span>Build Your Own Harness</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part I &mdash; Foundation</h4><ul>
+    <li><a href="01-streaming-client.html">1. Streaming LLM client</a></li>
+    <li><a href="02-first-tool.html">2. Your first tool call</a></li>
+    <li><a href="03-agent-loop.html">3. The agent loop</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part II &mdash; A real coding agent</h4><ul>
+    <li><a href="04-coding-toolkit.html">4. A real coding toolkit</a></li>
+    <li><a href="05-system-prompt.html">5. The system prompt</a></li>
+    <li><a href="06-sessions.html">6. Sessions: save &amp; resume</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part III &mdash; Making it real</h4><ul>
+    <li><a href="07-live-tui.html">7. A live terminal UI</a></li>
+    <li><a href="08-extensions.html">8. Extensions</a></li>
+    <li><a href="09-skills.html">9. Skills</a></li>
+    <li><a href="10-compaction.html">10. Compaction</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">Chapter 6 &middot; Part II</span>
+  <h1>Sessions: save and resume</h1>
+  <p class="lead">
+    Coding tasks rarely fit into one sitting. You start something, get
+    interrupted, come back the next morning, and want to pick up where you
+    were. This chapter is about adding the persistence layer that makes
+    <code>--continue</code> work &mdash; and why JSONL is almost always the
+    right format for it.
+  </p>
+</div>
+
+<h2 id="why-append-only">Why an append-only log</h2>
+
+<p>
+  Your harness already has the source of truth: the in-memory
+  <code>messages</code> array. The naive way to persist it is to dump the whole
+  array to disk after each turn. That works, scales badly, and corrupts
+  loudly on a crash mid-write.
+</p>
+
+<p>
+  A better shape: append-only. Every message that gets pushed onto the array
+  also gets a line written to a file. The file is the array's history. To
+  resume, you read the file line by line and replay each row into a fresh
+  array. JSON lines (JSONL) is the format: one JSON object per line, newline
+  separated.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 290" role="img" aria-label="JSONL session layout">
+  <g font-family="ui-monospace, monospace" font-size="11">
+    <!-- in-memory -->
+    <rect x="30" y="30" width="240" height="220" rx="12" fill="#141821" stroke="#fbbf24"/>
+    <text x="150" y="56" text-anchor="middle" fill="#fbbf24" font-weight="700">in memory</text>
+
+    <g fill="#e4e8ef" font-size="11">
+      <rect x="50" y="78"  width="200" height="28" rx="6" fill="#0f1217" stroke="#1a1f2a"/>
+      <text x="60" y="96">user: "summarize..."</text>
+      <rect x="50" y="112" width="200" height="28" rx="6" fill="#0f1217" stroke="#1a1f2a"/>
+      <text x="60" y="130">assistant: tool_use read</text>
+      <rect x="50" y="146" width="200" height="28" rx="6" fill="#0f1217" stroke="#1a1f2a"/>
+      <text x="60" y="164">user: tool_result ok</text>
+      <rect x="50" y="180" width="200" height="28" rx="6" fill="#0f1217" stroke="#1a1f2a"/>
+      <text x="60" y="198">assistant: "the file..."</text>
+      <rect x="50" y="214" width="200" height="28" rx="6" fill="#0f1217" stroke="#34d399" stroke-dasharray="3 3"/>
+      <text x="60" y="232" fill="#34d399">(next message)</text>
+    </g>
+
+    <!-- arrow -->
+    <line x1="280" y1="138" x2="328" y2="138" stroke="#9aa3b3" stroke-width="1.5" marker-end="url(#ar6)"/>
+    <text x="304" y="130" text-anchor="middle" fill="#6b7384" font-size="10">append</text>
+
+    <defs>
+      <marker id="ar6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+      </marker>
+    </defs>
+
+    <!-- on disk -->
+    <rect x="340" y="30" width="380" height="220" rx="12" fill="#141821" stroke="#a78bfa"/>
+    <text x="530" y="56" text-anchor="middle" fill="#a78bfa" font-weight="700">session.jsonl</text>
+
+    <g fill="#9aa3b3" font-size="10" font-family="ui-monospace, monospace">
+      <text x="350" y="86"  >{"id":"01HX..","role":"user","content":[{"type":"text",...}]}</text>
+      <text x="350" y="106" >{"id":"01HY..","role":"assistant","content":[{"type":"tool_use",...}]}</text>
+      <text x="350" y="126" >{"id":"01HZ..","role":"user","content":[{"type":"tool_result",...}]}</text>
+      <text x="350" y="146" >{"id":"01J0..","role":"assistant","content":[{"type":"text",...}]}</text>
+      <text x="350" y="174" fill="#34d399">(next line will be appended here)</text>
+    </g>
+
+    <text x="350" y="240" fill="#6b7384" font-size="10">one JSON object per line - append-only - safe on crash</text>
+  </g>
+</svg>
+<div class="figure-caption">The on-disk file mirrors the in-memory array. To resume, replay the lines.</div>
+</div>
+
+<h2 id="jsonl-properties">Why JSONL specifically</h2>
+
+<p>
+  JSONL has four properties that make it almost unreasonably good for this:
+</p>
+
+<ol>
+  <li><strong>Append is one syscall.</strong> No re-encode of prior content.</li>
+  <li><strong>Lines are independent.</strong> If the process dies mid-write, the last (incomplete) line is the only one corrupted; everything before it is fine.</li>
+  <li><strong>It is human-readable.</strong> When something weird happened in a session, you can <code>cat</code> the file and read it.</li>
+  <li><strong>Tooling already exists.</strong> <code>jq</code>, <code>grep</code>, and a hundred other utilities operate on JSONL out of the box.</li>
+</ol>
+
+<h2 id="where-to-store">Where to store sessions</h2>
+
+<p>
+  A conventional layout, separate from the project itself:
+</p>
+
+<pre><code>~/.pi/agent/sessions/
+  &lt;project-hash&gt;/
+    01HX0K9T-summarize-the-readme.jsonl
+    01HX0M2N-refactor-auth-middleware.jsonl
+    ...</code></pre>
+
+<p>
+  Hashing the project root (or its absolute path) into a directory name lets
+  you list <em>this project's</em> sessions without scanning every session you
+  have ever had. The session filename includes a ULID-style sortable prefix
+  (so <code>ls</code> sorts chronologically) and a short title derived from
+  the first user message.
+</p>
+
+<h2 id="the-writer">The writer</h2>
+
+<p>
+  Open the file once when the session starts, append on every message, close
+  when the harness exits. That is it.
+</p>
+
+<pre><code>class SessionWriter {
+  constructor(private fh: fs.FileHandle) {}
+
+  static async open(path: string) {
+    await fs.mkdir(dirname(path), { recursive: true });
+    return new SessionWriter(await fs.open(path, "a"));
+  }
+
+  async append(msg: Message &amp; { id?: string }) {
+    const row = { id: msg.id ?? ulid(), timestamp: Date.now(), ...msg };
+    await this.fh.write(JSON.stringify(row) + "\n");
+  }
+
+  async close() { await this.fh.close(); }
+}</code></pre>
+
+<p>
+  Wire it to the event stream from Chapter 3. Every time the agent emits a
+  <code>message</code> event, write a line. Nothing else in the harness needs
+  to know the writer exists.
+</p>
+
+<pre><code>agent.on("message", (msg) =&gt; writer.append(msg));</code></pre>
+
+<h2 id="the-reader">The reader (and resume)</h2>
+
+<p>
+  Resuming is the inverse. Read the file, parse each line, push into a fresh
+  messages array, hand it to the agent.
+</p>
+
+<pre><code>async function loadSession(path: string): Promise&lt;Message[]&gt; {
+  const text = await fs.readFile(path, "utf8");
+  const messages: Message[] = [];
+  for (const line of text.split("\n")) {
+    if (!line) continue;
+    const { id, timestamp, ...msg } = JSON.parse(line);
+    messages.push(msg);
+  }
+  return messages;
+}
+
+const messages = await loadSession("~/.pi/sessions/.../foo.jsonl");
+await runAgent(messages, tools);</code></pre>
+
+<p>
+  Now wire up the CLI flags users expect:
+</p>
+
+<table>
+  <thead><tr><th>Flag</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>--continue</code> (or <code>-c</code>)</td>
+      <td>Resume the most recent session for the current project. <code>ls -t</code> the project's session directory; grab index 0.</td>
+    </tr>
+    <tr>
+      <td><code>--resume &lt;id&gt;</code></td>
+      <td>Resume a specific session by its ULID prefix.</td>
+    </tr>
+    <tr>
+      <td><code>--resume</code> (no arg)</td>
+      <td>Show a picker: list of sessions with timestamps and first-line titles.</td>
+    </tr>
+    <tr>
+      <td><em>(no flag)</em></td>
+      <td>Start a fresh session. Generate an id, mint a filename, open the writer.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="metadata">Session metadata</h2>
+
+<p>
+  You will eventually want more on disk than just messages. The model used.
+  The thinking budget. Which tools were active. The cwd. Skills loaded.
+  Anything else you need to rebuild the system prompt identically on resume.
+</p>
+
+<p>
+  Two reasonable approaches, both used in the wild:
+</p>
+
+<div class="compare">
+<div>
+<h5>Sidecar file</h5>
+<p>Write a <code>session.json</code> alongside the JSONL with the
+  metadata. Read both on resume. Simple, but two files to keep in sync.</p>
+</div>
+<div>
+<h5>First-line header</h5>
+<p>Make the first line of the JSONL a special "session_start" row containing
+the metadata. Compose nicely with the append-only model: just another
+row. This is what pi does.</p>
+</div>
+</div>
+
+<p>
+  Either way, treat metadata as data: every field a different version of your
+  harness might want, even ones you do not use yet. Versioning the file format
+  (a <code>version</code> field on the header) is cheap and saves grief later.
+</p>
+
+<h2 id="branching">Branching: the bonus feature you get for free</h2>
+
+<p>
+  Append-only logs have a quiet superpower. If each message carries an
+  <code>id</code> and a <code>parent_id</code> pointing to the message it
+  responded to, the log becomes a tree, not a list. Now you can rewind to a
+  previous turn, take a different path, and the original branch is still
+  there if you want to come back.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 220" role="img" aria-label="Session as tree">
+  <defs>
+    <marker id="ar7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="10">
+    <g stroke="#9aa3b3" stroke-width="1.4">
+      <line x1="80"  y1="110" x2="178" y2="110" marker-end="url(#ar7)"/>
+      <line x1="222" y1="110" x2="318" y2="110" marker-end="url(#ar7)"/>
+      <line x1="362" y1="110" x2="458" y2="110" marker-end="url(#ar7)"/>
+      <line x1="362" y1="110" x2="458" y2="50"  marker-end="url(#ar7)"/>
+      <line x1="502" y1="50"  x2="598" y2="50"  marker-end="url(#ar7)"/>
+      <line x1="502" y1="110" x2="598" y2="170" marker-end="url(#ar7)"/>
+    </g>
+
+    <g>
+      <rect x="40"  y="92"  width="40" height="36" rx="6" fill="#141821" stroke="#fbbf24"/>
+      <text x="60"  y="115" text-anchor="middle" fill="#fbbf24">u1</text>
+
+      <rect x="180" y="92"  width="40" height="36" rx="6" fill="#141821" stroke="#34d399"/>
+      <text x="200" y="115" text-anchor="middle" fill="#34d399">a1</text>
+
+      <rect x="320" y="92"  width="40" height="36" rx="6" fill="#141821" stroke="#fbbf24"/>
+      <text x="340" y="115" text-anchor="middle" fill="#fbbf24">u2</text>
+
+      <rect x="460" y="32"  width="40" height="36" rx="6" fill="#141821" stroke="#34d399"/>
+      <text x="480" y="55"  text-anchor="middle" fill="#34d399">a2'</text>
+
+      <rect x="460" y="92"  width="40" height="36" rx="6" fill="#141821" stroke="#34d399"/>
+      <text x="480" y="115" text-anchor="middle" fill="#34d399">a2</text>
+
+      <rect x="600" y="32"  width="40" height="36" rx="6" fill="#141821" stroke="#fbbf24"/>
+      <text x="620" y="55"  text-anchor="middle" fill="#fbbf24">u3'</text>
+
+      <rect x="600" y="152" width="40" height="36" rx="6" fill="#141821" stroke="#fbbf24"/>
+      <text x="620" y="175" text-anchor="middle" fill="#fbbf24">u3</text>
+    </g>
+
+    <text x="380" y="210" text-anchor="middle" fill="#6b7384">two branches from u2 -- same log, parent_id picks the path</text>
+  </g>
+</svg>
+<div class="figure-caption">Each row carries a parent_id. Resuming chooses a leaf; the path back to the root is the conversation.</div>
+</div>
+
+<p>
+  This is more machinery than most harnesses need on day one. But the file
+  format does not preclude it &mdash; you just add <code>id</code> and
+  <code>parent_id</code> from the start. If you ever want branching, you can
+  build it without rewriting the storage layer.
+</p>
+
+<h2 id="bookkeeping">Three small bookkeeping things</h2>
+
+<ul>
+  <li>
+    <strong>Use <code>fsync</code> sparingly.</strong> A coding session
+    produces 50&ndash;500 messages. <code>fsync</code> on every line is slow
+    and rarely needed; OS buffer + close-on-exit is usually enough.
+  </li>
+  <li>
+    <strong>Atomic appends.</strong> On POSIX, an <code>O_APPEND</code> write
+    is atomic for writes under <code>PIPE_BUF</code>. Your JSONL lines fit.
+    Even on a power loss, you get whole-line writes or a torn final line you
+    can detect and discard on read.
+  </li>
+  <li>
+    <strong>Never edit old rows.</strong> The whole point of append-only is
+    that history is immutable. If you need to "delete" a message, append a
+    tombstone row instead and have the reader skip it. You will never need
+    this for a coding harness, but the discipline is good.
+  </li>
+</ul>
+
+<div class="prod">
+  <span class="prod-label">In pi's code</span>
+  <p>
+    Pi's session layer is
+    <code>packages/agent/src/harness/session/</code>. The JSONL repo is at
+    <code>jsonl-repo.ts</code>, the in-memory one (for tests) at
+    <code>memory-repo.ts</code>, both behind a <code>SessionRepo</code>
+    interface. Pi treats sessions as a tree from the start: each row has
+    <code>id</code> and <code>parentId</code>, and the user can branch
+    via <code>/branch</code>. The header-as-first-row pattern lives in
+    <code>session.ts</code>, with metadata describing model, tools, skills,
+    and compaction state.
+  </p>
+</div>
+
+<div class="endstate">
+  <h4>What you have now</h4>
+  <p>
+    A harness that survives shutdown. Start a task, quit, come back tomorrow,
+    <code>pi --continue</code>, you are right where you left off &mdash; same
+    messages, same context, same model. If you want to look at what happened
+    yesterday, the file is readable text on disk. The transcript is also the
+    storage; nothing is hidden.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="05-system-prompt.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">5. The system prompt</span>
+  </a>
+  <a class="next" href="07-live-tui.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">7. A live terminal UI</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

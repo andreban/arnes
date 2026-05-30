@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 7 &mdash; A live terminal UI</title>
+<link rel="stylesheet" href="../assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">π</span>
+    <span>Build Your Own Harness</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part I &mdash; Foundation</h4><ul>
+    <li><a href="01-streaming-client.html">1. Streaming LLM client</a></li>
+    <li><a href="02-first-tool.html">2. Your first tool call</a></li>
+    <li><a href="03-agent-loop.html">3. The agent loop</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part II &mdash; A real coding agent</h4><ul>
+    <li><a href="04-coding-toolkit.html">4. A real coding toolkit</a></li>
+    <li><a href="05-system-prompt.html">5. The system prompt</a></li>
+    <li><a href="06-sessions.html">6. Sessions: save &amp; resume</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part III &mdash; Making it real</h4><ul>
+    <li><a href="07-live-tui.html">7. A live terminal UI</a></li>
+    <li><a href="08-extensions.html">8. Extensions</a></li>
+    <li><a href="09-skills.html">9. Skills</a></li>
+    <li><a href="10-compaction.html">10. Compaction</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="tui">
+  <span class="eyebrow">Chapter 7 &middot; Part III</span>
+  <h1>A live terminal UI</h1>
+  <p class="lead">
+    Plain stdout has carried you this far. It will not carry you further.
+    The user wants to see the model's reply stream in <em>and</em> have a
+    cursor in an input box ready for the next prompt &mdash; at the same
+    time. That requires giving up on writing-and-forgetting and learning to
+    paint the terminal as if it were a small, character-grid display.
+  </p>
+</div>
+
+<h2 id="terminal-as-display">The terminal as a tiny display</h2>
+
+<p>
+  A terminal is a grid of cells: <em>rows</em> tall, <em>cols</em> wide. You
+  write a stream of bytes; most are characters that go in cells; some are
+  <em>ANSI escape sequences</em> that move the cursor, change colours, or
+  clear regions. Building a TUI is fundamentally about choosing, on each
+  redraw, what bytes to emit so that the visible cells match the state you
+  want them to.
+</p>
+
+<p>
+  The core concepts you cannot avoid:
+</p>
+
+<ul>
+  <li><strong>Raw mode.</strong> By default the terminal cooks input (echoes characters, buffers until newline, handles backspace). For a TUI you want every keystroke, immediately, in raw form. You ask the OS for raw mode at start and restore cooked mode at exit.</li>
+  <li><strong>Alternate screen buffer.</strong> An ANSI sequence that gives you a clean scrollback-less canvas to draw into; when you exit, the user's prior terminal contents come back. Optional, but it makes your UI feel like an "app".</li>
+  <li><strong>Cursor control.</strong> <code>\x1b[H</code> goes to top-left, <code>\x1b[3;5H</code> goes to row 3 column 5, <code>\x1b[K</code> clears to end of line. With a small vocabulary you can redraw anything.</li>
+  <li><strong>Synchronized output.</strong> Without it, fast redraws flicker as you erase before drawing. Wrap a frame in <code>\x1b[?2026h ... \x1b[?2026l</code> and the terminal buffers the whole sequence and applies it atomically.</li>
+</ul>
+
+<h2 id="full-vs-diff">Full redraw is the wrong default</h2>
+
+<p>
+  The instinct is: on every event, clear the screen, redraw everything. It
+  works for a single static screen. It flickers on streaming, scrolls badly,
+  and burns CPU on long transcripts.
+</p>
+
+<p>
+  The right default is differential rendering. You keep two arrays of lines:
+  the lines currently on screen, and the lines you <em>want</em> on screen.
+  You walk both arrays in lockstep; only emit ANSI sequences for the rows
+  that changed.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 320" role="img" aria-label="Full vs differential render">
+  <g font-family="ui-monospace, monospace" font-size="10">
+
+    <!-- left: full redraw -->
+    <text x="180" y="22" text-anchor="middle" fill="#fbbf24" font-weight="700" font-size="12">full redraw</text>
+
+    <g>
+      <rect x="40"  y="34" width="280" height="120" rx="8" fill="#141821" stroke="#fbbf24"/>
+      <text x="55"  y="56" fill="#9aa3b3">before:</text>
+      <rect x="55"  y="64" width="250" height="14" fill="#0f1217"/><text x="60" y="76" fill="#e4e8ef">line A</text>
+      <rect x="55"  y="82" width="250" height="14" fill="#0f1217"/><text x="60" y="94" fill="#e4e8ef">line B</text>
+      <rect x="55"  y="100" width="250" height="14" fill="#0f1217"/><text x="60" y="112" fill="#e4e8ef">line C</text>
+      <rect x="55"  y="118" width="250" height="14" fill="#0f1217"/><text x="60" y="130" fill="#e4e8ef">line D</text>
+    </g>
+
+    <g>
+      <rect x="40"  y="172" width="280" height="120" rx="8" fill="#141821" stroke="#fbbf24"/>
+      <text x="55"  y="194" fill="#9aa3b3">redraw:  ESC[2J + paint all 4</text>
+      <rect x="55"  y="202" width="250" height="14" fill="#a78bfa" fill-opacity="0.25"/><text x="60" y="214" fill="#e4e8ef">line A (repainted)</text>
+      <rect x="55"  y="220" width="250" height="14" fill="#a78bfa" fill-opacity="0.25"/><text x="60" y="232" fill="#e4e8ef">line B (repainted)</text>
+      <rect x="55"  y="238" width="250" height="14" fill="#a78bfa" fill-opacity="0.25"/><text x="60" y="250" fill="#e4e8ef">line C' (changed)</text>
+      <rect x="55"  y="256" width="250" height="14" fill="#a78bfa" fill-opacity="0.25"/><text x="60" y="268" fill="#e4e8ef">line D (repainted)</text>
+    </g>
+
+    <!-- right: diff -->
+    <text x="580" y="22" text-anchor="middle" fill="#34d399" font-weight="700" font-size="12">differential</text>
+
+    <g>
+      <rect x="440" y="34" width="280" height="120" rx="8" fill="#141821" stroke="#34d399"/>
+      <text x="455" y="56" fill="#9aa3b3">compare lines old vs new:</text>
+      <rect x="455" y="64"  width="250" height="14" fill="#0f1217"/><text x="460" y="76" fill="#e4e8ef">line A   = same -- skip</text>
+      <rect x="455" y="82"  width="250" height="14" fill="#0f1217"/><text x="460" y="94" fill="#e4e8ef">line B   = same -- skip</text>
+      <rect x="455" y="100" width="250" height="14" fill="#34d399" fill-opacity="0.25"/><text x="460" y="112" fill="#e4e8ef">line C  -&gt; C'  CHANGED</text>
+      <rect x="455" y="118" width="250" height="14" fill="#0f1217"/><text x="460" y="130" fill="#e4e8ef">line D   = same -- skip</text>
+    </g>
+
+    <g>
+      <rect x="440" y="172" width="280" height="120" rx="8" fill="#141821" stroke="#34d399"/>
+      <text x="455" y="194" fill="#9aa3b3">emit:  ESC[3;1H + ESC[K + "line C'"</text>
+      <text x="455" y="216" fill="#34d399">one cursor move</text>
+      <text x="455" y="230" fill="#34d399">one line drawn</text>
+      <text x="455" y="244" fill="#34d399">no flicker</text>
+    </g>
+  </g>
+</svg>
+<div class="figure-caption">Full redraw repaints every cell on every frame. Differential repaints only what changed.</div>
+</div>
+
+<h2 id="component-shape">A component is just <code>render(width)</code></h2>
+
+<p>
+  Resist the urge to import a React-clone for the terminal. The
+  abstraction you need is much smaller:
+</p>
+
+<pre><code>interface Component {
+  render(width: number): string[];   // one array entry per visible line
+  handleInput?(data: string): void;  // optional
+}</code></pre>
+
+<p>
+  A component is anything that, given a width, can produce a fixed list of
+  string lines and optionally react to keystrokes. That is enough to build
+  text, lists, inputs, modals &mdash; everything.
+</p>
+
+<p>
+  A container is a component that holds children and concatenates their
+  output:
+</p>
+
+<pre><code>class Container implements Component {
+  children: Component[] = [];
+  render(width: number): string[] {
+    return this.children.flatMap(c =&gt; c.render(width));
+  }
+  handleInput(data: string) {
+    this.focused?.handleInput?.(data);
+  }
+}</code></pre>
+
+<h2 id="render-loop">The render loop</h2>
+
+<p>
+  One render loop coordinates everything. It owns the previous-frame array,
+  the terminal handle, and the focused component. On any event &mdash; a
+  keypress, a streaming token from the agent, a window resize &mdash; it
+  schedules a redraw:
+</p>
+
+<pre><code>class TUI {
+  private prevLines: string[] = [];
+
+  scheduleRender = debounce(() =&gt; this.render(), 16);  // ~60 fps cap
+
+  render() {
+    const width = process.stdout.columns;
+    const newLines = this.root.render(width);
+    const frame: string[] = [];
+
+    // begin synchronized output
+    frame.push("\x1b[?2026h");
+
+    // emit only changed lines
+    const max = Math.max(this.prevLines.length, newLines.length);
+    for (let i = 0; i &lt; max; i++) {
+      if (this.prevLines[i] === newLines[i]) continue;
+      frame.push(`\x1b[${i + 1};1H`);  // move to row i+1 col 1
+      frame.push("\x1b[K");             // clear to end of line
+      frame.push(newLines[i] ?? "");
+    }
+
+    frame.push("\x1b[?2026l");          // end synchronized output
+    process.stdout.write(frame.join(""));
+    this.prevLines = newLines;
+  }
+}</code></pre>
+
+<p>
+  Three subtleties hiding in that snippet:
+</p>
+
+<ul>
+  <li>
+    <strong>Width matters.</strong> Each component must produce lines that fit
+    inside the given width. Overflow is the most common TUI bug. Provide
+    helpers for "truncate this string to <em>n</em> visible characters"
+    that understand ANSI escapes (they take no visual width) and combining
+    characters/CJK (which can be wide).
+  </li>
+  <li>
+    <strong>The cursor lands where the focused component wants it.</strong>
+    After rendering, position the hardware cursor to wherever the input
+    box's cursor sits. Most components emit a tiny marker (a zero-width
+    escape) at the cursor location, the TUI strips it out, and positions
+    the real cursor where the marker was. This is also what makes IME
+    candidate windows show up in the right spot.
+  </li>
+  <li>
+    <strong>Resize is just another event.</strong> <code>process.stdout</code>
+    emits <code>resize</code>; the loop's response is to invalidate
+    <code>prevLines</code> (force a full redraw next frame) and re-render.
+  </li>
+</ul>
+
+<h2 id="input">Reading input</h2>
+
+<p>
+  In raw mode, every keystroke arrives as one or more bytes on stdin. Plain
+  printable characters are themselves; special keys arrive as ANSI escape
+  sequences:
+</p>
+
+<pre><code>\r         -> Enter
+\x7f       -> Backspace
+\x1b[A     -> Up
+\x1b[B     -> Down
+\x1b       -> Escape (or the start of a longer sequence)
+\x03       -> Ctrl-C
+\x04       -> Ctrl-D</code></pre>
+
+<p>
+  Write a tiny parser that takes the raw bytes and emits a typed key:
+</p>
+
+<pre><code>type Key =
+  | { type: "char"; char: string }
+  | { type: "enter" } | { type: "backspace" } | { type: "escape" }
+  | { type: "up" } | { type: "down" } | { type: "left" } | { type: "right" }
+  | { type: "ctrl"; char: string };
+
+function parseKey(data: string): Key { /* ... */ }</code></pre>
+
+<p>
+  Components can then ignore the byte layer entirely. Modern terminals also
+  support the <em>Kitty keyboard protocol</em>, which encodes every key
+  unambiguously (including shift state, repeat, and release). If you target
+  it, opt in by sending an escape at startup; fall back to the legacy
+  encoding for terminals that do not respond.
+</p>
+
+<h2 id="layout">A layout sketch for a coding agent</h2>
+
+<div class="figure">
+<svg viewBox="0 0 760 320" role="img" aria-label="TUI layout">
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <rect x="40" y="20" width="680" height="280" rx="10" fill="#0f1217" stroke="#38bdf8" stroke-opacity="0.6"/>
+
+    <!-- transcript area -->
+    <rect x="40" y="20" width="680" height="200" fill="none"/>
+    <text x="55" y="46" fill="#9aa3b3">&gt; how is logging configured in this project?</text>
+
+    <text x="55" y="76" fill="#34d399">assistant</text>
+    <text x="55" y="92" fill="#e4e8ef">I'll start by looking at the package.json and config files.</text>
+
+    <rect x="55" y="106" width="640" height="22" rx="4" fill="#1a1f2a" stroke="#a78bfa" stroke-opacity="0.6"/>
+    <text x="65" y="122" fill="#a78bfa">read_file  package.json</text>
+
+    <text x="55" y="148" fill="#e4e8ef">It uses pino with a custom transport.</text>
+    <rect x="55" y="160" width="640" height="22" rx="4" fill="#1a1f2a" stroke="#a78bfa" stroke-opacity="0.6"/>
+    <text x="65" y="176" fill="#a78bfa">read_file  src/logger.ts</text>
+
+    <text x="55" y="200" fill="#34d399">streaming...</text>
+
+    <!-- divider -->
+    <line x1="40" y1="232" x2="720" y2="232" stroke="#232936"/>
+
+    <!-- status row -->
+    <text x="55" y="252" fill="#6b7384" font-size="10">running - 1 tool in flight - 4,231 tokens / 200k</text>
+
+    <!-- input area -->
+    <rect x="55" y="262" width="650" height="26" rx="6" fill="#141821" stroke="#fbbf24"/>
+    <text x="65" y="280" fill="#fbbf24">&gt;</text>
+    <text x="80" y="280" fill="#e4e8ef">|</text>
+    <text x="100" y="280" fill="#6b7384">(type to continue, ctrl-c to cancel)</text>
+  </g>
+</svg>
+<div class="figure-caption">A typical coding-agent TUI: scrolling transcript on top, status row, input at the bottom.</div>
+</div>
+
+<p>
+  As a layout, this is just three stacked components: a scrolling transcript
+  view, a status row, an input. The transcript subscribes to the agent's
+  event stream and grows a new "message" component every time a
+  <code>message_start</code> arrives. The input owns the cursor; on
+  <kbd>Enter</kbd> it dispatches the text to the agent. Streaming
+  <code>text_delta</code> events update the current message in place, which
+  the TUI sees as a one-line diff and repaints just that line.
+</p>
+
+<h2 id="windows">Windows in passing</h2>
+
+<p>
+  Windows console support has historically been the hard part of cross-platform
+  TUIs. The good news: Windows 10+ supports ANSI sequences out of the box,
+  provided you enable <code>ENABLE_VIRTUAL_TERMINAL_INPUT</code> on the console.
+  That is a single Win32 call. Wrap it in a tiny native add-on (or a JS
+  spawn-and-exit dance) and you are good. Use <code>conpty</code> under the
+  hood and most of the rest just works.
+</p>
+
+<div class="prod">
+  <span class="prod-label">In pi's code</span>
+  <p>
+    Pi's TUI is its own package: <code>packages/tui/</code>. The render loop
+    and Container/Component model live in <code>src/tui.ts</code>; the key
+    parser (both legacy and Kitty protocol) in <code>src/keys.ts</code>; the
+    big components in <code>src/components/</code>. The differential renderer
+    in <code>tui.ts</code> uses three strategies depending on the situation:
+    first-render (no clear, preserves scrollback), full redraw (on width
+    change), and incremental (the common case). Native modifier probing on
+    macOS and the Win32 virtual-terminal toggle are tiny C add-ons under
+    <code>packages/tui/native/</code>.
+  </p>
+</div>
+
+<div class="endstate">
+  <h4>What you have now</h4>
+  <p>
+    A real interactive harness. Stream tokens land in a scrollable transcript;
+    a persistent input box sits at the bottom; tool calls appear as their own
+    little cards; <kbd>Ctrl-C</kbd> aborts cleanly. The agent feels like a
+    program, not a script. From here on out everything is about making the
+    harness <em>open</em> &mdash; pluggable, extensible, capable of growing
+    without you in the loop.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="06-sessions.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">6. Sessions: save &amp; resume</span>
+  </a>
+  <a class="next" href="08-extensions.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">8. Extensions</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

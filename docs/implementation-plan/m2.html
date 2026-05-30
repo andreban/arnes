@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>M2 &mdash; First tool (read)</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">Milestone 2 &middot; First tool</span>
+  <h1>read</h1>
+  <p class="lead">
+    Wire tool-calling end-to-end with a single, simple tool. By the end
+    the model can call <code>read</code>; the TUI shows a tool-call card;
+    the ACP client receives a <code>tool_call</code> update and an outbound
+    <code>fs/read_text_file</code> request. Same agent, two completely
+    different filesystem implementations.
+  </p>
+</div>
+
+<h2 id="why">Why one tool, in isolation</h2>
+
+<p>
+  M2 is a vertical slice. It touches every part of the system &mdash;
+  <code>Tool</code> trait, <code>ToolRegistry</code>, agent-rig wiring,
+  <code>SessionEvent</code> additions, the two <code>Host</code>
+  impls, the two frontends &mdash; but at minimum width. Get the loop
+  working with one tool and adding more (M3) is mechanical.
+</p>
+
+<h2 id="new-module">New module: arnes-core::tools</h2>
+
+<pre><code>crates/arnes-core/src/tools/
+├── mod.rs        # Tool trait, ToolRegistry, register_defaults() helper
+└── read.rs       # the read tool</code></pre>
+
+<p>
+  Built-in tools live next to the <code>Tool</code> trait inside
+  <code>arnes-core</code>. They take <code>&amp;dyn Host</code>
+  &mdash; they do not know whether they run against <code>LocalHost</code>
+  or <code>AcpHost</code>. New dependencies in <code>arnes-core/Cargo.toml</code>:
+  <code>schemars</code> (for JSON Schema generation) and
+  <code>serde</code> (already there).
+</p>
+
+<h2 id="tool-trait">Tool trait, M2 version</h2>
+
+<p>
+  Move the <code>Tool</code> trait from <em>"sketched"</em> to
+  <em>"implemented"</em>. M2 sticks to the essentials; M3 adds the
+  permission API (scope-based allowlists) and progress streaming.
+</p>
+
+<pre><code>// arnes-core/src/tools.rs
+
+pub trait Tool: Send + Sync {
+    fn name(&amp;self) -&gt; &amp;str;
+    fn description(&amp;self) -&gt; &amp;str;
+    fn parameters(&amp;self) -&gt; serde_json::Value;  // a JSON Schema
+
+    async fn execute(
+        &amp;self,
+        input: serde_json::Value,
+        host: &amp;dyn Host,
+    ) -&gt; ToolResult;
+}
+
+pub struct ToolResult {
+    pub content: String,        // M2: text only. M3 adds typed blocks.
+    pub is_error: bool,
+}
+
+#[derive(Default)]
+pub struct ToolRegistry {
+    tools: Vec&lt;Arc&lt;dyn Tool&gt;&gt;,
+}
+
+impl ToolRegistry {
+    pub fn register(&amp;mut self, tool: Arc&lt;dyn Tool&gt;);
+    pub fn get(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;Arc&lt;dyn Tool&gt;&gt;;
+    pub fn all(&amp;self) -&gt; &amp;[Arc&lt;dyn Tool&gt;];
+}</code></pre>
+
+<h2 id="read-tool">The read tool</h2>
+
+<pre><code>// arnes-core/src/tools/read.rs
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReadInput {
+    /// Absolute or relative path to the file to read.
+    path: String,
+    /// 1-based starting line (inclusive). Optional.
+    #[serde(default)]
+    line: Option&lt;u32&gt;,
+    /// Max lines to return. Optional; default unlimited.
+    #[serde(default)]
+    limit: Option&lt;u32&gt;,
+}
+
+pub struct ReadTool;
+
+#[async_trait]
+impl Tool for ReadTool {
+    fn name(&amp;self) -&gt; &amp;str { "read" }
+    fn description(&amp;self) -&gt; &amp;str {
+        "Read the contents of a UTF-8 text file. Use for source files, configs, \
+         and logs. Optionally narrow by line/limit. Output is truncated to 1000 \
+         lines or 200KB, whichever hits first."
+    }
+    fn parameters(&amp;self) -&gt; serde_json::Value {
+        serde_json::to_value(schemars::schema_for!(ReadInput)).unwrap()
+    }
+
+    async fn execute(&amp;self, input: serde_json::Value, host: &amp;dyn Host) -&gt; ToolResult {
+        let input: ReadInput = match serde_json::from_value(input) {
+            Ok(v) =&gt; v,
+            Err(e) =&gt; return ToolResult::error(format!("invalid arguments: {e}")),
+        };
+        match host.read_text_file(Path::new(&amp;input.path)).await {
+            Ok(text) =&gt; ToolResult::ok(truncate(text, input.line, input.limit)),
+            Err(e) =&gt; ToolResult::error(format!("read failed: {e}")),
+        }
+    }
+}</code></pre>
+
+<h2 id="host-impls">Host implementations, fleshed out</h2>
+
+<div class="compare">
+<div>
+<h5>LocalHost</h5>
+<pre><code>impl Host for LocalHost {
+    async fn read_text_file(&amp;self, p: &amp;Path) -&gt; io::Result&lt;String&gt; {
+        tokio::fs::read_to_string(p).await
+    }
+}</code></pre>
+</div>
+<div>
+<h5>AcpHost</h5>
+<pre><code>impl Host for AcpHost {
+    async fn read_text_file(&amp;self, p: &amp;Path) -&gt; io::Result&lt;String&gt; {
+        let req = FsReadTextFileRequest {
+            path: p.to_path_buf(),
+            line: None, limit: None,
+        };
+        let resp: FsReadTextFileResponse =
+            self.rpc.call("fs/read_text_file", req).await?;
+        Ok(resp.content)
+    }
+}</code></pre>
+</div>
+</div>
+
+<p>
+  Note: <code>AcpHost</code>'s outbound calls flow through the same
+  bidirectional JSON-RPC channel the M1 server uses for inbound requests.
+  This is precisely why the M1 library spike mattered.
+</p>
+
+<h2 id="session-event">SessionEvent additions</h2>
+
+<pre><code>pub enum SessionEvent {
+    AgentMessageDelta { text: String },
+    TurnStart, TurnEnd { stop_reason: StopReason }, Error { message: String },
+
+    // NEW at M2:
+    ToolCallStart  { id: String, name: String, input: serde_json::Value },
+    ToolCallUpdate { id: String, partial: serde_json::Value },   // optional progress
+    ToolCallEnd    { id: String, result: ToolResult },
+}</code></pre>
+
+<h2 id="agent-rig-wiring">Wiring tools to agent-rig</h2>
+
+<p>
+  agent-rig already supports concurrent tool execution and tool-result
+  pairing &mdash; we lean on it. Each <code>arnes::Tool</code> wraps as an
+  <code>agent_rig::Tool</code> by:
+</p>
+
+<ol class="steps">
+  <li>Implementing agent-rig's tool trait via an adapter struct that owns an <code>Arc&lt;dyn arnes::Tool&gt;</code> plus an <code>Arc&lt;dyn Host&gt;</code>.</li>
+  <li>Translating agent-rig's tool-call lifecycle events into our <code>SessionEvent</code> variants.</li>
+  <li>Forwarding <code>ToolResult</code> back to agent-rig as the tool message body.</li>
+</ol>
+
+<pre><code>struct ToolAdapter {
+    inner: Arc&lt;dyn arnes::Tool&gt;,
+    host:   Arc&lt;dyn arnes::Host&gt;,
+}
+
+#[async_trait]
+impl agent_rig::Tool for ToolAdapter {
+    fn name(&amp;self) -&gt; &amp;str { self.inner.name() }
+    fn description(&amp;self) -&gt; &amp;str { self.inner.description() }
+    fn parameters(&amp;self) -&gt; serde_json::Value { self.inner.parameters() }
+
+    async fn execute(&amp;self, input: serde_json::Value) -&gt; agent_rig::ToolResult {
+        let r = self.inner.execute(input, self.host.as_ref()).await;
+        translate(r)
+    }
+}</code></pre>
+
+<h2 id="frontends">What the frontends do</h2>
+
+<div class="compare">
+<div>
+<h5>TUI at M2</h5>
+<ul>
+  <li>Introduce a <code>ToolCallCard</code> widget &mdash; one row per active tool call.</li>
+  <li>States rendered: <em>pending</em> &rarr; <em>running</em> &rarr; <em>done</em> / <em>error</em>.</li>
+  <li>Card shows tool name and a one-line preview of the input (e.g. <code>read  src/main.rs</code>).</li>
+  <li>On error, expand to show the error text inline.</li>
+</ul>
+</div>
+<div>
+<h5>ACP at M2</h5>
+<ul>
+  <li>Emit <code>session/update</code> variants: <code>tool_call</code> (pending), <code>tool_call_update</code> (running/completed/failed).</li>
+  <li>Map fields per the ACP schema; carry tool-id, name, input, status, result.</li>
+  <li><code>AcpHost::read_text_file</code> issues outbound <code>fs/read_text_file</code> when the read tool fires.</li>
+  <li>Capability check: if the client didn't advertise <code>fs.readTextFile</code>, the host returns Unsupported and the tool surfaces a clean error.</li>
+</ul>
+</div>
+</div>
+
+<h2 id="tasks">Implementation tasks</h2>
+
+<ol class="steps">
+  <li>Create the <code>arnes-core::tools</code> module; add <code>schemars</code> to <code>arnes-core/Cargo.toml</code>.</li>
+  <li>In <code>arnes-core::tools</code>, define <code>Tool</code>, <code>ToolResult</code>, <code>ToolRegistry</code>.</li>
+  <li>Extend <code>SessionEvent</code> with the three tool-call variants.</li>
+  <li>Update <code>Session::prompt</code>: configure <code>AgentRunner</code> with the registered tools (wrapped via <code>ToolAdapter</code>); translate agent-rig's tool-call events into <code>SessionEvent</code>s.</li>
+  <li>Implement <code>LocalHost::read_text_file</code> (one line).</li>
+  <li>Implement <code>AcpHost::read_text_file</code> using the bidirectional JSON-RPC client.</li>
+  <li>Write the <code>read</code> tool in <code>arnes-core::tools</code>.</li>
+  <li>Register <code>read</code> by default in both binaries (<code>arnes</code> and <code>arnes-acp</code>) via the <code>arnes_core::tools::register_defaults(&amp;mut registry)</code> helper.</li>
+  <li>In <code>arnes-tui</code>: add <code>ToolCallCard</code> widget; wire to event stream.</li>
+  <li>In <code>arnes-acp</code>: emit tool_call <code>session/update</code> variants; wire <code>AcpHost</code> into <code>Session</code> construction.</li>
+  <li>Land the testing-infra workstream (see below).</li>
+</ol>
+
+<h2 id="testing-infra">Testing infrastructure (lands now)</h2>
+
+<p>
+  M2 is the first milestone with multiple moving parts; build the test
+  scaffolding here once, reuse for every subsequent milestone.
+</p>
+
+<table>
+  <thead><tr><th>Piece</th><th>Crate</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>RecordingFrontend</code></td>
+      <td><code>arnes-core/tests/support/</code></td>
+      <td>Captures every <code>SessionEvent</code>; assert on the sequence.</td>
+    </tr>
+    <tr>
+      <td><code>InMemoryEnv</code></td>
+      <td>same</td>
+      <td>Fake filesystem: <code>HashMap&lt;PathBuf, String&gt;</code>. Will grow with M3.</td>
+    </tr>
+    <tr>
+      <td>Scripted LLM</td>
+      <td><code>arnes-core/tests/support/scripted_llm.rs</code></td>
+      <td>Implements agent-rig's <code>LlmModel</code>; returns canned tool-call + text sequences. Deterministic loop testing.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="testing">Testing checklist</h2>
+
+<ul>
+  <li><strong>Unit:</strong> <code>read</code> tool against <code>InMemoryEnv</code> &mdash; happy path, missing file, permission denied (synthetic).</li>
+  <li><strong>Loop:</strong> Scripted LLM that emits a <code>read</code> tool_use, harness executes it via <code>InMemoryEnv</code>, verify the second turn receives the tool_result and emits a final text reply.</li>
+  <li><strong>ACP golden:</strong> Replay a transcript where the client serves <code>fs/read_text_file</code>; assert the harness issues the right outbound request with the right path and produces the right outbound <code>session/update</code>s.</li>
+  <li><strong>TUI smoke:</strong> Manual. "what's in <code>Cargo.toml</code>?" &mdash; card appears, transitions, completes.</li>
+</ul>
+
+<h2 id="risks">Risks specific to M2</h2>
+
+<ul>
+  <li><strong>JSON Schema generation.</strong> <code>schemars</code> output for nested types may not match what the model providers expect. Verify with each model used; tweak via <code>#[schemars(...)]</code> attributes.</li>
+  <li><strong>Streaming tool input.</strong> agent-rig may surface tool_use input as a stream of partial JSON. M2 can accumulate and parse at end; M3 may want true streaming for long inputs.</li>
+  <li><strong>Path resolution.</strong> Relative paths in tool calls must resolve against the session's cwd, not the harness's working directory. Pin this in <code>Session::cwd</code> from M2 on.</li>
+</ul>
+
+<div class="endstate">
+  <h4>End state of M2</h4>
+  <p>
+    Ask either frontend <em>"what is in my Cargo.toml?"</em>: the model
+    calls <code>read</code>; the TUI shows a card; the ACP client receives
+    a tool_call update and a corresponding <code>fs/read_text_file</code>
+    request. Two completely different filesystem implementations behind one
+    tool, with the harness aware of neither.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="m1.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">M1: Foundation</span>
+  </a>
+  <a class="next" href="m3.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">M3: Coding toolkit</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

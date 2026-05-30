@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>arnes-acp &mdash; Agent Client Protocol adapter</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="agent">
+  <span class="eyebrow">Adapter</span>
+  <h1>arnes-acp</h1>
+  <p class="lead">
+    The adapter that turns arnes into an
+    <a href="https://agentclientprotocol.com">Agent Client Protocol</a>
+    server: JSON-RPC over stdio, designed so any ACP-compatible editor
+    (Zed today, others as the ecosystem grows) can drive an arnes session.
+    This adapter is the reason the <code>Host</code> trait exists.
+  </p>
+</div>
+
+<h2 id="lockstep">Built in lockstep with the TUI</h2>
+
+<p>
+  arnes-acp is not built in one go after the TUI is finished. It grows
+  alongside the TUI &mdash; both adapters land each capability at the same
+  milestone (see the <a href="roadmap.html">roadmap</a>). The full method
+  surface documented further down is where we end up; the table below shows
+  when each piece arrives.
+</p>
+
+<table>
+  <thead><tr><th>Milestone</th><th>What the ACP adapter gains</th></tr></thead>
+  <tbody>
+    <tr><td><strong>M1</strong></td><td><code>initialize</code>, <code>session/new</code>, <code>session/prompt</code>, <code>session/cancel</code>, outbound <code>session/update</code> (text deltas only). Every outbound notification includes <code>_meta.agent_id</code> from M1 onward &mdash; V1 always emits <code>"root"</code>; reserved for sub-agent attribution post-V1.</td></tr>
+    <tr><td><strong>M2</strong></td><td><code>tool_call</code> variants on <code>session/update</code> + outbound <code>fs/read_text_file</code></td></tr>
+    <tr><td><strong>M3</strong></td><td>outbound <code>session/request_permission</code>, <code>fs/write_text_file</code>, <code>terminal/*</code></td></tr>
+    <tr><td>M4&ndash;M5</td><td>(no protocol-surface change &mdash; <code>AGENTS.md</code> and skills are internal to the system prompt)</td></tr>
+    <tr><td><strong>M6</strong></td><td><code>session/load</code></td></tr>
+    <tr><td>M7</td><td>(custom <code>_meta</code> on <code>session/update</code> for compaction notices &mdash; informative only)</td></tr>
+    <tr><td><strong>M8</strong></td><td>same router mounted behind WebSocket once upstream ACP spec ships transport</td></tr>
+  </tbody>
+</table>
+
+<p>
+  The benefit of growing both adapters together: the <code>Frontend</code>
+  trait stays honest. If a method only makes sense for the TUI, the ACP
+  impl will struggle to implement it &mdash; that is the signal to rework
+  the trait. With a single consumer, you cannot tell the difference between
+  a generally-useful method and one that happens to suit the consumer you
+  have.
+</p>
+
+<h2 id="role-reversal">The role reversal</h2>
+
+<p>
+  In the TUI adapter, arnes <em>owns</em> the filesystem and the terminal &mdash;
+  tools call <code>tokio::fs</code> directly via <code>LocalHost</code>. In
+  ACP mode, the editor is the trusted party with the file buffers and the
+  integrated terminal. arnes is a guest in someone else's house. Reads and
+  writes round-trip <em>back</em> to the editor:
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 380" role="img" aria-label="ACP bidirectional flow">
+  <defs>
+    <marker id="acp-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <!-- editor box -->
+    <rect x="40" y="40" width="220" height="300" rx="12" fill="#141821" stroke="#a78bfa"/>
+    <text x="150" y="64" text-anchor="middle" fill="#a78bfa" font-weight="700">editor (ACP client)</text>
+    <text x="150" y="82" text-anchor="middle" fill="#9aa3b3" font-size="10">Zed / future editors</text>
+
+    <g fill="#e4e8ef" font-size="10">
+      <text x="55" y="116">- owns the file buffers</text>
+      <text x="55" y="134">- owns the integrated terminal</text>
+      <text x="55" y="152">- shows the diff UI</text>
+      <text x="55" y="170">- prompts the user for permission</text>
+      <text x="55" y="188">- spawns arnes as a child process</text>
+    </g>
+
+    <!-- arnes box -->
+    <rect x="500" y="40" width="220" height="300" rx="12" fill="#141821" stroke="#fbbf24"/>
+    <text x="610" y="64" text-anchor="middle" fill="#fbbf24" font-weight="700">arnes (ACP server)</text>
+    <text x="610" y="82" text-anchor="middle" fill="#9aa3b3" font-size="10">child process, stdio</text>
+
+    <g fill="#e4e8ef" font-size="10">
+      <text x="515" y="116">- holds the agent loop</text>
+      <text x="515" y="134">- speaks to the LLM</text>
+      <text x="515" y="152">- runs the system prompt + tools</text>
+      <text x="515" y="170">- uses AcpHost: tools' fs/term calls</text>
+      <text x="515" y="188">  go back over JSON-RPC to the editor</text>
+    </g>
+
+    <!-- arrows -->
+    <g stroke="#9aa3b3" stroke-width="1.4">
+      <line x1="260" y1="230" x2="498" y2="230" marker-end="url(#acp-ar)"/>
+      <line x1="498" y1="270" x2="260" y2="270" marker-end="url(#acp-ar)"/>
+      <line x1="498" y1="310" x2="260" y2="310" marker-end="url(#acp-ar)"/>
+    </g>
+    <text x="380" y="222" text-anchor="middle" fill="#a78bfa" font-size="10">session/prompt, session/cancel, ...</text>
+    <text x="380" y="262" text-anchor="middle" fill="#fbbf24" font-size="10">session/update (streaming)</text>
+    <text x="380" y="302" text-anchor="middle" fill="#fbbf24" font-size="10">fs/read, fs/write, terminal/*, request_permission</text>
+  </g>
+</svg>
+<div class="figure-caption">Bidirectional JSON-RPC. The editor calls into arnes; arnes calls back into the editor for any side effect.</div>
+</div>
+
+<h2 id="transport">Transport</h2>
+
+<p>
+  V1: <strong>JSON-RPC 2.0 over stdio</strong>. The editor spawns arnes as a
+  child process and exchanges newline-delimited JSON over stdin/stdout (the
+  ACP convention). V2 (when the ACP spec lands HTTP/WS transport): we
+  expose the same handler behind <code>arnes-http</code> with a small
+  routing shim. Same handler code; different framing.
+</p>
+
+<pre><code>// arnes-acp/src/transport/stdio.rs
+pub async fn run_stdio(session: Session&lt;AcpFrontend, AcpHost&gt;) -&gt; io::Result&lt;()&gt; {
+    let stdin  = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
+    let mut server = JsonRpcServer::new(stdin, stdout);
+    server.handle_requests(make_router(session)).await
+}</code></pre>
+
+<p>
+  Implementation crates:
+</p>
+
+<table>
+  <thead><tr><th>Need</th><th>Crate</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td>JSON-RPC framing</td><td><code>jsonrpsee</code> (default), hand-rolled (fallback)</td><td>Bidirectional dispatch required: ACP needs server-initiated requests, not just notifications. See <a href="m1.html#jsonrpc">M1 &sect; JSON-RPC library</a> for the decision and fallback triggers.</td></tr>
+    <tr><td>Schema types</td><td>generated from upstream ACP spec</td><td>The protocol publishes a JSON Schema; generate Rust types via <code>typify</code> so we don't hand-roll them.</td></tr>
+    <tr><td>Async runtime</td><td><code>tokio</code></td><td>&mdash;</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <strong>Bidirectionality matters.</strong> ACP is not request/response one
+  way. The editor calls <code>session/prompt</code> and waits; meanwhile
+  arnes calls back with <code>fs/read_text_file</code> requests <em>over the
+  same connection</em>. The JSON-RPC library must support being both server
+  and client on the same channel &mdash; this is why we picked
+  <code>jsonrpsee</code> (with hand-rolled framing as the documented
+  fallback) at M1.
+</div>
+
+<h2 id="method-mapping">Method-by-method mapping</h2>
+
+<h3 id="inbound">Inbound (editor &rarr; arnes)</h3>
+
+<table>
+  <thead><tr><th>Method</th><th>arnes handler</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>initialize</code></td>
+      <td><code>handle_initialize()</code></td>
+      <td>Negotiate protocol version, advertise capabilities (<code>loadSession</code>, content types, MCP), record the <em>client's</em> capabilities (<code>fs.readTextFile</code>, <code>terminal</code>) so the host knows what it can call back into.</td>
+    </tr>
+    <tr>
+      <td><code>authenticate</code></td>
+      <td><code>handle_authenticate()</code></td>
+      <td>V1: no-op (we don't auth). V2: optional, e.g. accept a token.</td>
+    </tr>
+    <tr>
+      <td><code>session/new</code></td>
+      <td><code>handle_session_new()</code></td>
+      <td>Construct a fresh <code>Session</code>, return its id. Honour client-supplied cwd, mcp servers, mode.</td>
+    </tr>
+    <tr>
+      <td><code>session/load</code></td>
+      <td><code>handle_session_load()</code></td>
+      <td>Resume from a session id (maps to the JSONL on disk). Returns full content blocks to the client to rehydrate its view.</td>
+    </tr>
+    <tr>
+      <td><code>session/prompt</code></td>
+      <td><code>handle_session_prompt()</code></td>
+      <td>The hot path. Calls <code>Session::prompt()</code>, streams events as <code>session/update</code> notifications, returns the final <code>stop_reason</code>.</td>
+    </tr>
+    <tr>
+      <td><code>session/cancel</code></td>
+      <td><code>handle_session_cancel()</code></td>
+      <td>Notification (no response). Aborts the in-flight prompt.</td>
+    </tr>
+    <tr>
+      <td><code>session/set_mode</code></td>
+      <td><code>handle_session_set_mode()</code></td>
+      <td>Switch session mode (e.g. "edit" vs. "ask"). Maps to <code>Session::set_mode</code>.</td>
+    </tr>
+    <tr>
+      <td><code>logout</code></td>
+      <td><code>handle_logout()</code></td>
+      <td>V1: no-op. V2: clear auth state.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="outbound">Outbound (arnes &rarr; editor)</h3>
+
+<table>
+  <thead><tr><th>Method / notification</th><th>Triggered by</th><th>Carrier</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>session/update</code></td>
+      <td>Every <code>SessionEvent</code></td>
+      <td><code>AcpFrontend::on_event</code>. Translates the event to one of ACP's <code>session/update</code> variants (agent message chunk, tool call, plan, mode change).</td>
+    </tr>
+    <tr>
+      <td><code>session/request_permission</code></td>
+      <td><code>Frontend::request_permission</code></td>
+      <td>One outbound request per permission gate. The editor surfaces a UI; the answer comes back as a response.</td>
+    </tr>
+    <tr>
+      <td><code>fs/read_text_file</code></td>
+      <td><code>AcpHost::read_text_file</code></td>
+      <td>Tool reads go through the editor's open buffers when possible (so unsaved changes are visible to the model).</td>
+    </tr>
+    <tr>
+      <td><code>fs/write_text_file</code></td>
+      <td><code>AcpHost::write_text_file</code></td>
+      <td>Tool writes land in the editor's buffer/diff view first, not on disk directly. The editor decides when to persist.</td>
+    </tr>
+    <tr>
+      <td><code>terminal/create</code></td>
+      <td><code>AcpHost::terminal_create</code></td>
+      <td>Spawn a command in the editor's integrated terminal. Returns a handle.</td>
+    </tr>
+    <tr>
+      <td><code>terminal/output</code></td>
+      <td><code>AcpHost::terminal_output</code></td>
+      <td>Read accumulated stdout/stderr for a handle.</td>
+    </tr>
+    <tr>
+      <td><code>terminal/wait_for_exit</code></td>
+      <td><code>AcpHost::terminal_wait</code></td>
+      <td>Block until the command exits; return exit status.</td>
+    </tr>
+    <tr>
+      <td><code>terminal/kill</code></td>
+      <td><code>AcpHost::terminal_kill</code></td>
+      <td>Force-terminate. Doesn't release the handle (use <code>terminal/release</code> for that).</td>
+    </tr>
+    <tr>
+      <td><code>terminal/release</code></td>
+      <td><code>AcpHost::terminal_kill</code> + drop</td>
+      <td>Editor frees terminal resources.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="capabilities">Capability negotiation</h2>
+
+<p>
+  During <code>initialize</code> the editor declares what it can do (file
+  ops, terminal). arnes records these on the <code>AcpHost</code>. If a tool
+  asks the host to do something the editor doesn't support, the host returns
+  an error the tool surfaces as a tool-result error &mdash; same path as
+  Chapter 4's "tool errors are tool results, not exceptions."
+</p>
+
+<pre><code>pub struct AcpHost {
+    client_caps: ClientCapabilities,
+    rpc: Arc&lt;BidirectionalRpc&gt;,
+}
+
+#[async_trait]
+impl Host for AcpHost {
+    async fn read_text_file(&amp;self, path: &amp;Path) -&gt; io::Result&lt;String&gt; {
+        if !self.client_caps.fs.read_text_file {
+            return Err(io::Error::new(io::ErrorKind::Unsupported,
+                "client does not support fs/read_text_file"));
+        }
+        let resp: ReadTextFileResponse = self.rpc.call("fs/read_text_file", &amp;ReadTextFileRequest {
+            path: path.to_path_buf(),
+            line: None, limit: None,
+        }).await?;
+        Ok(resp.content)
+    }
+    /* ... terminal_create, terminal_output, etc. ... */
+}</code></pre>
+
+<h2 id="event-translation">SessionEvent &rarr; session/update translation</h2>
+
+<p>
+  ACP's <code>session/update</code> is a discriminated union with one
+  variant per kind of update (agent text chunk, thought chunk, tool call,
+  plan, mode change). The translation table:
+</p>
+
+<table>
+  <thead><tr><th>arnes <code>SessionEvent</code></th><th>ACP <code>session/update</code> variant</th></tr></thead>
+  <tbody>
+    <tr><td><code>AgentMessageDelta</code></td><td><code>agent_message_chunk</code></td></tr>
+    <tr><td><code>AgentThoughtDelta</code></td><td><code>agent_thought_chunk</code></td></tr>
+    <tr><td><code>ToolCallStart</code></td><td><code>tool_call</code> (status: <em>pending</em>)</td></tr>
+    <tr><td><code>ToolCallUpdate</code></td><td><code>tool_call_update</code></td></tr>
+    <tr><td><code>ToolCallEnd</code> (success)</td><td><code>tool_call_update</code> (status: <em>completed</em>)</td></tr>
+    <tr><td><code>ToolCallEnd</code> (error)</td><td><code>tool_call_update</code> (status: <em>failed</em>)</td></tr>
+    <tr><td><code>ModeChanged</code></td><td><code>mode_changed</code></td></tr>
+    <tr><td><code>TurnStart</code> / <code>TurnEnd</code></td><td>(not surfaced &mdash; ACP infers from prompt response)</td></tr>
+    <tr><td><code>Compacted</code></td><td>(custom <code>_meta</code> field; informative only)</td></tr>
+  </tbody>
+</table>
+
+<h2 id="permission-flow">Permission flow</h2>
+
+<p>
+  Sensitive tools (the same set the TUI gates) hit
+  <code>Frontend::request_permission</code>. In ACP mode, that issues a
+  <code>session/request_permission</code> request to the editor and awaits
+  the answer. The editor renders the prompt however it likes.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 260" role="img" aria-label="ACP permission flow">
+  <defs>
+    <marker id="ar-pp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="11">
+    <rect x="40"  y="40" width="180" height="40" rx="8" fill="#141821" stroke="#fbbf24"/>
+    <text x="130" y="64" text-anchor="middle" fill="#fbbf24" font-weight="700">tool: bash</text>
+
+    <rect x="290" y="40" width="180" height="40" rx="8" fill="#141821" stroke="#fbbf24"/>
+    <text x="380" y="64" text-anchor="middle" fill="#fbbf24" font-weight="700">Session</text>
+
+    <rect x="540" y="40" width="180" height="40" rx="8" fill="#141821" stroke="#a78bfa"/>
+    <text x="630" y="64" text-anchor="middle" fill="#a78bfa" font-weight="700">editor (ACP client)</text>
+
+    <g stroke="#232936" stroke-dasharray="3 3">
+      <line x1="130" y1="80" x2="130" y2="240"/>
+      <line x1="380" y1="80" x2="380" y2="240"/>
+      <line x1="630" y1="80" x2="630" y2="240"/>
+    </g>
+
+    <line x1="130" y1="110" x2="378" y2="110" stroke="#fbbf24" stroke-width="1.4" marker-end="url(#ar-pp)"/>
+    <text x="250" y="103" text-anchor="middle" fill="#9aa3b3" font-size="10">about to run cmd</text>
+
+    <line x1="380" y1="140" x2="628" y2="140" stroke="#fbbf24" stroke-width="1.4" marker-end="url(#ar-pp)"/>
+    <text x="510" y="133" text-anchor="middle" fill="#9aa3b3" font-size="10">session/request_permission</text>
+
+    <line x1="630" y1="180" x2="382" y2="180" stroke="#a78bfa" stroke-width="1.4" marker-end="url(#ar-pp)"/>
+    <text x="510" y="173" text-anchor="middle" fill="#9aa3b3" font-size="10">approved | rejected | always</text>
+
+    <line x1="380" y1="210" x2="132" y2="210" stroke="#fbbf24" stroke-width="1.4" marker-end="url(#ar-pp)"/>
+    <text x="250" y="203" text-anchor="middle" fill="#9aa3b3" font-size="10">execute (or report error)</text>
+  </g>
+</svg>
+<div class="figure-caption">The flow is symmetric with the TUI's modal dialog &mdash; same trait, different rendering.</div>
+</div>
+
+<h2 id="content-blocks">Content blocks: aligning vocabularies</h2>
+
+<p>
+  arnes' internal content block enum should be a near-superset of ACP's. When
+  we emit, we map our types to ACP's; when we receive a prompt, we map ACP's
+  back to ours. The intersection is large:
+</p>
+
+<table>
+  <thead><tr><th>arnes</th><th>ACP</th></tr></thead>
+  <tbody>
+    <tr><td><code>Text</code></td><td><code>text</code></td></tr>
+    <tr><td><code>Image</code></td><td><code>image</code> (if negotiated)</td></tr>
+    <tr><td><code>Audio</code></td><td><code>audio</code> (if negotiated)</td></tr>
+    <tr><td><code>ResourceLink</code></td><td><code>resource_link</code></td></tr>
+    <tr><td><code>EmbeddedResource</code></td><td><code>embedded_resource</code> (if negotiated)</td></tr>
+    <tr><td><code>ToolUse</code> / <code>ToolResult</code></td><td>conveyed via <code>tool_call</code> updates, not as content blocks in user-visible messages</td></tr>
+  </tbody>
+</table>
+
+<h2 id="not-doing">Non-goals for the ACP adapter</h2>
+
+<ul>
+  <li>
+    <strong>No MCP bridging in V1.</strong> ACP allows clients to advertise
+    MCP servers; bridging them through to our tool registry is a separate
+    feature. Out of scope for first cut.
+  </li>
+  <li>
+    <strong>No custom protocol extensions.</strong> ACP supports
+    underscore-prefixed custom methods. Don't use them &mdash; commit to the
+    standard surface so any compatible editor works.
+  </li>
+  <li>
+    <strong>No editor-specific behaviour.</strong> If we need editor-specific
+    polish, do it through the standard protocol surface or push for a
+    capability addition upstream. No <code>if (client == "zed")</code>.
+  </li>
+</ul>
+
+<div class="endstate">
+  <h4>The adapter is done when</h4>
+  <p>
+    Launching <code>arnes-acp</code> as a child of an ACP-compatible editor
+    gives you a working coding agent: prompts flow in via
+    <code>session/prompt</code>; the editor sees streaming
+    <code>session/update</code>s; tool calls show up in the editor's UI;
+    file writes land in the editor's buffers; bash commands run in the
+    editor's terminal; the user approves sensitive actions through the
+    editor's permission UI. The same <code>arnes-core</code> drives both
+    this and the TUI &mdash; only the adapter wiring is different.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="adapter-tui.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">TUI</span>
+  </a>
+  <a class="next" href="adapter-http.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">HTTP / WebSockets</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>arnes-gui &mdash; GUI adapter</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">Adapter</span>
+  <h1>arnes-gui</h1>
+  <p class="lead">
+    The fourth face. Intentionally specified as <em>"another adapter,"</em>
+    not as <em>"this technology stack."</em> The whole point of the
+    architecture is that the GUI choice is local and reversible &mdash; the
+    core does not care which window system or rendering toolkit you pick.
+  </p>
+</div>
+
+<h2 id="three-paths">Three viable paths</h2>
+
+<p>
+  All three implement the same <code>Frontend</code> trait against the same
+  <code>arnes-core::Session</code>. They differ only in how they render and
+  where they live.
+</p>
+
+<div class="card-grid">
+  <div class="card">
+    <h3>Tauri</h3>
+    <p>One Rust binary; web UI inside a system webview. arnes-core runs
+    in-process; the webview talks to it via Tauri's command bridge. UI
+    work in HTML/CSS/TS; native distribution.</p>
+    <div class="card-meta">pro: small binary, web UI flexibility &middot; con: webview baggage</div>
+  </div>
+
+  <div class="card">
+    <h3>egui / iced (native)</h3>
+    <p>Pure Rust GUI. Single binary, no webview, immediate-mode
+    (egui) or Elm-style (iced). arnes-core lives in the same process; UI
+    state owns the events directly.</p>
+    <div class="card-meta">pro: no JS, no webview, fast &middot; con: UI features in Rust</div>
+  </div>
+
+  <div class="card">
+    <h3>Web app + HTTP/WS</h3>
+    <p>The GUI is a separate browser app talking to <code>arnes-serve</code>
+    over the HTTP+WS adapter. No new crate at all &mdash; the GUI is just a
+    client of the existing adapter.</p>
+    <div class="card-meta">pro: zero new Rust code &middot; con: needs a running server</div>
+  </div>
+</div>
+
+<h2 id="recommended-default">A leaning, not a decision</h2>
+
+<p>
+  If we had to pick today, the <strong>web app on top of arnes-http</strong>
+  is the cheapest option: it requires zero new Rust crates. The browser is a
+  pre-existing, well-understood GUI runtime, and we already need the
+  HTTP/WS adapter for other reasons. A purpose-built native GUI gives a
+  nicer single-binary distribution but doubles the surface area to maintain.
+</p>
+
+<p>
+  This decision is deferred until we have a concrete user need that
+  distinguishes the options. Until then, the plan treats the GUI as
+  optional, and the architecture is built so that <em>none</em> of the
+  three paths require changes to <code>arnes-core</code>.
+</p>
+
+<h2 id="shape">What the adapter looks like, whichever stack we pick</h2>
+
+<p>
+  Same shape as TUI and HTTP. A <code>GuiFrontend</code> implements
+  <code>Frontend</code>; an input handler calls <code>session.prompt(text)</code>
+  on user submission; a permission UI handles
+  <code>request_permission</code>. The Host is
+  <code>LocalHost</code> for the desktop GUI options, or
+  <code>LocalHost</code> on the server side for the web+HTTP option.
+</p>
+
+<pre><code>// arnes-gui/src/frontend.rs (sketch &mdash; identical shape regardless of stack)
+
+pub struct GuiFrontend {
+    state: Arc&lt;Mutex&lt;GuiState&gt;&gt;,
+    redraw: Arc&lt;dyn Fn() + Send + Sync&gt;,   // tauri::App::trigger_global or egui ctx.request_repaint
+}
+
+#[async_trait]
+impl Frontend for GuiFrontend {
+    async fn on_event(&amp;self, ev: SessionEvent) {
+        self.state.lock().await.apply(ev);
+        (self.redraw)();
+    }
+    async fn request_permission(&amp;self, req: PermissionRequest) -&gt; Permission {
+        // open a modal, await user click via oneshot channel, return decision
+    }
+}</code></pre>
+
+<h2 id="what-the-gui-needs">Capabilities a GUI gets to use</h2>
+
+<p>
+  The <code>FrontendCapabilities</code> a GUI advertises (via the trait's
+  <code>capabilities()</code> method) opens up content types the TUI cannot
+  comfortably handle:
+</p>
+
+<ul>
+  <li>
+    <strong>Inline images.</strong> Tools that produce images (screenshots,
+    plots) can render them directly.
+  </li>
+  <li>
+    <strong>Rich diffs.</strong> The <code>edit</code> tool can emit a
+    structured diff event the GUI renders side-by-side instead of as text.
+  </li>
+  <li>
+    <strong>Embedded resources.</strong> Same content-block types ACP supports;
+    GUI displays them inline.
+  </li>
+</ul>
+
+<p>
+  The system prompt builder reads these capabilities and adjusts what it
+  tells the model is available, so a tool that produces an image can know
+  whether the current frontend will actually show it.
+</p>
+
+<h2 id="permission">Permission UX, GUI flavour</h2>
+
+<p>
+  A modal dialog or a sidebar notification, with three buttons (allow,
+  always-allow-this-tool, deny). Same trait method, native widget instead
+  of a curses box or a JSON-RPC round-trip.
+</p>
+
+<h2 id="not-doing">What we are explicitly not committing to</h2>
+
+<ul>
+  <li><strong>A specific UI toolkit.</strong> See <em>Three viable paths</em>.</li>
+  <li><strong>A specific look.</strong> Theming and visual identity wait until we pick a stack.</li>
+  <li><strong>Mobile.</strong> Out of scope. If a phone use-case appears, treat it as a separate adapter or a browser PWA against <code>arnes-http</code>.</li>
+  <li><strong>Pixel-perfect parity with the TUI.</strong> The GUI gets to be different where different is better &mdash; richer media, side panels, drag-and-drop file attachments.</li>
+</ul>
+
+<div class="endstate">
+  <h4>The adapter is done when</h4>
+  <p>
+    You launch a desktop app (or a browser tab pointed at
+    <code>arnes-serve</code>), you see your existing JSONL sessions in a
+    sidebar, you open one, you prompt, you watch a streamed reply with
+    nicely-rendered tool calls and diffs, and a modal asks you to approve
+    a destructive bash. Same harness, more pixels.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="adapter-http.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">HTTP / WebSockets</span>
+  </a>
+  <a class="next" href="roadmap.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">Roadmap</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

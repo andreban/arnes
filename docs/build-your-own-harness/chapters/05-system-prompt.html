@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 5 &mdash; The system prompt</title>
+<link rel="stylesheet" href="../assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">π</span>
+    <span>Build Your Own Harness</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part I &mdash; Foundation</h4><ul>
+    <li><a href="01-streaming-client.html">1. Streaming LLM client</a></li>
+    <li><a href="02-first-tool.html">2. Your first tool call</a></li>
+    <li><a href="03-agent-loop.html">3. The agent loop</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part II &mdash; A real coding agent</h4><ul>
+    <li><a href="04-coding-toolkit.html">4. A real coding toolkit</a></li>
+    <li><a href="05-system-prompt.html">5. The system prompt</a></li>
+    <li><a href="06-sessions.html">6. Sessions: save &amp; resume</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part III &mdash; Making it real</h4><ul>
+    <li><a href="07-live-tui.html">7. A live terminal UI</a></li>
+    <li><a href="08-extensions.html">8. Extensions</a></li>
+    <li><a href="09-skills.html">9. Skills</a></li>
+    <li><a href="10-compaction.html">10. Compaction</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="agent">
+  <span class="eyebrow">Chapter 5 &middot; Part II</span>
+  <h1>The system prompt</h1>
+  <p class="lead">
+    Up to this point your system prompt has probably been a hard-coded string
+    at the top of the file. That is fine for one tool, in one directory, on
+    one task. It stops working as soon as any of those vary. The system prompt
+    wants to be assembled, not written.
+  </p>
+</div>
+
+<h2 id="what-it-is">What the system prompt actually is</h2>
+
+<p>
+  The system prompt is the standing instruction set the model carries into
+  every turn of every conversation. Unlike user messages, it is not part of
+  the back-and-forth: it sits above the messages array and gets resent on
+  every request. Its job is to answer four questions:
+</p>
+
+<ol>
+  <li><strong>Who am I?</strong> &mdash; the agent's identity and posture.</li>
+  <li><strong>What can I do?</strong> &mdash; the tools available right now.</li>
+  <li><strong>How should I behave?</strong> &mdash; the guidelines for how to use them.</li>
+  <li><strong>Where am I?</strong> &mdash; the current context (cwd, date, project).</li>
+</ol>
+
+<p>
+  None of those are constants. Tools change when an extension is loaded;
+  guidelines change with which tools are active; the cwd is set per run; the
+  project context is the file you walked into. The natural shape is a
+  <em>function</em> that returns a string, not the string itself.
+</p>
+
+<h2 id="slots">Think in slots</h2>
+
+<p>
+  Below is the assembly we will build. Each labeled box is a slot the harness
+  fills at run time. Some are static, some are computed, some come from disk.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 460" role="img" aria-label="System prompt assembly">
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <text x="20" y="22" fill="#6b7384" font-size="10">slot</text>
+    <text x="400" y="22" fill="#6b7384" font-size="10">contributes</text>
+
+    <!-- slots column -->
+    <rect x="20" y="40"  width="240" height="44" rx="8" fill="#141821" stroke="#fbbf24"/>
+    <text x="140" y="58" text-anchor="middle" fill="#fbbf24" font-weight="700">base prompt</text>
+    <text x="140" y="74" text-anchor="middle" fill="#9aa3b3" font-size="10">hard-coded identity</text>
+
+    <rect x="20" y="100" width="240" height="44" rx="8" fill="#141821" stroke="#34d399"/>
+    <text x="140" y="118" text-anchor="middle" fill="#34d399" font-weight="700">tool snippets</text>
+    <text x="140" y="134" text-anchor="middle" fill="#9aa3b3" font-size="10">from each active tool</text>
+
+    <rect x="20" y="160" width="240" height="44" rx="8" fill="#141821" stroke="#34d399"/>
+    <text x="140" y="178" text-anchor="middle" fill="#34d399" font-weight="700">guidelines</text>
+    <text x="140" y="194" text-anchor="middle" fill="#9aa3b3" font-size="10">tool-attached + global</text>
+
+    <rect x="20" y="220" width="240" height="44" rx="8" fill="#141821" stroke="#a78bfa"/>
+    <text x="140" y="238" text-anchor="middle" fill="#a78bfa" font-weight="700">project context</text>
+    <text x="140" y="254" text-anchor="middle" fill="#9aa3b3" font-size="10">AGENTS.md, CLAUDE.md</text>
+
+    <rect x="20" y="280" width="240" height="44" rx="8" fill="#141821" stroke="#a78bfa"/>
+    <text x="140" y="298" text-anchor="middle" fill="#a78bfa" font-weight="700">user append</text>
+    <text x="140" y="314" text-anchor="middle" fill="#9aa3b3" font-size="10">CLI flag, config file</text>
+
+    <rect x="20" y="340" width="240" height="44" rx="8" fill="#141821" stroke="#38bdf8"/>
+    <text x="140" y="358" text-anchor="middle" fill="#38bdf8" font-weight="700">cwd + date</text>
+    <text x="140" y="374" text-anchor="middle" fill="#9aa3b3" font-size="10">always last</text>
+
+    <!-- arrows -->
+    <g stroke="#9aa3b3" stroke-width="1.2">
+      <line x1="262" y1="62"  x2="378" y2="120"/>
+      <line x1="262" y1="122" x2="378" y2="160"/>
+      <line x1="262" y1="182" x2="378" y2="200"/>
+      <line x1="262" y1="242" x2="378" y2="240"/>
+      <line x1="262" y1="302" x2="378" y2="280"/>
+      <line x1="262" y1="362" x2="378" y2="320"/>
+    </g>
+
+    <!-- composed prompt panel -->
+    <rect x="380" y="60" width="360" height="340" rx="10" fill="#0f1217" stroke="#fbbf24" stroke-opacity="0.6"/>
+    <text x="560" y="84" text-anchor="middle" fill="#fbbf24" font-weight="700">composed system prompt</text>
+
+    <g fill="#9aa3b3" font-size="10">
+      <text x="395" y="110">You are an expert coding assistant...</text>
+      <text x="395" y="130">Available tools:</text>
+      <text x="395" y="148">  - read: ...</text>
+      <text x="395" y="166">  - bash: ...</text>
+      <text x="395" y="184">Guidelines:</text>
+      <text x="395" y="202">  - Use read instead of cat or sed.</text>
+      <text x="395" y="220">  - Use write only for new files.</text>
+      <text x="395" y="238">  - Be concise in your responses.</text>
+      <text x="395" y="266">&lt;project_context&gt;</text>
+      <text x="395" y="282">  &lt;project_instructions path="AGENTS.md"&gt;</text>
+      <text x="395" y="298">    project rules ...</text>
+      <text x="395" y="314">  &lt;/project_instructions&gt;</text>
+      <text x="395" y="330">&lt;/project_context&gt;</text>
+      <text x="395" y="354">Always respond in en-US.</text>
+      <text x="395" y="378">Current date: 2026-05-29</text>
+      <text x="395" y="392">Current working directory: /home/me/proj</text>
+    </g>
+  </g>
+</svg>
+<div class="figure-caption">Six independent inputs, one composed prompt. Each is computed fresh on every rebuild.</div>
+</div>
+
+<h2 id="the-builder">The builder</h2>
+
+<p>
+  The whole assembler is one pure function. Take the slot inputs, return the
+  string. Nothing more.
+</p>
+
+<pre><code>interface PromptOptions {
+  tools: ToolDecl[];                              // currently active
+  toolSnippets: Record&lt;string, string&gt;;          // one-line "what is this"
+  toolGuidelines: Record&lt;string, string[]&gt;;      // per-tool bullets
+  projectContextFiles: { path: string; content: string }[];
+  userAppend?: string;
+  cwd: string;
+}
+
+function buildSystemPrompt(opts: PromptOptions): string {
+  const lines: string[] = [];
+
+  lines.push("You are an expert coding assistant. You help users by reading " +
+             "files, executing commands, editing code, and writing new files.");
+
+  lines.push("", "Available tools:");
+  for (const t of opts.tools) {
+    const snippet = opts.toolSnippets[t.name] ?? t.description;
+    lines.push(`- ${t.name}: ${snippet}`);
+  }
+
+  lines.push("", "Guidelines:");
+  for (const t of opts.tools) {
+    for (const g of opts.toolGuidelines[t.name] ?? []) lines.push(`- ${g}`);
+  }
+  // always-on guidelines:
+  lines.push("- Be concise in your responses.");
+  lines.push("- Show file paths clearly when working with files.");
+
+  if (opts.userAppend) lines.push("", opts.userAppend);
+
+  if (opts.projectContextFiles.length) {
+    lines.push("", "&lt;project_context&gt;");
+    for (const f of opts.projectContextFiles) {
+      lines.push(`&lt;project_instructions path="${f.path}"&gt;`);
+      lines.push(f.content);
+      lines.push(`&lt;/project_instructions&gt;`);
+    }
+    lines.push("&lt;/project_context&gt;");
+  }
+
+  lines.push("", `Current date: ${new Date().toISOString().slice(0, 10)}`);
+  lines.push(`Current working directory: ${opts.cwd}`);
+
+  return lines.join("\n");
+}</code></pre>
+
+<h2 id="tools-carry-their-own">Tools carry their own guidelines</h2>
+
+<p>
+  The most underrated detail in that builder is the
+  <code>toolGuidelines</code> input. Bullets like <em>"Use write only for new
+  files"</em> or <em>"Use read instead of cat or sed"</em> are not global
+  knowledge &mdash; they belong to the tool that needs them. So attach them
+  to the tool definition itself:
+</p>
+
+<pre><code>const write = {
+  name: "write",
+  description: "Create a new file or completely overwrite an existing one.",
+  promptSnippet: "Create or overwrite files",
+  promptGuidelines: ["Use write only for new files or complete rewrites."],
+  parameters: { /* ... */ },
+};</code></pre>
+
+<p>
+  When the harness assembles the prompt, it collects snippets and guidelines
+  from whichever tools are active. Add a new tool? Its guidelines come along
+  for free. Remove a tool? Its guidelines disappear &mdash; you do not have a
+  stale <em>"use git_log when ..."</em> bullet sitting in the prompt for a
+  tool that was disabled.
+</p>
+
+<h2 id="project-context">Project context: walking the tree</h2>
+
+<p>
+  Almost every modern coding harness honours an
+  <code>AGENTS.md</code>-style file: a markdown document the user puts in
+  their repo with project-specific instructions ("use pnpm, never npm"; "tests
+  live in <code>tests/</code>"; "don't touch the generated files").
+</p>
+
+<p>
+  Discovering them is a tree walk from the cwd toward the root, plus a global
+  one in the user's home:
+</p>
+
+<pre><code>async function loadContextFiles(cwd: string): Promise&lt;{ path: string; content: string }[]&gt; {
+  const names = ["AGENTS.md", "CLAUDE.md"];
+  const found: { path: string; content: string }[] = [];
+
+  for (const dir of walkUp(cwd)) {            // cwd, cwd/.., cwd/../.., ...
+    for (const name of names) {
+      const p = join(dir, name);
+      if (await exists(p)) found.push({ path: p, content: await fs.readFile(p, "utf8") });
+    }
+  }
+  // and one global location:
+  const global = join(os.homedir(), ".pi", "AGENTS.md");
+  if (await exists(global)) found.push({ path: global, content: await fs.readFile(global, "utf8") });
+
+  return found;
+}</code></pre>
+
+<p>
+  Wrap each file in <code>&lt;project_instructions path="..."&gt;...&lt;/project_instructions&gt;</code>
+  XML tags inside the prompt. The model is good at respecting that structure;
+  it treats each file as a labeled directive set rather than a wall of text.
+</p>
+
+<h2 id="when-to-rebuild">When to rebuild</h2>
+
+<p>
+  Do not rebuild on every turn. The prompt is large; recomputing it (and
+  paying the cache miss with your provider) is wasteful. Rebuild only when one
+  of its inputs changes:
+</p>
+
+<ul>
+  <li>Session start.</li>
+  <li>Tools change (extension loaded, user toggled a tool, mode switched).</li>
+  <li>Resources change (a new <code>AGENTS.md</code> appeared mid-session).</li>
+  <li>The user explicitly reloads.</li>
+</ul>
+
+<p>
+  Cache the result on your <code>Session</code> object and reuse it across
+  turns. Provider-side prompt caching will reward you for keeping the prefix
+  stable.
+</p>
+
+<h2 id="ordering">A few sharp edges</h2>
+
+<ul>
+  <li>
+    <strong>Date and cwd go last.</strong> They are short. Keeping them at the
+    bottom means the long, stable prefix above stays identical across runs,
+    which is exactly what prompt caches want.
+  </li>
+  <li>
+    <strong>Deduplicate guidelines.</strong> If two tools both contribute
+    <em>"Be careful with destructive commands"</em>, normalize and de-dupe
+    before emitting. Repetition does not reinforce the rule; it dilutes the
+    others.
+  </li>
+  <li>
+    <strong>Keep it short.</strong> A 4,000-token system prompt is a smell.
+    If yours gets that long, you are probably encoding rules that should be
+    in tool descriptions instead.
+  </li>
+  <li>
+    <strong>Document escape hatches.</strong> Allow users to <em>replace</em>
+    the base prompt (not just append to it) for unusual workflows. Pi calls
+    this the <code>customPrompt</code> option.
+  </li>
+</ul>
+
+<div class="prod">
+  <span class="prod-label">In pi's code</span>
+  <p>
+    Pi's builder is
+    <code>packages/coding-agent/src/core/system-prompt.ts:buildSystemPrompt()</code>.
+    It is structurally identical to the one above with a few additions: a
+    pointer to pi's own documentation (so the agent can introspect itself), a
+    skills section (Chapter 9), and the ability to fully replace the base
+    prompt with a user-supplied one. The session calls it from
+    <code>agent-session.ts:_rebuildSystemPrompt()</code> exactly at the
+    moments listed in <em>When to rebuild</em>.
+  </p>
+</div>
+
+<div class="endstate">
+  <h4>What you have now</h4>
+  <p>
+    A harness that adapts to its environment. Run it in a TypeScript project
+    and the model picks up the project's conventions from AGENTS.md. Disable
+    a tool and the model stops trying to use it. Add a tool and the guidelines
+    explaining how to use it come along automatically. Everything that follows
+    in this book either changes <em>which inputs feed the prompt</em>
+    (sessions, extensions, skills) or <em>how the rest of the harness sits
+    around it</em> (UI, persistence).
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="04-coding-toolkit.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">4. A real coding toolkit</span>
+  </a>
+  <a class="next" href="06-sessions.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">6. Sessions: save &amp; resume</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

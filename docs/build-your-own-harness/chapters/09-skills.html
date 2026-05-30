@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 9 &mdash; Skills</title>
+<link rel="stylesheet" href="../assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">π</span>
+    <span>Build Your Own Harness</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part I &mdash; Foundation</h4><ul>
+    <li><a href="01-streaming-client.html">1. Streaming LLM client</a></li>
+    <li><a href="02-first-tool.html">2. Your first tool call</a></li>
+    <li><a href="03-agent-loop.html">3. The agent loop</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part II &mdash; A real coding agent</h4><ul>
+    <li><a href="04-coding-toolkit.html">4. A real coding toolkit</a></li>
+    <li><a href="05-system-prompt.html">5. The system prompt</a></li>
+    <li><a href="06-sessions.html">6. Sessions: save &amp; resume</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Part III &mdash; Making it real</h4><ul>
+    <li><a href="07-live-tui.html">7. A live terminal UI</a></li>
+    <li><a href="08-extensions.html">8. Extensions</a></li>
+    <li><a href="09-skills.html">9. Skills</a></li>
+    <li><a href="10-compaction.html">10. Compaction</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">Chapter 9 &middot; Part III</span>
+  <h1>Skills</h1>
+  <p class="lead">
+    A skill is what you reach for when something is too big for the system
+    prompt and too small for an extension. A markdown file that the agent
+    knows exists but only reads when the task at hand needs it. The trick is
+    that "knows exists" costs almost nothing &mdash; and "reads" only happens
+    when it pays off.
+  </p>
+</div>
+
+<h2 id="the-problem">The problem with cramming everything in</h2>
+
+<p>
+  Imagine your harness should know:
+</p>
+
+<ul>
+  <li>How to write database migrations for your particular Postgres setup.</li>
+  <li>How to add a new feature flag in your specific feature-flagging system.</li>
+  <li>How to release a new version of your library: the bump, the changelog, the npm publish, the GitHub release notes.</li>
+  <li>How to interpret crash reports from your monitoring tool.</li>
+  <li>Twenty other specific things, each a page or two of detail.</li>
+</ul>
+
+<p>
+  You could put all of this in the system prompt. It would work. It would
+  also send 8,000 tokens of unrelated instructions on every request, dilute
+  the model's attention, and make every conversation more expensive and
+  slower. Most of those instructions are not relevant to most tasks.
+</p>
+
+<p>
+  Skills solve this with one observation: the model is good at deciding when
+  to ask for more information. So you do not load the migration playbook into
+  the prompt. You load a one-line <em>signpost</em>:
+  <em>"There is a skill called <code>postgres-migrations</code> that explains
+  how to write database migrations for this project; load it when needed."</em>
+  The model reads the signpost; if the task is about migrations, it calls
+  <code>read_file</code> on the skill's location and gets the full content.
+  Otherwise it ignores it.
+</p>
+
+<div class="figure">
+<svg viewBox="0 0 760 320" role="img" aria-label="Skill loading">
+  <defs>
+    <marker id="ar9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <!-- prompt cost -->
+    <rect x="30" y="40" width="320" height="100" rx="10" fill="#141821" stroke="#fbbf24"/>
+    <text x="190" y="64" text-anchor="middle" fill="#fbbf24" font-weight="700">in the system prompt</text>
+    <text x="50" y="90"  fill="#9aa3b3">name + 1-line description per skill</text>
+    <text x="50" y="108" fill="#9aa3b3">+ filesystem location</text>
+    <text x="50" y="126" fill="#34d399">tiny cost - paid every request</text>
+
+    <!-- loaded on demand -->
+    <rect x="410" y="40" width="320" height="100" rx="10" fill="#141821" stroke="#34d399"/>
+    <text x="570" y="64" text-anchor="middle" fill="#34d399" font-weight="700">on disk, read on demand</text>
+    <text x="430" y="90"  fill="#9aa3b3">full content of the skill</text>
+    <text x="430" y="108" fill="#9aa3b3">step-by-step instructions, examples</text>
+    <text x="430" y="126" fill="#fbbf24">large cost - paid only when used</text>
+
+    <!-- arrow -->
+    <line x1="350" y1="90" x2="410" y2="90" stroke="#9aa3b3" stroke-width="1.5" marker-end="url(#ar9)"/>
+    <text x="380" y="80" text-anchor="middle" fill="#6b7384" font-size="10">read_file</text>
+
+    <!-- timeline -->
+    <rect x="30" y="190" width="700" height="100" rx="10" fill="#0f1217" stroke="#1a1f2a"/>
+    <text x="50" y="214" fill="#9aa3b3" font-size="10">prompt: "release a new version of the lib"</text>
+
+    <text x="50" y="240" fill="#34d399">1. model sees skill: release-process</text>
+    <text x="50" y="258" fill="#34d399">2. model calls read_file("skills/release-process/SKILL.md")</text>
+    <text x="50" y="276" fill="#34d399">3. now has the playbook; follows it</text>
+
+    <text x="430" y="240" fill="#9aa3b3" font-size="10">prompt: "what colour is the sky?"</text>
+    <text x="430" y="258" fill="#9aa3b3">model never touches the skills directory.</text>
+    <text x="430" y="276" fill="#9aa3b3">the signposts cost ~20 tokens total.</text>
+  </g>
+</svg>
+<div class="figure-caption">The skill's content lives on disk. The prompt carries only the signpost.</div>
+</div>
+
+<h2 id="format">The skill format</h2>
+
+<p>
+  A skill is a markdown file with YAML frontmatter. The frontmatter carries
+  the metadata the harness needs to advertise it; the body is the
+  instructions for the model.
+</p>
+
+<pre><code>---
+name: postgres-migrations
+description: |
+  Write a new database migration for the project's Postgres schema. Use
+  when the user wants to add/alter/drop tables, columns, indices, or
+  constraints. Includes the naming convention, the directory layout, and
+  how to handle backfills for NOT NULL columns on large tables.
+---
+
+# Postgres migrations
+
+This project uses [name-your-tool] migrations. Every migration is two files:
+
+1. `migrations/{ulid}_short_name.up.sql`
+2. `migrations/{ulid}_short_name.down.sql`
+
+## Steps
+
+1. Generate a new ULID for the migration prefix.
+2. Write the up SQL.
+3. Write the down SQL (must reverse the up).
+4. ... [the rest of the playbook]
+</code></pre>
+
+<p>
+  Two fields matter, and only two:
+</p>
+
+<ul>
+  <li>
+    <strong><code>name</code></strong> &mdash; a short, dash-separated
+    identifier. The model uses it to refer to the skill. Keep it under ~50
+    characters; treat it like a filename.
+  </li>
+  <li>
+    <strong><code>description</code></strong> &mdash; the only thing the
+    model sees by default. Write it like a docstring for the entire skill:
+    when to use, what it covers, what edge cases it handles. This is the
+    selector.
+  </li>
+</ul>
+
+<h2 id="discovery">Discovery</h2>
+
+<p>
+  Same discovery pattern as extensions, applied to <code>SKILL.md</code> files:
+</p>
+
+<pre><code>const SKILL_DIRS = [
+  join(os.homedir(), ".pi", "skills"),     // global
+  join(process.cwd(), ".pi", "skills"),    // project-local
+];
+
+async function loadSkills(): Promise&lt;Skill[]&gt; {
+  const skills: Skill[] = [];
+  for (const root of SKILL_DIRS) {
+    for (const dir of await listDirs(root)) {
+      const skillPath = join(dir, "SKILL.md");
+      if (!await exists(skillPath)) continue;
+      const text = await fs.readFile(skillPath, "utf8");
+      const { frontmatter, body } = parseFrontmatter(text);
+      skills.push({
+        name: frontmatter.name,
+        description: frontmatter.description,
+        filePath: skillPath,
+      });
+    }
+  }
+  return skills;
+}</code></pre>
+
+<p>
+  Notice we do not read the body. The body lives on disk; the model fetches
+  it when needed.
+</p>
+
+<h2 id="surfacing">Surfacing skills to the model</h2>
+
+<p>
+  Inject a section at the bottom of the system prompt listing each skill's
+  name, description, and absolute location. An XML block makes the structure
+  unambiguous:
+</p>
+
+<pre><code>function formatSkillsSection(skills: Skill[]): string {
+  if (skills.length === 0) return "";
+
+  const lines = [
+    "",
+    "The following skills provide specialized instructions for specific tasks.",
+    "Use the read_file tool to load a skill's file when the task matches its description.",
+    "",
+    "&lt;available_skills&gt;",
+  ];
+
+  for (const s of skills) {
+    lines.push("  &lt;skill&gt;");
+    lines.push(`    &lt;name&gt;${s.name}&lt;/name&gt;`);
+    lines.push(`    &lt;description&gt;${s.description}&lt;/description&gt;`);
+    lines.push(`    &lt;location&gt;${s.filePath}&lt;/location&gt;`);
+    lines.push("  &lt;/skill&gt;");
+  }
+  lines.push("&lt;/available_skills&gt;");
+  return lines.join("\n");
+}</code></pre>
+
+<p>
+  The instruction above the block is critical. Without it, the model is
+  trained to chat with you about the skills instead of <em>using</em> them.
+  Spell out the action: read the file with your <code>read</code> tool.
+</p>
+
+<h2 id="prerequisite">Skills depend on <code>read</code></h2>
+
+<p>
+  A skill is useless without a tool that can read it. The harness should
+  refuse to advertise skills if the <code>read</code> tool is not active in
+  the current session &mdash; otherwise the model will see the signposts,
+  try to follow one, fail, and apologize. Detect this and just skip the
+  whole skills section in that case.
+</p>
+
+<h2 id="anatomy">Anatomy of a good skill</h2>
+
+<p>
+  Three habits separate skills that work from skills that get ignored:
+</p>
+
+<ol class="steps">
+  <li>
+    <strong>Write the description like a function signature.</strong>
+    <em>"When you should use this. What it covers. What it does not cover."</em>
+    Each clause helps the model decide whether to read the body. Skills with
+    vague descriptions <em>("information about the database")</em> never get
+    loaded.
+  </li>
+  <li>
+    <strong>Make the body procedural.</strong> The model is going to follow
+    the steps mechanically. Numbered steps; concrete code examples; explicit
+    "do this then that" instead of "consider doing X." Save the rationale for
+    a brief preamble, but the bulk should read like a runbook.
+  </li>
+  <li>
+    <strong>Put supporting files next to the SKILL.md.</strong> Example code,
+    templates, large reference tables &mdash; drop them in the skill's
+    directory and link relatively. The model can read them with the same
+    <code>read</code> tool. This keeps the SKILL.md scannable.
+  </li>
+</ol>
+
+<h2 id="explicit">Letting users invoke skills directly</h2>
+
+<p>
+  Sometimes the user knows exactly which skill applies. Letting them say
+  <code>/skill:postgres-migrations</code> in the input box (and having the
+  harness inject the skill's body as a system note before the next turn) is
+  a nice escape hatch: the user gets to lead the model rather than hope it
+  picks the right signpost.
+</p>
+
+<p>
+  In your harness this is a CLI command, not a model-facing tool. The
+  command handler reads the SKILL.md body and pushes it as a synthetic
+  message with role <code>user</code> and content something like:
+  <em>"The following are instructions for the postgres-migrations skill the
+  user explicitly requested. Follow them."</em>
+</p>
+
+<h2 id="when-not">When not to use a skill</h2>
+
+<p>
+  Skills are not the answer to everything:
+</p>
+
+<ul>
+  <li>
+    <strong>If something applies to <em>every</em> task</strong>, put it in
+    the system prompt. Skills are for the <em>conditional</em> body of
+    knowledge.
+  </li>
+  <li>
+    <strong>If something needs to <em>do</em> things</strong>, write an
+    extension. Skills are instructions; extensions are code.
+  </li>
+  <li>
+    <strong>If something is small enough to fit in a tool's
+    <code>description</code></strong>, put it there. Tools are even cheaper
+    than skills.
+  </li>
+</ul>
+
+<p>
+  The mental hierarchy is: <em>always-relevant rules</em> &rarr; system
+  prompt. <em>Always-relevant capabilities</em> &rarr; tools. <em>Sometimes-
+  relevant instructions</em> &rarr; skills. <em>Sometimes-relevant
+  capabilities</em> &rarr; extensions.
+</p>
+
+<div class="prod">
+  <span class="prod-label">In pi's code</span>
+  <p>
+    Pi's skills loader is
+    <code>packages/coding-agent/src/core/skills.ts</code>. The format follows
+    the open <a href="https://agentskills.io">Agent Skills standard</a>: a
+    directory containing a <code>SKILL.md</code> with YAML frontmatter
+    (<code>name</code>, <code>description</code>, optional
+    <code>disable-model-invocation</code>). The XML block injected into the
+    prompt is built by <code>formatSkillsForPrompt()</code>; the section is
+    only emitted when the <code>read</code> tool is active. Skills can also be
+    contributed by extensions (Chapter 8) via
+    <code>host.contributeSkill()</code>.
+  </p>
+</div>
+
+<div class="endstate">
+  <h4>What you have now</h4>
+  <p>
+    A harness whose effective knowledge grows without growing its prompt. Drop
+    a new <code>SKILL.md</code> in a directory; the next session it is
+    available; the model loads it only when relevant; the rest of the time it
+    is just twenty tokens of metadata. The harness has gone from <em>"smart
+    on a fixed set of tasks"</em> to <em>"as smart as the skills the user
+    bothers to write."</em>
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="08-extensions.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">8. Extensions</span>
+  </a>
+  <a class="next" href="10-compaction.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">10. Compaction</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

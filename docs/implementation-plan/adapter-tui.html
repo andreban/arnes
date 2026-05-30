@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>arnes-tui &mdash; TUI adapter</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="tui">
+  <span class="eyebrow">Adapter</span>
+  <h1>arnes-tui</h1>
+  <p class="lead">
+    The terminal frontend: a live, persistent input box at the bottom, a
+    streaming transcript above. Implements the <code>Frontend</code> trait
+    by translating <code>SessionEvent</code>s into screen updates. Uses
+    <code>LocalHost</code> &mdash; the filesystem is right here, no need
+    to delegate.
+  </p>
+</div>
+
+<div class="note">
+  <strong>Built as the parallel testbed.</strong> The TUI is not a single
+  late-stage milestone. A minimal version &mdash; just an input box and a
+  streaming output pane &mdash; lands at M1 alongside the minimal ACP
+  adapter, and every subsequent milestone surfaces its new capability in
+  both frontends at the same time. The full layout described below is the
+  end state, reached incrementally. See the
+  <a href="roadmap.html">roadmap</a> for what the TUI looks like at each
+  milestone.
+</div>
+
+<h2 id="stack">Stack</h2>
+
+<table>
+  <thead><tr><th>Need</th><th>Crate</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>Raw mode, key parsing, ANSI</td><td><code>crossterm</code></td><td>Cross-platform, includes a Win32 path so we get Windows console support for free.</td></tr>
+    <tr><td>Layout + widgets</td><td><code>ratatui</code></td><td>The mature option in the Rust ecosystem. Differential rendering, well-tested.</td></tr>
+    <tr><td>Markdown rendering</td><td><code>pulldown-cmark</code> + a custom ratatui widget</td><td>The model emits markdown; we should render it.</td></tr>
+    <tr><td>Syntax highlighting</td><td><code>syntect</code> (or <code>tree-sitter</code> later)</td><td>For code blocks in markdown.</td></tr>
+    <tr><td>Async runtime</td><td><code>tokio</code></td><td>Everything else uses it.</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <strong>Why not write our own renderer like pi-tui?</strong> Because the
+  point of arnes is the harness, not the TUI. <code>ratatui</code>'s
+  differential renderer + crossterm's raw mode give us 90% of pi-tui for 0%
+  of the maintenance. If we ever outgrow it, that's a single-crate
+  replacement.
+</div>
+
+<h2 id="layout">Screen layout</h2>
+
+<div class="figure">
+<svg viewBox="0 0 760 320" role="img" aria-label="TUI layout">
+  <g font-family="ui-monospace, monospace" font-size="10">
+    <rect x="40" y="20" width="680" height="280" rx="10" fill="#0f1217" stroke="#38bdf8" stroke-opacity="0.5"/>
+
+    <!-- transcript area -->
+    <rect x="40" y="20" width="680" height="220" fill="none"/>
+    <text x="55" y="44" fill="#9aa3b3">&gt; show me how compaction works in arnes</text>
+
+    <text x="55" y="70" fill="#34d399">assistant</text>
+    <text x="55" y="86" fill="#e4e8ef">Looking at the compaction module...</text>
+
+    <rect x="55" y="100" width="640" height="22" rx="4" fill="#1a1f2a" stroke="#a78bfa" stroke-opacity="0.6"/>
+    <text x="65" y="116" fill="#a78bfa">read  crates/arnes-core/src/compact.rs</text>
+
+    <rect x="55" y="128" width="640" height="22" rx="4" fill="#1a1f2a" stroke="#a78bfa" stroke-opacity="0.6"/>
+    <text x="65" y="144" fill="#a78bfa">grep "should_compact" crates/arnes-core</text>
+
+    <text x="55" y="170" fill="#e4e8ef">It uses a 4-chars-per-token heuristic and triggers at 75%...</text>
+    <text x="55" y="186" fill="#9aa3b3">(streaming)</text>
+
+    <!-- divider -->
+    <line x1="40" y1="250" x2="720" y2="250" stroke="#232936"/>
+
+    <!-- status row -->
+    <text x="55" y="266" fill="#6b7384">arnes-tui  -  gemini-2.5  -  4 tools  -  12.3k / 200k tokens  -  esc cancel</text>
+
+    <!-- input -->
+    <rect x="55" y="276" width="650" height="20" rx="4" fill="#141821" stroke="#38bdf8"/>
+    <text x="65" y="290" fill="#38bdf8">&gt;</text>
+    <text x="80" y="290" fill="#e4e8ef">_</text>
+  </g>
+</svg>
+<div class="figure-caption">Three ratatui regions: scrolling transcript, status line, input. Matches the Book Chapter 7 layout.</div>
+</div>
+
+<h2 id="frontend-impl">The Frontend impl</h2>
+
+<p>
+  All UI mutations funnel through a single channel from the
+  <code>Frontend</code> impl to the render task. The agent loop pushes
+  events; the render task drains the channel and updates ratatui state.
+</p>
+
+<pre><code>pub struct TuiFrontend {
+    tx: mpsc::UnboundedSender&lt;UiCommand&gt;,
+}
+
+#[async_trait]
+impl Frontend for TuiFrontend {
+    async fn on_event(&amp;self, ev: SessionEvent) {
+        let _ = self.tx.send(UiCommand::Event(ev));
+    }
+
+    async fn request_permission(&amp;self, req: PermissionRequest) -&gt; Permission {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.tx.send(UiCommand::Permission(req, tx));
+        rx.await.unwrap_or(Permission::Deny)
+    }
+}
+
+enum UiCommand {
+    Event(SessionEvent),
+    Permission(PermissionRequest, oneshot::Sender&lt;Permission&gt;),
+    UserInput(String),
+}</code></pre>
+
+<h2 id="three-tasks">Three tasks, one channel</h2>
+
+<p>
+  The TUI binary spawns three tokio tasks; they communicate over the
+  <code>UiCommand</code> channel.
+</p>
+
+<ol class="steps">
+  <li>
+    <strong>Render task.</strong> Owns the ratatui <code>Terminal</code>,
+    drains <code>UiCommand</code>, mutates <code>AppState</code>, calls
+    <code>terminal.draw(...)</code> on each frame. Caps to ~60fps.
+  </li>
+  <li>
+    <strong>Input task.</strong> Reads <code>crossterm::event::EventStream</code>,
+    handles editor keybindings locally (cursor movement, backspace, paste),
+    and on <kbd>Enter</kbd> sends <code>UiCommand::UserInput(text)</code> to
+    the render task <em>and</em> calls
+    <code>session.prompt(text)</code> to start a turn.
+  </li>
+  <li>
+    <strong>Agent task.</strong> Runs <code>session.prompt()</code>; events
+    flow back through <code>TuiFrontend::on_event</code> into the channel.
+    Cancellable via <kbd>Esc</kbd> &mdash; the input task aborts the
+    JoinHandle.
+  </li>
+</ol>
+
+<div class="figure">
+<svg viewBox="0 0 760 260" role="img" aria-label="TUI task graph">
+  <defs>
+    <marker id="ct" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <rect x="40"  y="50" width="160" height="60" rx="10" fill="#141821" stroke="#fbbf24"/>
+    <text x="120" y="74" text-anchor="middle" fill="#fbbf24" font-weight="700">input task</text>
+    <text x="120" y="92" text-anchor="middle" fill="#9aa3b3" font-size="10">crossterm events</text>
+
+    <rect x="300" y="50" width="160" height="60" rx="10" fill="#141821" stroke="#34d399"/>
+    <text x="380" y="74" text-anchor="middle" fill="#34d399" font-weight="700">agent task</text>
+    <text x="380" y="92" text-anchor="middle" fill="#9aa3b3" font-size="10">session.prompt(text)</text>
+
+    <rect x="560" y="50" width="160" height="60" rx="10" fill="#141821" stroke="#38bdf8"/>
+    <text x="640" y="74" text-anchor="middle" fill="#38bdf8" font-weight="700">render task</text>
+    <text x="640" y="92" text-anchor="middle" fill="#9aa3b3" font-size="10">ratatui::Terminal</text>
+
+    <!-- channel -->
+    <rect x="200" y="170" width="360" height="50" rx="10" fill="#0f1217" stroke="#a78bfa"/>
+    <text x="380" y="190" text-anchor="middle" fill="#a78bfa" font-weight="700">UiCommand channel (mpsc)</text>
+    <text x="380" y="210" text-anchor="middle" fill="#9aa3b3" font-size="10">Event | Permission | UserInput</text>
+
+    <!-- arrows -->
+    <g stroke="#9aa3b3" stroke-width="1.2">
+      <line x1="120" y1="110" x2="240" y2="168" marker-end="url(#ct)"/>
+      <line x1="380" y1="110" x2="380" y2="168" marker-end="url(#ct)"/>
+      <line x1="640" y1="170" x2="640" y2="112" marker-end="url(#ct)"/>
+    </g>
+    <text x="160" y="146" fill="#6b7384" font-size="10">UserInput</text>
+    <text x="400" y="146" fill="#6b7384" font-size="10">Event / Permission</text>
+    <text x="540" y="146" fill="#6b7384" font-size="10">drain &amp; draw</text>
+  </g>
+</svg>
+<div class="figure-caption">A single channel keeps the three tasks loosely coupled and the renderer single-threaded.</div>
+</div>
+
+<h2 id="components">Components we will need</h2>
+
+<table>
+  <thead><tr><th>Component</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td><code>Transcript</code></td><td>Scrollable list of message widgets. Auto-scrolls to bottom on new content unless user has scrolled up.</td></tr>
+    <tr><td><code>MessageView</code></td><td>Renders one message: user text, assistant markdown, tool-call cards, tool results (collapsible).</td></tr>
+    <tr><td><code>ToolCallCard</code></td><td>One row per tool call: name, status (pending/running/done/error), short input preview.</td></tr>
+    <tr><td><code>InputBox</code></td><td>Multi-line editor with history (up/down for previous prompts), simple slash-command tab-complete.</td></tr>
+    <tr><td><code>StatusLine</code></td><td>Model, active tool count, token usage, mode hints.</td></tr>
+    <tr><td><code>PermissionDialog</code></td><td>Modal: action description, allow/deny/always-allow buttons. Returns through the oneshot channel.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="permission">Permission UX</h2>
+
+<p>
+  Sensitive tools (<code>bash</code>, <code>write</code>, <code>edit</code>
+  by default) trigger <code>frontend.request_permission</code> before
+  executing. The TUI pops a modal:
+</p>
+
+<pre><code>+--------------------------------------------------------+
+| Allow this tool call?                                  |
+|                                                        |
+|   bash                                                 |
+|   rm -rf node_modules &amp;&amp; pnpm install                  |
+|                                                        |
+|   [a] allow once  [A] always for bash  [d] deny  [Esc] |
++--------------------------------------------------------+</code></pre>
+
+<p>
+  "Always for bash" sets a per-session policy in the
+  <code>Session</code>'s permission cache so we don't pester the user
+  every time. The cache is in-memory; restarting the session resets it.
+</p>
+
+<h2 id="cancellation">Cancellation</h2>
+
+<p>
+  <kbd>Esc</kbd> at the input box does nothing when no agent task is
+  running. When one is running, <kbd>Esc</kbd> calls
+  <code>session.cancel()</code> which aborts the agent-rig stream and
+  propagates an <code>AbortSignal</code> into any in-flight tool. The TUI
+  shows <em>"cancelled"</em> in the transcript and unlocks the input.
+</p>
+
+<h2 id="slash-commands">Slash commands</h2>
+
+<p>
+  TUI-only commands that don't go to the model:
+</p>
+
+<table>
+  <thead><tr><th>Command</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>/clear</code></td><td>Reset the transcript (history stays in JSONL; new in-memory session)</td></tr>
+    <tr><td><code>/compact</code></td><td>Force compaction now</td></tr>
+    <tr><td><code>/model &lt;name&gt;</code></td><td>Switch model mid-session</td></tr>
+    <tr><td><code>/tools</code></td><td>Show active tools</td></tr>
+    <tr><td><code>/skills</code></td><td>List loaded skills + locations</td></tr>
+    <tr><td><code>/skill:&lt;name&gt;</code></td><td>Inject a skill body into the next turn (Chapter 9)</td></tr>
+    <tr><td><code>/reload</code></td><td>Re-scan extensions, skills, AGENTS.md</td></tr>
+  </tbody>
+</table>
+
+<h2 id="not-doing">What this adapter deliberately does not do</h2>
+
+<ul>
+  <li>
+    <strong>No mouse support in V1.</strong> Keyboard is enough; mouse adds a
+    pile of edge cases (selection vs. native terminal selection, scroll
+    wheel conflicts) we don't want to debug yet.
+  </li>
+  <li>
+    <strong>No inline images.</strong> Useful, but a big native-protocol
+    yak (Kitty/iTerm2). Drop it in once the core is stable.
+  </li>
+  <li>
+    <strong>No theming.</strong> Use ratatui's default style for V1. A
+    theme system can land as an extension contribution later.
+  </li>
+</ul>
+
+<div class="endstate">
+  <h4>The adapter is done when</h4>
+  <p>
+    Running <code>arnes</code> drops you into a live session: streaming
+    output, working input box, permission dialogs for destructive tools,
+    <kbd>Esc</kbd> cancellation, slash commands, persistent JSONL log. That
+    is the local-developer story complete.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="core.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">arnes-core</span>
+  </a>
+  <a class="next" href="adapter-acp.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">Agent Client Protocol</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>M4 &mdash; System prompt + AGENTS.md</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">Milestone 4 &middot; Context</span>
+  <h1>System prompt assembly + AGENTS.md</h1>
+  <p class="lead">
+    Stop hard-coding the system prompt. Build it from slots: tool snippets,
+    per-tool guidelines, project context files, working directory, date.
+    Same harness behaves like a focused coding assistant in any project,
+    in either frontend, without code changes.
+  </p>
+</div>
+
+<h2 id="why">Why this milestone now</h2>
+
+<p>
+  Through M1&ndash;M3 we've been getting away with a one-line system prompt.
+  It works in toy scenarios; it falls apart the moment a project has any
+  conventions of its own. M4 is what turns the harness from a chat
+  application that runs tools into an agent that <em>belongs</em> in your
+  project.
+</p>
+
+<p>
+  M4 is server-internal: no new <code>SessionEvent</code> variants, no new
+  ACP methods. The proof is behavioural &mdash; same assembly produces
+  context-appropriate behaviour in both adapters.
+</p>
+
+<h2 id="new-module">arnes-core::prompt</h2>
+
+<pre><code>// arnes-core/src/prompt.rs
+
+pub struct SystemPromptBuilder {
+    base: Cow&lt;'static, str&gt;,
+    user_append: Option&lt;String&gt;,
+    user_guidelines: Vec&lt;String&gt;,
+    capabilities: FrontendCapabilities,
+}
+
+impl SystemPromptBuilder {
+    pub fn new() -&gt; Self { /* ... */ }
+    pub fn with_append(mut self, text: String) -&gt; Self { /* ... */ }
+    pub fn with_guideline(mut self, line: String) -&gt; Self { /* ... */ }
+    pub fn with_capabilities(mut self, caps: FrontendCapabilities) -&gt; Self { /* ... */ }
+
+    pub fn build(
+        &amp;self,
+        tools: &amp;[Arc&lt;dyn Tool&gt;],
+        context_files: &amp;[ContextFile],
+        cwd: &amp;Path,
+    ) -&gt; String;
+}
+
+pub struct ContextFile {
+    pub path: PathBuf,
+    pub content: String,
+}</code></pre>
+
+<h2 id="slots">Assembly slots, in order</h2>
+
+<table>
+  <thead><tr><th>Slot</th><th>Source</th><th>Volatility</th></tr></thead>
+  <tbody>
+    <tr><td>Base identity</td><td>hard-coded string</td><td>never</td></tr>
+    <tr><td>Available tools</td><td><code>tool.prompt_snippet()</code> for each active tool</td><td>changes when tool registry changes</td></tr>
+    <tr><td>Guidelines</td><td>per-tool <code>prompt_guidelines()</code> + user-added globals + always-on bullets</td><td>changes when registry or config changes</td></tr>
+    <tr><td>User append</td><td>CLI flag / config file</td><td>per-run</td></tr>
+    <tr><td>Project context</td><td><code>AGENTS.md</code> tree walk</td><td>per-session, refreshable on reload</td></tr>
+    <tr><td>Cwd + date</td><td>computed at build time</td><td>always last for cacheability</td></tr>
+  </tbody>
+</table>
+
+<h2 id="tool-extensions">Tool trait extensions</h2>
+
+<pre><code>pub trait Tool: Send + Sync {
+    // ... M2/M3 methods ...
+
+    /// One-line entry for "Available tools" section.
+    fn prompt_snippet(&amp;self) -&gt; Cow&lt;'_, str&gt; {
+        // default: first line of description()
+        first_line(self.description()).into()
+    }
+
+    /// Per-tool guideline bullets injected into the "Guidelines" section.
+    /// Each bullet must name the tool explicitly (avoid "this tool ...").
+    fn prompt_guidelines(&amp;self) -&gt; &amp;[String] { &amp;[] }
+}</code></pre>
+
+<p>
+  Update the three M3 tools to carry their own guidelines:
+</p>
+
+<ul>
+  <li><strong>read:</strong> "Use read to examine files instead of cat or sed."</li>
+  <li><strong>write:</strong> "Use write only for new files or complete rewrites."</li>
+  <li><strong>edit:</strong> "Use edit for precise changes (oldText must match exactly).", "Each oldText is matched against the original file, not after earlier edits are applied. Merge nearby edits."</li>
+  <li><strong>bash:</strong> "Use bash to run shell commands; do not chain destructive commands without intent."</li>
+</ul>
+
+<h2 id="agents-md">AGENTS.md discovery</h2>
+
+<p>
+  Walk from <code>cwd</code> upward toward the root, plus a global location.
+  Read any file named <code>AGENTS.md</code> or <code>CLAUDE.md</code>.
+  Wrap each in <code>&lt;project_instructions path="..."&gt;</code> tags
+  inside the assembled prompt.
+</p>
+
+<pre><code>pub async fn discover_context_files(cwd: &amp;Path) -&gt; Vec&lt;ContextFile&gt; {
+    const NAMES: &amp;[&amp;str] = &amp;["AGENTS.md", "CLAUDE.md"];
+    let mut out = Vec::new();
+
+    // 1. Walk up from cwd to root (or to a .git ancestor, whichever first).
+    let mut dir = cwd.to_path_buf();
+    loop {
+        for name in NAMES {
+            let p = dir.join(name);
+            if let Ok(content) = tokio::fs::read_to_string(&amp;p).await {
+                out.push(ContextFile { path: p, content });
+            }
+        }
+        if !dir.pop() { break; }
+    }
+
+    // 2. Global.
+    if let Some(home) = dirs::home_dir() {
+        let p = home.join(".arnes").join("AGENTS.md");
+        if let Ok(content) = tokio::fs::read_to_string(&amp;p).await {
+            out.push(ContextFile { path: p, content });
+        }
+    }
+
+    out.reverse();   // global first, then root-ward project, then cwd-local
+    out
+}</code></pre>
+
+<h2 id="acp-fs">AGENTS.md in ACP mode</h2>
+
+<p>
+  In ACP mode, the harness still reads <code>AGENTS.md</code> via the
+  <code>Host</code> &mdash; not directly. That means
+  <code>AcpHost::read_text_file</code> issues <code>fs/read_text_file</code>
+  callbacks for each candidate path during context discovery. Editors get
+  to see the agent looking up its context just like any other read.
+</p>
+
+<p>
+  Discovery in ACP mode also happens at session start, before the first
+  user prompt &mdash; not lazily. This means the initial prompt the editor
+  observes already has the project context in it.
+</p>
+
+<h2 id="caching">Caching the assembled prompt</h2>
+
+<p>
+  Provider-side prompt caching rewards stable prefixes; we should not
+  rebuild the prompt on every turn. The cache key is the structural hash
+  of the inputs:
+</p>
+
+<pre><code>fn cache_key(tools: &amp;[Arc&lt;dyn Tool&gt;], context_files: &amp;[ContextFile], cwd: &amp;Path) -&gt; u64 {
+    let mut h = DefaultHasher::new();
+    for t in tools { t.name().hash(&amp;mut h); t.prompt_snippet().hash(&amp;mut h); /* etc */ }
+    for f in context_files { f.path.hash(&amp;mut h); f.content.hash(&amp;mut h); }
+    cwd.hash(&amp;mut h);
+    h.finish()
+}</code></pre>
+
+<p>
+  <code>Session</code> holds the last <code>(cache_key, prompt)</code>;
+  rebuilds only on miss. Triggers for invalidation: tool registry mutated
+  (rare in V1; common once extensions land), context files changed (manual
+  via <code>/reload</code> slash command), explicit
+  <code>SystemPromptBuilder</code> setter changed.
+</p>
+
+<h2 id="frontend-caps">FrontendCapabilities, finally used</h2>
+
+<p>
+  The trait's <code>capabilities()</code> hook has been a no-op through
+  M1&ndash;M3. M4 starts honouring it &mdash; the system prompt mentions
+  what the model can produce based on what the frontend can render:
+</p>
+
+<pre><code>pub struct FrontendCapabilities {
+    pub markdown:         bool,   // TUI: true (M6 adds rendering); ACP: depends on client
+    pub images:           bool,   // TUI: false in V1; ACP: per client caps
+    pub embedded_resource: bool,  // ACP: per caps; others: false
+    pub permission_ui:    bool,   // TUI: true; ACP: true; HTTP: configurable
+}
+
+impl SystemPromptBuilder {
+    fn render_capability_hints(&amp;self) -&gt; String {
+        // Append a section like "You may use markdown formatting." or
+        // "Images are not supported in this session."
+    }
+}</code></pre>
+
+<h2 id="reload">Reload mechanism</h2>
+
+<p>
+  Add a <code>/reload</code> slash command (TUI) and an internal
+  <code>Session::reload_resources()</code> method (called via
+  <code>session/set_mode</code> with a known mode in ACP, or via the future
+  HTTP <code>POST .../reload</code> endpoint). Reload:
+</p>
+
+<ol>
+  <li>Re-discovers context files.</li>
+  <li>Re-reads the tool registry (no-op in V1; meaningful once extensions land).</li>
+  <li>Invalidates the prompt cache key.</li>
+  <li>Emits a <code>SessionEvent</code> the frontend can render as "context refreshed."</li>
+</ol>
+
+<h2 id="tasks">Implementation tasks</h2>
+
+<ol class="steps">
+  <li>Create <code>arnes-core::prompt</code> with <code>SystemPromptBuilder</code>, <code>ContextFile</code>, and the cache key function.</li>
+  <li>Extend <code>Tool</code> with <code>prompt_snippet()</code> and <code>prompt_guidelines()</code>; update the four existing tools.</li>
+  <li>Implement <code>discover_context_files</code> using the <code>Host</code> (not direct <code>fs</code>).</li>
+  <li>Wire <code>Session::new</code> to take an optional <code>SystemPromptBuilder</code>; otherwise use a sensible default builder.</li>
+  <li>In <code>Session::prompt</code>, rebuild the system prompt if the cache key changed; pass it to <code>AgentRunner</code> via agent-rig's <code>Agent::builder().instructions(...)</code>.</li>
+  <li>Implement <code>Session::reload_resources()</code>; add <code>/reload</code> TUI command; map ACP mode change appropriately.</li>
+  <li>Surface <code>FrontendCapabilities::markdown</code> hint and have the TUI start rendering basic markdown (bold, code, lists) &mdash; full renderer can wait.</li>
+</ol>
+
+<h2 id="testing">Testing checklist</h2>
+
+<ul>
+  <li><strong>Golden prompt:</strong> a deterministic fixture (fixed tools, fixed context files, fixed cwd, frozen date) produces a known string. Snapshot the output; diff on changes.</li>
+  <li><strong>Cache:</strong> assert the prompt is rebuilt only when an input changes; identical inputs return the cached string.</li>
+  <li><strong>Discovery:</strong> InMemoryEnv populated with AGENTS.md at three nesting levels; assert all three appear in the assembled prompt with correct path tags.</li>
+  <li><strong>Behavioural smoke (TUI):</strong> run two sessions in two real projects with different AGENTS.md; verify the model's first-turn behaviour reflects each.</li>
+  <li><strong>Behavioural smoke (ACP):</strong> same, via a hand-written ACP test client that stubs <code>fs/read_text_file</code> with fake AGENTS.md content.</li>
+</ul>
+
+<h2 id="risks">Risks specific to M4</h2>
+
+<ul>
+  <li>
+    <strong>Prompt bloat.</strong> Some projects have long AGENTS.md
+    files. The full assembled prompt may grow past a few thousand tokens;
+    that hurts cost and may degrade attention. No mitigation in V1 &mdash;
+    M5 (skills) and M7 (compaction) address it from different angles.
+  </li>
+  <li>
+    <strong>Tree-walk performance in deep projects.</strong> Negligible in
+    practice (file system stat is cheap), but a project mounted on a
+    network filesystem could surprise us. Cap the walk depth at 50 to be
+    safe.
+  </li>
+  <li>
+    <strong>ACP read storms.</strong> Discovery may issue many
+    <code>fs/read_text_file</code> calls in quick succession. Editors are
+    designed for this; still, batch where the protocol allows once the
+    spec adds a multi-read.
+  </li>
+</ul>
+
+<div class="endstate">
+  <h4>End state of M4</h4>
+  <p>
+    Run arnes in two different projects without changing any flags or
+    config; the model picks up each project's conventions from its
+    <code>AGENTS.md</code>. The same behaviour appears whether you are
+    driving through the TUI or through an ACP client. From M4 forward, the
+    harness has a context-appropriate posture in every session it joins.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="m3.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">M3: Coding toolkit</span>
+  </a>
+  <a class="next" href="m5.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">M5: Skills</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

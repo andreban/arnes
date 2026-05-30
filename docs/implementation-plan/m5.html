@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>M5 &mdash; Skills</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="agent">
+  <span class="eyebrow">Milestone 5 &middot; Conditional knowledge</span>
+  <h1>Skills</h1>
+  <p class="lead">
+    On-demand instruction packs. Markdown files the model knows exist via
+    a short signpost in the system prompt; loads the full body only when
+    the task at hand matches. Small, self-contained &mdash; the right
+    next milestone after the prompt builder lands.
+  </p>
+</div>
+
+<h2 id="why">Why M5, why now</h2>
+
+<p>
+  Skills only make sense once the system prompt is composable (M4) and the
+  <code>read</code> tool is wired (M2). With both in place, M5 is mostly
+  filesystem-walking and YAML parsing. No ACP surface change, no new
+  <code>SessionEvent</code> variant &mdash; the model loads skills using
+  the same <code>read</code> tool we already shipped.
+</p>
+
+<h2 id="new-module">arnes-core::skills</h2>
+
+<pre><code>// arnes-core/src/skills.rs
+
+pub struct Skill {
+    pub name: String,
+    pub description: String,
+    pub file_path: PathBuf,
+    pub disable_model_invocation: bool,   // user opted out of auto-load
+}
+
+pub struct SkillsCatalog {
+    pub skills: Vec&lt;Skill&gt;,
+    pub diagnostics: Vec&lt;SkillDiagnostic&gt;,
+}
+
+impl SkillsCatalog {
+    pub async fn discover(host: &amp;dyn Host, roots: &amp;[PathBuf]) -&gt; Self;
+    pub fn format_for_prompt(&amp;self) -&gt; String;   // the &lt;available_skills&gt; block
+    pub fn find(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;Skill&gt;;
+}</code></pre>
+
+<h2 id="format">Skill file format</h2>
+
+<p>
+  A directory containing a <code>SKILL.md</code> file. The frontmatter is
+  YAML; the body is markdown the model will follow once loaded.
+</p>
+
+<pre><code>~/.arnes/skills/postgres-migrations/
+├── SKILL.md
+├── template.up.sql
+└── template.down.sql
+
+# SKILL.md:
+---
+name: postgres-migrations
+description: |
+  Write a new database migration for the project's Postgres schema. Use
+  when the user wants to add/alter/drop tables, columns, indices, or
+  constraints. Covers naming, the directory layout, and backfills for
+  NOT NULL columns on large tables.
+disable-model-invocation: false   # optional; default false
+---
+
+# Postgres migrations
+
+This project uses [tool] migrations. Every migration is two files:
+
+1. `migrations/{ulid}_short_name.up.sql`
+2. `migrations/{ulid}_short_name.down.sql`
+
+## Steps
+...</code></pre>
+
+<h2 id="discovery">Discovery</h2>
+
+<p>
+  Scan known roots; for each directory under each root, check for
+  <code>SKILL.md</code>; parse frontmatter; collect. Roots are:
+</p>
+
+<table>
+  <thead><tr><th>Root</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td><code>~/.arnes/skills/</code></td><td>global</td></tr>
+    <tr><td><code>.arnes/skills/</code></td><td>project-local (relative to cwd)</td></tr>
+    <tr><td>Contributed paths</td><td>extensions (deferred &mdash; nothing contributes at M5)</td></tr>
+  </tbody>
+</table>
+
+<p>
+  Same as <code>AGENTS.md</code> discovery (M4), the harness uses the
+  <code>Host</code> for filesystem access &mdash; so in ACP mode the
+  editor sees the read traffic too.
+</p>
+
+<pre><code>pub async fn discover(host: &amp;dyn Host, roots: &amp;[PathBuf]) -&gt; SkillsCatalog {
+    let mut skills = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for root in roots {
+        for dir in host.list_dir(root).await.unwrap_or_default() {
+            if !dir.is_dir { continue; }
+            let path = dir.path.join("SKILL.md");
+            match host.read_text_file(&amp;path).await {
+                Ok(text) =&gt; match parse_frontmatter(&amp;text) {
+                    Ok((meta, _body)) =&gt; skills.push(Skill {
+                        name: clamp(&amp;meta.name, 64),
+                        description: clamp(&amp;meta.description, 1024),
+                        file_path: path,
+                        disable_model_invocation: meta.disable_model_invocation,
+                    }),
+                    Err(e) =&gt; diagnostics.push(SkillDiagnostic::parse(path, e)),
+                },
+                Err(_) =&gt; {} // no SKILL.md, not a skill directory
+            }
+        }
+    }
+
+    SkillsCatalog { skills, diagnostics }
+}</code></pre>
+
+<p>
+  <code>list_dir</code> is a new <code>Host</code> method added at
+  M5. Both impls are short: <code>LocalHost</code> uses
+  <code>tokio::fs::read_dir</code>; <code>AcpHost</code> needs a tiny
+  custom helper since ACP does not currently have a <code>fs/list_dir</code>
+  method &mdash; in the meantime we fall back to a host-side enumeration
+  using the <em>actual</em> local filesystem (ACP servers run with full OS
+  access to their own home directory; only the <em>project</em>
+  filesystem is delegated).
+</p>
+
+<div class="note">
+  <strong>Edge case worth knowing.</strong> ACP's <code>fs/*</code> methods
+  are about the project's working tree, where the editor owns the source of
+  truth. The user's global skill directory at <code>~/.arnes/skills/</code>
+  is the harness's own filesystem &mdash; we read it locally even in ACP
+  mode. Project-local skills under <code>.arnes/skills/</code> in the
+  editor's project are a grey area; for V1, prefer local read with a
+  warning, and revisit once ACP gains <code>fs/list_dir</code>.
+</div>
+
+<h2 id="prompt-section">The prompt section</h2>
+
+<p>
+  Skills surface to the model as an XML block at the end of the system
+  prompt, after <code>&lt;project_context&gt;</code> but before the
+  date/cwd footer:
+</p>
+
+<pre><code>The following skills provide specialized instructions for specific tasks.
+Use the read tool to load a skill's file when the task matches its description.
+When a skill file references a relative path, resolve it against the skill's
+directory and use that absolute path in tool commands.
+
+&lt;available_skills&gt;
+  &lt;skill&gt;
+    &lt;name&gt;postgres-migrations&lt;/name&gt;
+    &lt;description&gt;Write a new database migration...&lt;/description&gt;
+    &lt;location&gt;/home/me/.arnes/skills/postgres-migrations/SKILL.md&lt;/location&gt;
+  &lt;/skill&gt;
+  ...
+&lt;/available_skills&gt;</code></pre>
+
+<p>
+  <code>SystemPromptBuilder::build()</code> gains an optional <code>skills</code>
+  argument. Skills only surface when the <code>read</code> tool is active
+  &mdash; otherwise the signposts point at something the model cannot
+  follow. <code>disable_model_invocation</code>-tagged skills are filtered
+  out of the auto-advertised list and can only be invoked manually.
+</p>
+
+<h2 id="slash-command">/skill slash command (TUI)</h2>
+
+<p>
+  User-driven skill invocation. The TUI parses
+  <code>/skill:&lt;name&gt;</code> as an input prefix; on submit it:
+</p>
+
+<ol class="steps">
+  <li>Looks up the named skill in the catalog.</li>
+  <li>Reads the SKILL.md body via the <code>Host</code>.</li>
+  <li>Injects a synthetic user message before the actual user input: <em>"The following are instructions for the &lt;name&gt; skill the user explicitly invoked. Follow them when carrying out the next request."</em></li>
+  <li>Sends the rest of the user input as the actual prompt.</li>
+</ol>
+
+<p>
+  ACP equivalent for editors that want it: a <code>session/set_mode</code>
+  call where the mode name is <code>skill:&lt;name&gt;</code>. The harness
+  treats the same way &mdash; loads the body, injects the synthetic
+  message at the start of the next turn. This is a no-protocol-change
+  way to surface the feature.
+</p>
+
+<h2 id="frontmatter">Frontmatter parsing</h2>
+
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>name</code></td><td>string</td><td>yes</td><td>clamped to 64 chars</td></tr>
+    <tr><td><code>description</code></td><td>string</td><td>yes</td><td>clamped to 1024 chars; normalized whitespace</td></tr>
+    <tr><td><code>disable-model-invocation</code></td><td>bool</td><td>no</td><td>default false</td></tr>
+    <tr><td><code>license</code>, <code>tags</code>, etc.</td><td>any</td><td>no</td><td>ignored at V1; preserved for future</td></tr>
+  </tbody>
+</table>
+
+<p>
+  Use the <code>serde_yaml</code> crate. Frontmatter delimited by
+  <code>---</code> at start and end; reject files where the first line is
+  not <code>---</code>.
+</p>
+
+<h2 id="tasks">Implementation tasks</h2>
+
+<ol class="steps">
+  <li>Add <code>list_dir</code> to <code>Host</code> trait + both impls. LocalHost: tokio::fs::read_dir. AcpHost: stub (panic) for now and call the global-only host-side helper directly from <code>SkillsCatalog::discover</code>.</li>
+  <li>Create <code>arnes-core::skills</code> with <code>Skill</code>, <code>SkillsCatalog</code>, <code>SkillDiagnostic</code>.</li>
+  <li>Write the frontmatter parser; reject malformed input with friendly error messages.</li>
+  <li>Extend <code>SystemPromptBuilder::build</code> to take a skills argument and emit the <code>&lt;available_skills&gt;</code> block when (a) skills present and (b) <code>read</code> tool active.</li>
+  <li>Wire <code>Session::new</code> to discover skills at session start and store in <code>SkillsCatalog</code> on the session.</li>
+  <li>TUI: parse <code>/skill:&lt;name&gt;</code> prefix; inject synthetic message. Add <code>/skills</code> command to list loaded skills.</li>
+  <li>ACP: map <code>session/set_mode</code> with <code>skill:*</code> names to the same injection path.</li>
+  <li><code>/reload</code> command (M4) now re-runs skills discovery too.</li>
+</ol>
+
+<h2 id="testing">Testing checklist</h2>
+
+<ul>
+  <li><strong>Frontmatter parser:</strong> happy path, missing required field, malformed YAML, body without frontmatter, frontmatter without body.</li>
+  <li><strong>Discovery:</strong> InMemoryEnv populated with several skill dirs (one valid, one missing description, one not a directory); assert the valid ones land in the catalog and the rest become diagnostics.</li>
+  <li><strong>Prompt section:</strong> snapshot test of the <code>&lt;available_skills&gt;</code> block; assert no section emitted when <code>read</code> tool is inactive.</li>
+  <li><strong>Slash command:</strong> scripted LLM that asserts the synthetic message arrives at position 1 in the turn's history.</li>
+  <li><strong>ACP smoke:</strong> set_mode with a skill name; verify same injection happens.</li>
+</ul>
+
+<h2 id="risks">Risks specific to M5</h2>
+
+<ul>
+  <li><strong>Skill discoverability vs prompt bloat.</strong> Twenty 200-character descriptions is ~4000 characters of prompt overhead before any work happens. Cap the catalog size or let users disable skills they don't want. Add a <code>--skill</code> CLI flag to enable a specific subset.</li>
+  <li><strong>ACP gap on directory listing.</strong> The host-side workaround for global skills is fine; for project-local skills, document the limitation and revisit when upstream adds the method.</li>
+  <li><strong>Skill quality drives behaviour.</strong> A vague description means the model never loads the skill. Document this prominently in the user-facing docs (out of scope for the V1 plan but should appear in the documentation workstream).</li>
+</ul>
+
+<div class="endstate">
+  <h4>End state of M5</h4>
+  <p>
+    Drop a <code>SKILL.md</code> in <code>~/.arnes/skills/&lt;name&gt;/</code>;
+    next session it appears in the catalog. Ask a task that matches the
+    description; the model calls <code>read</code> on the skill's location
+    and follows it. Type <code>/skill:&lt;name&gt;</code> in the TUI (or
+    <code>session/set_mode skill:&lt;name&gt;</code> in ACP) to force load.
+    Same behaviour in both frontends; no ACP protocol surface change.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="m4.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">M4: System prompt</span>
+  </a>
+  <a class="next" href="m6.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">M6: Sessions</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

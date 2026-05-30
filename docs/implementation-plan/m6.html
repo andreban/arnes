@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>M6 &mdash; Sessions on disk</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">Milestone 6 &middot; Persistence</span>
+  <h1>Sessions on disk</h1>
+  <p class="lead">
+    JSONL session logs, project-scoped storage, ULID-prefixed filenames,
+    <code>--continue</code> / <code>--resume</code> CLI flags, and ACP
+    <code>session/load</code>. After M6, every minute you spend with the
+    agent is recoverable.
+  </p>
+</div>
+
+<h2 id="why">Why now</h2>
+
+<p>
+  Through M5, every session you start dies when the process exits. M6 is
+  the difference between a demo and a daily-driver tool. The format
+  choice (append-only JSONL) doubles as the recipe for compaction (M7)
+  and branching (deferred) without rewriting storage.
+</p>
+
+<h2 id="new-module">arnes-core::persist</h2>
+
+<pre><code>// arnes-core/src/persist.rs
+
+pub struct SessionWriter {
+    fh: tokio::fs::File,
+    path: PathBuf,
+}
+
+impl SessionWriter {
+    pub async fn open(path: &amp;Path, header: SessionHeader) -&gt; io::Result&lt;Self&gt;;
+    pub async fn append(&amp;mut self, row: SessionRow) -&gt; io::Result&lt;()&gt;;
+    pub async fn close(self) -&gt; io::Result&lt;()&gt;;
+}
+
+pub enum SessionRow {
+    /// First line; written exactly once at open.
+    Header(SessionHeader),
+    /// Any user / assistant / tool_result message.
+    Message {
+        id:        Ulid,
+        parent_id: Option&lt;Ulid&gt;,
+        timestamp: u64,
+        agent_id:  AgentId,       // V1: always Root; post-V1 sub-agents append here too
+        message:   Message,
+    },
+    /// One row per turn carrying that turn's token counts + Option&lt;Cost&gt;.
+    /// agent_id and ModelKey live on the inner Usage struct.
+    Usage(UsageEntry),
+    /// Recorded when compaction (M7) runs.
+    Compaction(CompactionEntry),
+    /// Reserved for post-V1 sub-agent lifecycle. V1 never writes these;
+    /// the reader recognises them and treats them as no-ops.
+    SubAgentStart { id: Ulid, parent_agent_id: AgentId, spec: SubAgentSpec },
+    SubAgentEnd   { id: Ulid, agent_id: AgentId, /* result summary */ },
+}
+
+pub struct UsageEntry {
+    pub id:        Ulid,
+    pub timestamp: u64,
+    pub usage:     Usage,         // from arnes-core::usage; carries agent_id + ModelKey
+}</code></pre>
+
+<p>
+  Two reader rules pinned to this format:
+</p>
+
+<ul>
+  <li><strong>Unknown variant tags are not fatal.</strong> The reader matches
+      on the variant tag; tags it doesn't recognise (a row from a newer
+      arnes writing a variant V1 doesn't know yet) are logged and skipped.
+      Forward compatibility on the wire so files written by a future arnes
+      remain loadable.</li>
+  <li><strong>Sub-agent rows are accepted but no-op at V1.</strong>
+      <code>SubAgentStart</code> / <code>SubAgentEnd</code> rows could only
+      appear in a file written by a post-V1 version; if seen, the V1
+      reader records the fact in diagnostics and continues.</li>
+</ul>
+
+<pre><code>
+
+pub struct SessionHeader {
+    pub version: u32,                  // bump on format-breaking changes
+    pub session_id: Ulid,
+    pub created_at: u64,
+    pub cwd: PathBuf,
+    pub model: String,
+    pub tools_enabled: Vec&lt;String&gt;,
+    pub frontend: String,              // "tui", "acp", "http"
+    pub title: Option&lt;String&gt;,         // derived from first user prompt
+}
+
+pub async fn load_session(path: &amp;Path) -&gt; io::Result&lt;LoadedSession&gt;;
+pub struct LoadedSession {
+    pub header:        SessionHeader,
+    pub messages:      Vec&lt;Message&gt;,
+    pub usage:         CumulativeUsage,        // reconstructed from Usage rows
+    pub compactions:   Vec&lt;CompactionEntry&gt;,
+}</code></pre>
+
+<h2 id="layout">On-disk layout</h2>
+
+<pre><code>~/.arnes/sessions/
+└── {project-hash}/                    # 8-char hash of cwd, no creation overhead
+    ├── 01HX0K9T-summarize-the-readme.jsonl
+    ├── 01HX0M2N-refactor-auth-middleware.jsonl
+    └── ...</code></pre>
+
+<ul>
+  <li>
+    <strong>Project hash:</strong> first 8 chars of a stable hash
+    (xxh3) of <code>cwd.canonicalize()</code>. No on-disk index of which
+    project maps to which hash; the directory <em>is</em> the index, and
+    you find a project's sessions by re-computing the hash from its cwd.
+  </li>
+  <li>
+    <strong>Filename:</strong> <code>{ulid}-{slug}.jsonl</code>. The ULID
+    is sortable (so <code>ls -t</code> orders by creation); the slug is a
+    kebab-cased fragment of the first user message, max 60 chars.
+  </li>
+  <li>
+    <strong>Format:</strong> one JSON object per line. UTF-8. Final line
+    not guaranteed newline-terminated &mdash; readers tolerate.
+  </li>
+</ul>
+
+<h2 id="writer">The writer</h2>
+
+<p>
+  Open once at session start with the header; append a row per
+  <code>SessionEvent::TurnEnd</code> (the entire turn worth of messages
+  flushed atomically when the turn completes &mdash; we do not write
+  partial assistant messages). Append a <code>Header</code> row only on
+  initial open; resumed sessions reopen in append mode without rewriting
+  the header.
+</p>
+
+<pre><code>impl Session&lt;F, E&gt; {
+    pub async fn prompt(&amp;mut self, input: String) -&gt; Result&lt;()&gt; {
+        // ... existing logic ...
+        // On TurnEnd:
+        for msg in turn_messages {
+            if let Some(w) = self.writer.as_mut() {
+                w.append(SessionRow::Message {
+                    id: Ulid::new(),
+                    parent_id: self.last_message_id,
+                    timestamp: now_unix(),
+                    message: msg,
+                }).await?;
+            }
+        }
+    }
+}</code></pre>
+
+<h2 id="reader">The reader</h2>
+
+<pre><code>pub async fn load_session(path: &amp;Path) -&gt; io::Result&lt;LoadedSession&gt; {
+    let text = tokio::fs::read_to_string(path).await?;
+    let mut header = None;
+    let mut messages = Vec::new();
+    let mut compactions = Vec::new();
+    for (line_no, line) in text.lines().enumerate() {
+        if line.is_empty() { continue; }
+        match serde_json::from_str::&lt;SessionRow&gt;(line) {
+            Ok(SessionRow::Header(h)) if line_no == 0 =&gt; header = Some(h),
+            Ok(SessionRow::Header(_)) =&gt; { /* anomalous; log + skip */ }
+            Ok(SessionRow::Message { message, .. }) =&gt; messages.push(message),
+            Ok(SessionRow::Compaction(c)) =&gt; {
+                // M7 affects how we reconstruct in-memory state.
+                compactions.push(c);
+            }
+            Err(e) if line_no == text.lines().count() - 1 =&gt; {
+                // Torn final line from a crash mid-write: tolerate, log.
+            }
+            Err(e) =&gt; return Err(io::Error::other(format!("bad row at line {line_no}: {e}"))),
+        }
+    }
+    Ok(LoadedSession {
+        header: header.ok_or_else(|| io::Error::other("missing header row"))?,
+        messages, compactions,
+    })
+}</code></pre>
+
+<h2 id="cli">CLI flags</h2>
+
+<table>
+  <thead><tr><th>Flag</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>arnes</code> / <code>arnes-acp</code> (no resume flag)</td>
+      <td>Fresh session. Mint a ULID, derive the project hash from cwd, open a new file.</td>
+    </tr>
+    <tr>
+      <td><code>--continue</code> / <code>-c</code></td>
+      <td>Resume the most-recent session for the current project. <code>ls</code> the project's directory, sort by filename (ULID is sortable), pick the newest.</td>
+    </tr>
+    <tr>
+      <td><code>--resume &lt;id-or-prefix&gt;</code></td>
+      <td>Resume by ULID prefix. Error if ambiguous.</td>
+    </tr>
+    <tr>
+      <td><code>--resume</code> (no value)</td>
+      <td>TUI: open an interactive picker (uses a ratatui table component). ACP: error &mdash; the editor should call <code>session/load</code> explicitly.</td>
+    </tr>
+    <tr>
+      <td><code>--no-persist</code></td>
+      <td>Skip writer creation entirely. Useful for one-shot CI runs.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="acp-load">ACP: session/load</h2>
+
+<p>
+  Until now we have responded to <code>session/load</code> with
+  <em>method not found</em>. M6 implements it: take the session id,
+  resolve to a file path, load, return the full content blocks so the
+  client can rehydrate its view of the transcript.
+</p>
+
+<pre><code>async fn handle_session_load(&amp;self, params: SessionLoadParams) -&gt; Result&lt;SessionLoadResponse&gt; {
+    let path = self.resolve_session_path(params.session_id)?;
+    let loaded = persist::load_session(&amp;path).await?;
+    let session = Session::resume(loaded, /* frontend, host, runner */).await?;
+    self.sessions.insert(params.session_id, session);
+    Ok(SessionLoadResponse {
+        messages: loaded.messages.into_iter().map(to_acp_content).collect(),
+        // ... mode, model, etc. ...
+    })
+}</code></pre>
+
+<p>
+  Also advertise the <code>loadSession</code> capability in
+  <code>initialize</code>'s response now &mdash; previously omitted as
+  unsupported.
+</p>
+
+<h2 id="tui-picker">TUI resume picker</h2>
+
+<div class="figure">
+<svg viewBox="0 0 760 260" role="img" aria-label="TUI resume picker">
+  <g font-family="ui-monospace, monospace" font-size="10">
+    <rect x="40" y="20" width="680" height="220" rx="10" fill="#0f1217" stroke="#38bdf8" stroke-opacity="0.5"/>
+
+    <text x="55" y="44" fill="#fbbf24" font-weight="700">Resume which session?</text>
+    <text x="55" y="60" fill="#9aa3b3">arnes/   8 sessions for this project</text>
+
+    <line x1="40" y1="74" x2="720" y2="74" stroke="#232936"/>
+
+    <rect x="50" y="80" width="660" height="20" fill="#1a1f2a" stroke="#a78bfa"/>
+    <text x="60" y="94" fill="#e4e8ef">&gt; 01HX0M2N  refactor auth middleware             2026-05-30 14:12  47 msgs</text>
+    <text x="60" y="114" fill="#9aa3b3">  01HX0K9T  summarize the README                 2026-05-29 09:33  12 msgs</text>
+    <text x="60" y="134" fill="#9aa3b3">  01HX0HRC  fix the failing migration tests       2026-05-28 17:48  86 msgs</text>
+    <text x="60" y="154" fill="#9aa3b3">  01HX08XB  draft release notes for 0.3          2026-05-27 11:02  23 msgs</text>
+    <text x="60" y="174" fill="#9aa3b3">  ...</text>
+
+    <line x1="40" y1="210" x2="720" y2="210" stroke="#232936"/>
+    <text x="55" y="226" fill="#6b7384">  ENTER resume    j/k navigate    q quit    / filter</text>
+  </g>
+</svg>
+<div class="figure-caption">A ratatui table; rows are sessions sorted newest first; arrow keys navigate, Enter resumes.</div>
+</div>
+
+<h2 id="tasks">Implementation tasks</h2>
+
+<ol class="steps">
+  <li>Create <code>arnes-core::persist</code> with <code>SessionWriter</code>, <code>load_session</code>, <code>SessionRow</code>, <code>SessionHeader</code>.</li>
+  <li>Add <code>ulid</code> and <code>xxhash-rust</code> as deps.</li>
+  <li>Extend <code>Session</code> to take an optional <code>SessionWriter</code>; append on each <code>TurnEnd</code>.</li>
+  <li>Add <code>Session::resume(loaded, ...)</code> constructor that rebuilds in-memory state from a <code>LoadedSession</code>.</li>
+  <li>CLI: parse the new flags; implement project-hash + filename derivation; implement the most-recent and prefix-resolution helpers.</li>
+  <li>TUI: implement the picker component (ratatui table); wire <code>--resume</code> (no arg) to launch it before the main session.</li>
+  <li>ACP: implement <code>handle_session_load</code>; advertise <code>loadSession</code> capability in <code>initialize</code>.</li>
+  <li>Title derivation helper: take first user message, kebab-case the first ~60 chars; sanitize for filename safety.</li>
+</ol>
+
+<h2 id="testing">Testing checklist</h2>
+
+<ul>
+  <li><strong>Round-trip:</strong> write a session, close, load, assert messages match exactly.</li>
+  <li><strong>Torn last line:</strong> append a half-written row; assert load returns the prior good state without erroring.</li>
+  <li><strong>Header anomalies:</strong> missing header row; duplicate header row mid-file; assert sensible error or recovery.</li>
+  <li><strong>Project hash stability:</strong> same cwd from two starts produces the same directory.</li>
+  <li><strong>Resume prefix collision:</strong> two sessions sharing a 3-char prefix; <code>--resume</code> with that prefix errors with a useful message listing matches.</li>
+  <li><strong>ACP load:</strong> golden transcript covering <code>initialize</code>, <code>session/load</code>, follow-up <code>session/prompt</code>; assert the loaded messages are returned and the prompt extends history correctly.</li>
+</ul>
+
+<h2 id="risks">Risks specific to M6</h2>
+
+<ul>
+  <li><strong>Concurrent writes.</strong> One session per file; we never share. <code>SessionRegistry</code> in M8 will enforce this in-process. For now, two <code>arnes</code> instances pointed at the same file is undefined and unsupported &mdash; document it.</li>
+  <li><strong>fsync cost.</strong> Default to OS buffering plus close-on-exit. Add an opt-in <code>--fsync</code> flag for users who want maximum durability at the cost of throughput.</li>
+  <li><strong>Cross-platform paths.</strong> Project-hash must canonicalize paths so symlinks resolve consistently; <code>dunce::canonicalize</code> on Windows.</li>
+  <li><strong>Format drift.</strong> The <code>version</code> field on the header lets us evolve. Bump on any breaking change; readers refuse versions higher than they understand.</li>
+</ul>
+
+<div class="endstate">
+  <h4>End state of M6</h4>
+  <p>
+    Quit a session mid-task in either frontend. Restart. <code>arnes -c</code>
+    (or <code>session/load</code> from your editor) picks up exactly where
+    you were &mdash; same messages, same model, same skills, same JSONL
+    log. The file on disk is plain text; you can <code>cat</code> it and
+    read what happened.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="m5.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">M5: Skills</span>
+  </a>
+  <a class="next" href="m7.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">M7: Compaction</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

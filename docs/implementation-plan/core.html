@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>arnes-core &mdash; module spec</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">Architecture</span>
+  <h1>arnes-core</h1>
+  <p class="lead">
+    The crate that everything else depends on. Holds the agent loop wrapper,
+    the tool registry, the system prompt builder, the persistence layer, the
+    extension host, the compactor, and the trait definitions. Knows nothing
+    about UIs, transports, or specific operating systems.
+  </p>
+</div>
+
+<h2 id="modules">Modules at a glance</h2>
+
+<table>
+  <thead><tr><th>Module</th><th>Responsibility</th><th>Book chapter</th></tr></thead>
+  <tbody>
+    <tr><td><code>frontend</code></td><td>The <code>Frontend</code> trait + supporting types (events, permission requests, capabilities).</td><td>&mdash;</td></tr>
+    <tr><td><code>host</code></td><td>The <code>Host</code> trait + types (paths, terminal specs/handles, errors) + the <code>LocalHost</code> default impl.</td><td>&mdash;</td></tr>
+    <tr><td><code>session</code></td><td>The <code>Session</code> struct: glue between agent-rig, Frontend, and Host.</td><td>3, 6</td></tr>
+    <tr><td><code>tools</code></td><td><code>Tool</code> trait, <code>ToolRegistry</code>, and the built-in coding tools (<code>read</code>, <code>write</code>, <code>edit</code>, <code>bash</code>) plus a <code>register_defaults()</code> helper.</td><td>2, 4</td></tr>
+    <tr><td><code>prompt</code></td><td><code>SystemPromptBuilder</code> &mdash; assembles the prompt from slots.</td><td>5</td></tr>
+    <tr><td><code>persist</code></td><td><code>SessionWriter</code> + reader for JSONL session logs.</td><td>6</td></tr>
+    <tr><td><code>compact</code></td><td>Token estimation, threshold trigger, summary prompt, history rewrite.</td><td>10</td></tr>
+    <tr><td><code>usage</code></td><td><code>Usage</code>, <code>Cost</code>, <code>CumulativeUsage</code>, the <code>ModelCostInfo</code> pricing registry, and the <code>Micros</code> integer-money helper.</td><td>&mdash;</td></tr>
+    <tr><td><code>extensions</code></td><td><code>ExtensionHost</code>, lifecycle events, host API surface. <em>Deferred</em> &mdash; design preserved, build is post-V1.</td><td>8</td></tr>
+    <tr><td><code>skills</code></td><td>SKILL.md discovery + frontmatter parse + prompt-section emitter.</td><td>9</td></tr>
+  </tbody>
+</table>
+
+<h2 id="session-module">session &mdash; the orchestrator</h2>
+
+<p>
+  <code>Session</code> wraps <code>agent_rig::AgentRunner</code> with the
+  pieces agent-rig deliberately leaves out: persistence, system prompt
+  assembly, extension hooks, compaction triggers. <code>prompt()</code> is
+  the single hot path.
+</p>
+
+<p>
+  Each <code>Session</code> carries an <code>AgentId</code> and an optional
+  <code>parent</code> reference. V1 only ever creates root sessions
+  (<code>parent</code> is <code>None</code>, <code>agent_id</code> is
+  <code>AgentId::Root</code>) &mdash; but the fields exist so a future
+  sub-agent built on top of the trait surface doesn't need a breaking
+  change.
+</p>
+
+<pre><code>pub enum AgentId {
+    Root,
+    SubAgent(Ulid),
+}
+
+pub struct Session&lt;F: Frontend, H: Host&gt; {
+    pub agent_id: AgentId,
+    parent:       Option&lt;Weak&lt;Session&lt;F, H&gt;&gt;&gt;,   // V1: always None
+    // ... existing fields ...
+}
+
+impl&lt;F, H&gt; Session&lt;F, H&gt; {
+    pub fn agent_id(&amp;self) -&gt; &amp;AgentId { &amp;self.agent_id }
+    pub fn parent_id(&amp;self) -&gt; Option&lt;AgentId&gt; { /* V1: always None */ }
+
+    /// Spawn a sub-agent that shares this session's Frontend and Host.
+    /// V1: returns unimplemented!() &mdash; the signature is reserved so the
+    /// trait surface stays stable when sub-agents land post-V1.
+    pub async fn spawn_subagent(&amp;self, spec: SubAgentSpec) -&gt; Result&lt;SubAgentHandle&gt; {
+        unimplemented!("sub-agent spawning lands post-V1")
+    }
+}</code></pre>
+
+<pre><code>impl&lt;F: Frontend, E: Host&gt; Session&lt;F, E&gt; {
+    pub async fn prompt(&amp;mut self, input: UserInput) -&gt; Result&lt;()&gt; {
+        // 1. compact if we are nearing context limit
+        if self.compactor.should_compact(&amp;self.history) {
+            self.compact().await?;
+        }
+
+        // 2. rebuild system prompt if any input changed (tools, skills, ...)
+        let system = self.prompt_builder.build(&amp;self.cwd);
+
+        // 3. append user message + persist
+        let msg = Message::user(input.into_blocks());
+        self.history.push(msg.clone());
+        self.writer.as_mut().map(|w| w.append(&amp;msg));
+
+        // 4. extension hook: before_agent_start (can mutate prompt/history)
+        self.extensions.fire_before_agent_start(&amp;mut system, &amp;mut self.history).await;
+
+        // 5. run agent-rig loop; pump events into the frontend
+        let mut stream = self.runner.run_with_system(&amp;system, &amp;self.history, &amp;self.tools);
+        while let Some(ev) = stream.next().await {
+            let session_event = self.translate(ev);
+            self.frontend.on_event(session_event).await;
+            self.apply_to_history(&amp;ev);
+            if let Some(msg) = self.completed_message(&amp;ev) {
+                self.writer.as_mut().map(|w| w.append(&amp;msg));
+            }
+        }
+        Ok(())
+    }
+}</code></pre>
+
+<p>
+  The whole orchestration fits in one method because every concern it
+  touches is already abstracted. Tools are <code>&amp;dyn Tool</code> from
+  <code>ToolRegistry</code>. Permission gating lives in agent-rig's
+  <code>AuthManager</code>, which we wire to call
+  <code>frontend.request_permission(...)</code>. The writer is optional
+  (some adapters may not want persistence).
+</p>
+
+<h2 id="tools-module">tools &mdash; the registry</h2>
+
+<p>
+  agent-rig's <code>Tool</code> trait is concrete enough to use directly. We
+  extend it with the things the book's harness needs but agent-rig doesn't
+  prescribe:
+</p>
+
+<pre><code>pub trait Tool: Send + Sync {
+    fn name(&amp;self) -&gt; &amp;str;
+    fn description(&amp;self) -&gt; &amp;str;
+    fn parameters(&amp;self) -&gt; &amp;JsonSchema;
+
+    /// Per-tool guideline bullets injected into the system prompt
+    /// (Chapter 5). Empty by default.
+    fn prompt_guidelines(&amp;self) -&gt; &amp;[String] { &amp;[] }
+
+    /// Short one-liner for the "Available tools" section. Defaults to
+    /// the first line of description().
+    fn prompt_snippet(&amp;self) -&gt; &amp;str { /* first_line(self.description()) */ }
+
+    /// Sensitive tools (bash, write, edit) request permission before running.
+    /// Default false (read, ls, grep). When true, the session calls
+    /// build_permission_request() and matches_scope() &mdash; see
+    /// <a href="m3.html#permission">M3 &sect; Permission model</a>.
+    fn permission_required(&amp;self) -&gt; bool { false }
+    fn build_permission_request(&amp;self, input: &amp;Value) -&gt; PermissionRequest { unreachable!() }
+    fn matches_scope(&amp;self, scope: &amp;Scope, input: &amp;Value) -&gt; bool { false }
+
+    async fn execute(&amp;self, input: serde_json::Value, cx: &amp;ToolContext) -&gt; ToolResult;
+}
+
+/// Everything a tool body needs from the harness, bundled to keep the
+/// trait signature stable across future additions.
+pub struct ToolContext {
+    pub host:          Arc&lt;dyn Host&gt;,
+    pub progress:      ProgressSink,
+    pub cancellation:  CancellationToken,
+    pub agent_id:      AgentId,           // which agent invoked this tool
+    /// Spawn a sub-agent. V1 returns `unimplemented!()` from the body;
+    /// the signature is in place so sub-agent-aware tools compile against
+    /// the M1 trait. See "Future-compatibility: sub-agents" below.
+    pub spawn_subagent: Arc&lt;dyn SubAgentSpawner&gt;,
+}
+
+pub enum ProgressUpdate {
+    /// Plain text update (V1 default).
+    Text(String),
+    /// Structured payload &mdash; tool-defined. Reserved for sub-agent tools
+    /// emitting nested SessionEvents.
+    Structured(serde_json::Value),
+}
+
+pub trait ProgressSink: Send + Sync {
+    fn send(&amp;self, update: ProgressUpdate);
+}</code></pre>
+
+<p>
+  Four details worth pinning down:
+</p>
+
+<ul>
+  <li><strong>Tools never touch the OS directly.</strong> They receive
+      <code>cx.host</code> and route every filesystem or process call through it.</li>
+  <li><strong>Tools never speak to the frontend directly</strong>; they emit
+      progress through <code>cx.progress</code>, which the <code>Session</code>
+      turns into <code>EventKind::ToolCallUpdate</code>.</li>
+  <li><strong>Tools never return <code>Result</code>.</strong> They return
+      <code>ToolResult</code> which has an <code>is_error</code> flag.
+      Errors are reported back to the model as data, never as panics
+      (Chapter 2).</li>
+  <li><strong>The context is the extensible seam.</strong>
+      <code>ToolContext</code> bundles every harness-provided capability so
+      adding a future capability (timing budget, log tap, etc.) doesn't
+      change the trait signature.</li>
+</ul>
+
+<h2 id="prompt-module">prompt &mdash; the builder</h2>
+
+<p>
+  Direct translation of the Chapter 5 builder. Slot-based, deduplicated, cwd
+  and date go last so the long stable prefix stays cacheable.
+</p>
+
+<pre><code>pub struct SystemPromptBuilder {
+    base: Cow&lt;'static, str&gt;,           // hard-coded identity
+    tools: Vec&lt;Arc&lt;dyn Tool&gt;&gt;,         // active tools
+    user_guidelines: Vec&lt;String&gt;,       // configured by user/extension
+    user_append: Option&lt;String&gt;,        // free-form append
+    skills: Vec&lt;Skill&gt;,                 // from SkillsCatalog
+    context_files: Vec&lt;ContextFile&gt;,    // AGENTS.md tree walk
+}
+
+impl SystemPromptBuilder {
+    pub fn build(&amp;self, cwd: &amp;Path) -&gt; String { /* ... */ }
+}</code></pre>
+
+<p>
+  Cached on the <code>Session</code>; rebuilt only when one of its inputs
+  changes (extension loads a tool, user toggles thinking budget, skills
+  catalog refreshes, etc.). The cache key is structural: hash the inputs and
+  reuse if unchanged.
+</p>
+
+<h2 id="persist-module">persist &mdash; JSONL writer + reader</h2>
+
+<p>
+  Append-only, one row per message, header row carries metadata. Same shape
+  as Chapter 6 of the book.
+</p>
+
+<pre><code>pub struct SessionWriter { fh: tokio::fs::File }
+
+impl SessionWriter {
+    pub async fn open(path: &amp;Path, header: SessionHeader) -&gt; io::Result&lt;Self&gt;;
+    pub async fn append(&amp;mut self, row: SessionRow) -&gt; io::Result&lt;()&gt;;
+    pub async fn close(self) -&gt; io::Result&lt;()&gt;;
+}
+
+pub enum SessionRow {
+    Header(SessionHeader),       // first line: model, tools, cwd, version
+    Message(Message),            // role + content blocks
+    Compaction(CompactionEntry), // recorded when compact() runs
+}
+
+pub async fn load_session(path: &amp;Path) -&gt; io::Result&lt;LoadedSession&gt;;</code></pre>
+
+<p>
+  Each row carries an <code>id</code> (ULID) and an optional <code>parent_id</code>.
+  We don't expose branching in V1, but we plumb the fields so it can land
+  later without a format break.
+</p>
+
+<h2 id="compact-module">compact &mdash; the summarizer</h2>
+
+<p>
+  Token estimation by the 4-chars-per-token heuristic (cheap, ~20% slack);
+  trigger at 75% of the model's window; replace history with a
+  <code>SUMMARY</code> user-role message plus the last K turns.
+</p>
+
+<pre><code>pub struct Compactor {
+    pub trigger_ratio: f32,   // default 0.75
+    pub keep_recent: usize,   // default 6
+    pub prompt: Cow&lt;'static, str&gt;,
+}
+
+impl Compactor {
+    pub fn should_compact(&amp;self, hist: &amp;[Message]) -&gt; bool;
+    pub async fn run(
+        &amp;self,
+        hist: &amp;[Message],
+        runner: &amp;AgentRunner,
+    ) -&gt; Result&lt;Vec&lt;Message&gt;&gt;;
+}</code></pre>
+
+<p>
+  Important constraint: only runs <em>between turns</em>. Compacting in the
+  middle of a tool-call/tool-result pair breaks the protocol. The
+  <code>Session::prompt</code> path calls <code>should_compact</code> only
+  at the top of the loop.
+</p>
+
+<h2 id="usage-module">usage &mdash; tokens and costs</h2>
+
+<p>
+  Every turn produces a <code>Usage</code> snapshot from the provider.
+  The session aggregates them into a <code>CumulativeUsage</code> the
+  frontends display. Three states matter: <em>priced</em> (we know the
+  cost), <em>free</em> (explicitly free, e.g. local models), and
+  <em>unknown</em> (no pricing data). They are kept distinct end-to-end;
+  unknown is never silently coerced to zero.
+</p>
+
+<pre><code>// arnes-core/src/usage.rs
+
+/// Identifies which model a turn ran against. The natural cost-accounting
+/// unit: pricing is keyed by this pair, and the UI reports usage broken
+/// down by it.
+#[derive(Clone, Eq, PartialEq, Hash)]
+pub struct ModelKey {
+    pub provider: String,    // "gemini", "ollama", ...
+    pub model_id: String,    // "gemini-2.5-pro", "llama3.2", ...
+}
+
+pub struct Usage {
+    pub agent_id:           AgentId,    // who produced this turn (see frontend.rs)
+    pub model:              ModelKey,   // which model billed for it
+    pub input_tokens:       u64,
+    pub output_tokens:      u64,
+    pub cache_read_tokens:  u64,
+    pub cache_write_tokens: u64,
+    pub thinking_tokens:    u64,
+    /// None: pricing not available for this model.
+    pub cost: Option&lt;Cost&gt;,
+}
+
+pub struct Cost {
+    pub input:       Micros,
+    pub output:      Micros,
+    pub cache_read:  Micros,
+    pub cache_write: Micros,
+    pub thinking:    Micros,
+    pub total:       Micros,
+}
+
+/// Integer micros = millionths of a dollar. Six decimal places, no float drift.
+pub struct Micros(pub i64);
+
+pub enum ModelCostInfo {
+    Priced(ModelPricing),   // bundled or user-supplied
+    Free,                   // explicitly free (local Ollama, self-hosted)
+    Unknown,                // default for unrecognized models
+}
+
+pub struct ModelPricing {
+    pub input_per_mtok:        Micros,
+    pub output_per_mtok:       Micros,
+    pub cache_read_per_mtok:   Option&lt;Micros&gt;,
+    pub cache_write_per_mtok:  Option&lt;Micros&gt;,
+    pub thinking_per_mtok:     Option&lt;Micros&gt;,
+}
+
+/// One row of aggregated usage for a single (agent, model) bucket.
+pub struct ModelUsage {
+    pub model:                   ModelKey,
+    pub input_tokens:            u64,
+    pub output_tokens:           u64,
+    pub cache_read_tokens:       u64,
+    pub cache_write_tokens:      u64,
+    pub thinking_tokens:         u64,
+    pub turns:                   u32,
+    /// Sum of priced turns for this (agent, model) bucket.
+    pub known_cost:              Cost,
+    pub turns_with_unknown_cost: u32,
+}
+
+pub struct CumulativeUsage {
+    /// Single source of truth: indexed by (agent, model). A sub-agent that
+    /// switched models mid-session has two entries. V1 only ever populates
+    /// AgentId::root().
+    by_agent_and_model: HashMap&lt;(AgentId, ModelKey), ModelUsage&gt;,
+    pub turns_total: u32,
+}
+
+impl CumulativeUsage {
+    pub fn record(&amp;mut self, u: Usage);
+
+    /// Flatten across agents: total per ModelKey.
+    pub fn by_model(&amp;self) -&gt; HashMap&lt;&amp;ModelKey, ModelUsage&gt;;
+
+    /// Flatten across models: total per AgentId.
+    pub fn by_agent(&amp;self) -&gt; HashMap&lt;&amp;AgentId, ModelUsage&gt;;
+
+    /// Sum of all priced turns across all (agent, model) buckets.
+    pub fn total_known_cost(&amp;self) -&gt; Cost;
+
+    /// Count of all turns whose pricing was Unknown.
+    pub fn total_turns_with_unknown_cost(&amp;self) -&gt; u32;
+}</code></pre>
+
+<h3 id="pricing-registry">Pricing registry</h3>
+
+<p>
+  Bundled TOML asset at <code>arnes-core/data/pricing.toml</code>, merged
+  with user overrides at <code>~/.arnes/pricing.toml</code>. Patterns
+  let providers register whole families at once.
+</p>
+
+<pre><code># arnes-core/data/pricing.toml  (bundled; user overrides win)
+
+[[model]]
+provider             = "gemini"
+id                   = "gemini-2.5-flash"
+input_per_mtok       = 0.075
+output_per_mtok      = 0.30
+cache_read_per_mtok  = 0.01875
+
+[[model]]
+provider = "ollama"
+pattern  = "*"           # all ollama models
+cost     = "free"
+
+# Anything not listed defaults to Unknown.</code></pre>
+
+<p>
+  A small <code>fn load_pricing() -&gt; PricingRegistry</code> happens once
+  at session start; <code>registry.lookup(provider, model_id)</code>
+  returns the <code>ModelCostInfo</code>. The session uses that plus
+  per-turn <code>Usage</code> token counts to compute the turn's
+  <code>cost</code> field.
+</p>
+
+<h3 id="usage-events">Where usage flows</h3>
+
+<p>
+  Every <code>EventKind::TurnEnd</code> carries the turn's <code>Usage</code>,
+  which itself carries <code>agent_id</code> and <code>model</code>.
+  <code>Session</code> maintains <code>cumulative_usage()</code> as a
+  running total accessible to frontends at any time. Persistence (M6)
+  writes a <code>Usage</code> row per turn into the JSONL alongside
+  messages; resume reconstructs the cumulative including the per-agent and
+  per-model breakdowns.
+</p>
+
+<h2 id="future-compat">Future-compatibility: sub-agents</h2>
+
+<div class="note">
+  <strong>Design rule.</strong> arnes V1 only ever runs a single (root)
+  agent per session. But the design respects sub-agents as a first-class
+  concept &mdash; agent-rig already supports them, and adding them post-V1
+  must be additive, not a breaking change. The implementation is deferred
+  (see the <a href="roadmap.html">roadmap</a>); the design is not.
+</div>
+
+<p>The V1 commitments that keep this true:</p>
+
+<table>
+  <thead><tr><th>Surface</th><th>What V1 does</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>AgentId</code></td>
+      <td>Real type from M1. V1 only ever constructs <code>AgentId::Root</code>; <code>SubAgent(Ulid)</code> exists in the enum but is never minted.</td>
+    </tr>
+    <tr>
+      <td><code>SessionEvent</code></td>
+      <td>Restructured as <code>{ agent_id, depth, kind: EventKind }</code> from M1. New <code>EventKind</code> variants (e.g. <code>SubAgentStart</code>, <code>SubAgentEnd</code>) get added by sweeping match sites in the same PR &mdash; all consumers are in-tree.</td>
+    </tr>
+    <tr>
+      <td><code>Tool::execute</code></td>
+      <td>Takes a single <code>ToolContext</code> parameter (bundling host, progress, cancellation, agent_id, and a <code>spawn_subagent</code> stub) so the trait stays stable across future capability additions.</td>
+    </tr>
+    <tr>
+      <td><code>ProgressSink</code></td>
+      <td>Carries typed <code>ProgressUpdate</code> (text or structured), not just <code>&amp;str</code>. A sub-agent tool can later emit a <code>Structured</code> payload that the session translates into nested events.</td>
+    </tr>
+    <tr>
+      <td><code>Usage</code> + <code>CumulativeUsage</code></td>
+      <td>Every <code>Usage</code> carries <code>agent_id</code> and <code>ModelKey</code>. <code>CumulativeUsage</code> indexes by (agent, model) so cost is reported per backend+model, with per-agent attribution available via <code>by_agent()</code>.</td>
+    </tr>
+    <tr>
+      <td><code>PermissionAllowlist</code></td>
+      <td>Entries are <code>AllowEntry { tool_name, scope, principal }</code> structs, not bare tuples (see <a href="m3.html#permission">M3 &sect; Permission model</a>). V1 only ever creates <code>Principal::Any</code> entries; the field is there.</td>
+    </tr>
+    <tr>
+      <td>JSONL <code>SessionRow</code></td>
+      <td><code>Message</code> and <code>Usage</code> rows carry <code>agent_id</code>. Reader tolerates unknown variant tags (log + skip rather than fail) so a newer arnes writing rows V1 doesn't recognise can still be loaded.</td>
+    </tr>
+    <tr>
+      <td>ACP</td>
+      <td>Outbound <code>session/update</code> notifications include <code>agent_id</code> in <code>_meta</code> from M1. Editors that ignore <code>_meta</code> see flat output; ones that read it can render attribution later.</td>
+    </tr>
+    <tr>
+      <td>HTTP/WS</td>
+      <td>WS frames carry <code>agent_id</code> in every event/usage payload.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  None of this enables sub-agents at V1. All of it means the post-V1
+  implementation is "fill in the <code>unimplemented!()</code> stubs and
+  start emitting non-root events" &mdash; not "redesign the protocol surface."
+</p>
+
+<h2 id="extensions-module">extensions &mdash; the host</h2>
+
+<div class="warn">
+  <strong>Deferred for V1.</strong> The architecture accommodates extensions
+  &mdash; the host API below is the V1 design &mdash; but we are not
+  building this module in the current roadmap. See
+  <a href="roadmap.html#deferred">Deferred</a> for the rationale. The
+  design is preserved here so that when we return to it, we start from a
+  considered position.
+</div>
+
+<p>
+  Lifecycle and host API; the choice of <em>how</em> extensions are
+  delivered (cdylib, sub-process, embedded scripting) is deferred to a
+  sub-plan. The host API is fixed first:
+</p>
+
+<pre><code>pub struct ExtensionHost {
+    extensions: Vec&lt;LoadedExtension&gt;,
+}
+
+pub trait Extension: Send + Sync {
+    fn register(&amp;mut self, host: &amp;mut ExtensionContext);
+}
+
+pub struct ExtensionContext&lt;'a&gt; {
+    pub fn add_tool(&amp;mut self, tool: Arc&lt;dyn Tool&gt;);
+    pub fn add_command(&amp;mut self, name: &amp;str, handler: CommandHandler);
+    pub fn append_system_prompt(&amp;mut self, text: String);
+    pub fn contribute_skill(&amp;mut self, path: PathBuf);
+    pub fn on_event(&amp;mut self, listener: EventListener);
+    pub fn disposable(&amp;mut self, fn_: DisposeFn);
+    pub fn cwd(&amp;self) -&gt; &amp;Path;
+}</code></pre>
+
+<p>
+  Mirrors the Chapter 8 host API directly. Each <code>register()</code> gets
+  a fresh context whose contributions can be cleanly torn down at shutdown.
+</p>
+
+<h2 id="skills-module">skills &mdash; the catalog</h2>
+
+<pre><code>pub struct SkillsCatalog {
+    pub skills: Vec&lt;Skill&gt;,
+}
+
+pub struct Skill {
+    pub name: String,
+    pub description: String,
+    pub file_path: PathBuf,
+    pub disable_model_invocation: bool,
+}
+
+impl SkillsCatalog {
+    pub async fn discover(roots: &amp;[PathBuf]) -&gt; (Self, Vec&lt;Diagnostic&gt;);
+    pub fn format_for_prompt(&amp;self) -&gt; String;  // the &lt;available_skills&gt; XML block
+}</code></pre>
+
+<p>
+  Discovery scans <code>~/.arnes/skills/</code>, <code>.arnes/skills/</code>,
+  and any directories contributed by extensions. Each
+  <code>SKILL.md</code> is parsed for YAML frontmatter; the body is left on
+  disk (Chapter 9 &mdash; that is the whole point of skills).
+</p>
+
+<h2 id="agent-rig-fit">Where agent-rig fits, and what it does not provide</h2>
+
+<div class="compare">
+<div>
+<h5>agent-rig handles</h5>
+<ul>
+  <li>The streaming agent loop (<code>AgentRunner</code>)</li>
+  <li>Provider connections (Gemini, Ollama)</li>
+  <li>Concurrent tool execution + result ordering</li>
+  <li>Auth hook for tool calls (<code>AuthManager</code>)</li>
+  <li>Structured output (JSON Schema constraint)</li>
+  <li>Agent composition (sub-agents as tools)</li>
+</ul>
+</div>
+<div>
+<h5>arnes-core adds</h5>
+<ul>
+  <li>System prompt assembly from slots</li>
+  <li>Persistence (JSONL session logs)</li>
+  <li>Compaction</li>
+  <li>Built-in coding tools (<code>read</code>, <code>write</code>, <code>edit</code>, <code>bash</code>) in <code>arnes-core::tools</code></li>
+  <li>Extensions and skills</li>
+  <li>The <code>Host</code> abstraction for tool I/O</li>
+  <li>The <code>Frontend</code> abstraction for multi-UI</li>
+</ul>
+</div>
+</div>
+
+<p>
+  We treat agent-rig as a stable dependency: pin a version, don't patch
+  upstream from inside arnes. If agent-rig is missing something we need
+  (e.g. an event we want to observe), we contribute it back rather than
+  forking.
+</p>
+
+<h2 id="non-goals">arnes-core non-goals</h2>
+
+<ul>
+  <li><strong>No UI code.</strong> If it touches a terminal escape sequence,
+      a window, or a websocket frame, it belongs in an adapter crate.</li>
+  <li><strong>Coding tools are first-class, not a non-goal.</strong>
+      Because arnes-core is specifically a <em>coding-harness</em>
+      library (the general-agent layer is agent-rig below us), the
+      built-in coding tools live here as <code>arnes-core::tools</code>.
+      Custom tools an embedder writes implement the same trait and
+      register through <code>ToolRegistry</code>; the built-ins are not
+      privileged.</li>
+  <li><strong>No CLI parsing.</strong> Each binary
+      (<code>arnes</code>, <code>arnes-acp</code>, <code>arnes-serve</code>)
+      handles its own flags. Shared options can live in <code>arnes-core::cli</code>
+      as a reusable <code>CommonOpts</code> clap struct.</li>
+  <li><strong>No HTTP / JSON-RPC.</strong> Both live in their respective
+      adapter crates.</li>
+</ul>
+
+<div class="endstate">
+  <h4>The acid test</h4>
+  <p>
+    You should be able to write a <code>fn test_agent_loop()</code> in
+    <code>arnes-core/tests/</code> that constructs a <code>Session</code>
+    with a mock <code>Frontend</code>, a mock <code>Host</code>, a
+    mock LLM, and verify a complete round-trip without compiling a single
+    line from any adapter crate. If a refactor breaks that, we have leaked
+    the wrong abstraction.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="architecture.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">Modular design</span>
+  </a>
+  <a class="next" href="adapter-tui.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">TUI adapter</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

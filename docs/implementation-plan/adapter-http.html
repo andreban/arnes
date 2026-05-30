@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>arnes-http &mdash; HTTP &amp; WebSockets adapter</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1.html">M1: Foundation</a></li>
+    <li><a href="m1-plan.html">M1 work plan</a></li>
+    <li><a href="m2.html">M2: First tool</a></li>
+    <li><a href="m3.html">M3: Coding toolkit</a></li>
+    <li><a href="m4.html">M4: System prompt</a></li>
+    <li><a href="m5.html">M5: Skills</a></li>
+    <li><a href="m6.html">M6: Sessions</a></li>
+    <li><a href="m7.html">M7: Compaction</a></li>
+    <li><a href="m8.html">M8: HTTP / WS</a></li>
+    <li><a href="m9.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="ai">
+  <span class="eyebrow">Adapter</span>
+  <h1>arnes-http</h1>
+  <p class="lead">
+    The networked face of arnes. Same <code>Session</code>, exposed over
+    HTTP and WebSockets so a browser, a remote tool, or a hosted control
+    plane can drive it. Designed to host ACP-over-WS as soon as the
+    upstream spec lands &mdash; until then, a small REST + WS surface for
+    plain HTTP clients.
+  </p>
+</div>
+
+<h2 id="two-surfaces">Two surfaces, one binary</h2>
+
+<p>
+  HTTP and WebSockets serve different needs and live behind a single axum
+  server:
+</p>
+
+<div class="compare">
+<div>
+<h5>HTTP (request/response)</h5>
+<p>For everything that fits a single response: list sessions, get session
+metadata, list tools, read or update config. No streaming. Plain JSON
+with normal status codes. Suitable for non-interactive integrations
+(scripts, CI).</p>
+</div>
+<div>
+<h5>WebSocket (streaming)</h5>
+<p>One socket per active session. Frames are JSON messages following the
+same vocabulary as ACP's <code>session/update</code> (so the wire format
+is portable). Suitable for a browser UI or a hosted client where stdio
+is not an option.</p>
+</div>
+</div>
+
+<h2 id="stack">Stack</h2>
+
+<table>
+  <thead><tr><th>Need</th><th>Crate</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td>HTTP framework</td><td><code>axum</code></td><td>Same async ecosystem; first-class WebSocket support.</td></tr>
+    <tr><td>WebSocket framing</td><td><code>tokio-tungstenite</code> (via axum)</td><td>&mdash;</td></tr>
+    <tr><td>Auth</td><td><code>tower-http</code> middleware + <code>jsonwebtoken</code> if needed</td><td>V1: token-in-header. V2: configurable provider.</td></tr>
+    <tr><td>TLS</td><td>Reverse-proxy (caddy / nginx)</td><td>Don't ship TLS in the binary. Operators terminate upstream.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="endpoints-v1">HTTP endpoints (V1)</h2>
+
+<table>
+  <thead><tr><th>Method &amp; path</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /healthz</code></td><td>Liveness probe.</td></tr>
+    <tr><td><code>GET /v1/sessions</code></td><td>List sessions (id, created, last activity, title).</td></tr>
+    <tr><td><code>POST /v1/sessions</code></td><td>Create a new session. Body: <code>{ model, cwd, tools?, mode? }</code>. Returns the session id.</td></tr>
+    <tr><td><code>GET /v1/sessions/{id}</code></td><td>Get session metadata + full message history (paginated for long sessions).</td></tr>
+    <tr><td><code>DELETE /v1/sessions/{id}</code></td><td>Close and delete the session (deletes the JSONL file).</td></tr>
+    <tr><td><code>POST /v1/sessions/{id}/prompt</code></td><td>Send a prompt; <em>non-streaming</em>. Returns the final assistant message after the loop completes. For one-shot scripts.</td></tr>
+    <tr><td><code>POST /v1/sessions/{id}/cancel</code></td><td>Cancel the in-flight prompt.</td></tr>
+    <tr><td><code>POST /v1/sessions/{id}/compact</code></td><td>Force compaction.</td></tr>
+    <tr><td><code>GET /v1/tools</code></td><td>List tools the harness has registered.</td></tr>
+    <tr><td><code>GET /v1/skills</code></td><td>List discovered skills.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="websocket">WebSocket: <code>GET /v1/sessions/{id}/ws</code></h2>
+
+<p>
+  Opening the socket attaches a streaming consumer to the session. Frames
+  are JSON in both directions; the vocabulary aligns with ACP's
+  <code>session/update</code> so the same client code can speak either
+  protocol with a thin adapter.
+</p>
+
+<h3 id="client-to-server">Client &rarr; server frames</h3>
+
+<pre><code>{ "type": "prompt", "content": [ { "type": "text", "text": "..." } ] }
+{ "type": "cancel" }
+{ "type": "set_mode", "mode": "ask" }
+{ "type": "permission_response", "id": "...", "decision": "allow" | "deny" }</code></pre>
+
+<h3 id="server-to-client">Server &rarr; client frames</h3>
+
+<p>
+  Every server-to-client frame carries <code>agent_id</code> (V1 always
+  <code>"root"</code>); attribution is in the protocol from day one so
+  post-V1 sub-agent frames are additive, not breaking. <code>usage</code>
+  payloads additionally carry the <code>ModelKey</code> that produced the
+  turn.
+</p>
+
+<pre><code>{ "type": "agent_message_chunk", "agent_id": "root", "text": "..." }
+{ "type": "agent_thought_chunk", "agent_id": "root", "text": "..." }
+{ "type": "tool_call",  "agent_id": "root", "id": "...", "name": "bash", "input": { ... }, "status": "pending" }
+{ "type": "tool_call_update", "agent_id": "root", "id": "...", "status": "running" | "completed" | "failed", "result"?: { ... } }
+{ "type": "permission_request", "agent_id": "root", "id": "...", "tool": "bash", "input": { ... } }
+{ "type": "turn_end", "agent_id": "root", "stop_reason": "end_turn",
+                      "usage": { "agent_id": "root", "model": { "provider": "gemini", "model_id": "..." }, ... } }
+{ "type": "session_usage", "cumulative": { "by_agent_and_model": { ... } } }
+{ "type": "error", "message": "..." }</code></pre>
+
+<h2 id="acp-over-ws">ACP over WebSocket (deferred)</h2>
+
+<p>
+  The ACP spec calls out HTTP/WS transport as a work-in-progress. When that
+  lands, the implementation is almost mechanical:
+</p>
+
+<ol class="steps">
+  <li>
+    Mount a second route, e.g. <code>GET /acp/ws</code>, that frames
+    upstream's chosen JSON-RPC wire format on the socket.
+  </li>
+  <li>
+    Hand the framed channel to the <em>same router function</em> that
+    <code>arnes-acp</code> uses for stdio &mdash; <code>make_router(session)</code>
+    is transport-agnostic by design.
+  </li>
+  <li>
+    Done. ACP capability negotiation, methods, bidirectional callbacks all
+    work without changes; <code>AcpHost</code> just talks over a socket
+    instead of a pipe.
+  </li>
+</ol>
+
+<div class="figure">
+<svg viewBox="0 0 760 290" role="img" aria-label="HTTP/WS architecture">
+  <defs>
+    <marker id="ar-h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b3"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <!-- clients -->
+    <rect x="40"  y="30" width="160" height="40" rx="8" fill="#141821" stroke="#38bdf8"/>
+    <text x="120" y="54" text-anchor="middle" fill="#38bdf8" font-weight="700">browser UI</text>
+    <rect x="40"  y="90" width="160" height="40" rx="8" fill="#141821" stroke="#fbbf24"/>
+    <text x="120" y="114" text-anchor="middle" fill="#fbbf24" font-weight="700">CI / scripts</text>
+    <rect x="40" y="150" width="160" height="40" rx="8" fill="#141821" stroke="#a78bfa"/>
+    <text x="120" y="174" text-anchor="middle" fill="#a78bfa" font-weight="700">remote editor</text>
+
+    <!-- axum -->
+    <rect x="280" y="60" width="180" height="120" rx="10" fill="#141821" stroke="#34d399"/>
+    <text x="370" y="84" text-anchor="middle" fill="#34d399" font-weight="700">arnes-http (axum)</text>
+    <g fill="#e4e8ef" font-size="10">
+      <text x="295" y="108">/v1/* (REST)</text>
+      <text x="295" y="126">/v1/.../ws (custom WS)</text>
+      <text x="295" y="144">/acp/ws (when spec lands)</text>
+    </g>
+
+    <!-- shared core -->
+    <rect x="520" y="60" width="200" height="120" rx="10" fill="#141821" stroke="#fbbf24"/>
+    <text x="620" y="84" text-anchor="middle" fill="#fbbf24" font-weight="700">arnes-core::Session</text>
+    <text x="620" y="106" text-anchor="middle" fill="#9aa3b3" font-size="10">one per active session</text>
+    <text x="620" y="122" text-anchor="middle" fill="#9aa3b3" font-size="10">Frontend = HttpFrontend</text>
+    <text x="620" y="138" text-anchor="middle" fill="#9aa3b3" font-size="10">Host = LocalHost</text>
+
+    <!-- arrows -->
+    <g stroke="#9aa3b3" stroke-width="1.2">
+      <line x1="200" y1="50"  x2="278" y2="100" marker-end="url(#ar-h)"/>
+      <line x1="200" y1="110" x2="278" y2="110" marker-end="url(#ar-h)"/>
+      <line x1="200" y1="170" x2="278" y2="140" marker-end="url(#ar-h)"/>
+      <line x1="460" y1="120" x2="518" y2="120" marker-end="url(#ar-h)"/>
+    </g>
+
+    <text x="380" y="220" text-anchor="middle" fill="#6b7384" font-size="10">/v1 paths: REST + custom WS (V1)</text>
+    <text x="380" y="240" text-anchor="middle" fill="#6b7384" font-size="10">/acp paths: same handler as arnes-acp stdio (V2, when spec lands)</text>
+  </g>
+</svg>
+<div class="figure-caption">One server, multiple route trees, shared core. ACP-over-WS adds without rewriting.</div>
+</div>
+
+<h2 id="frontend-impl">The Frontend impl</h2>
+
+<p>
+  <code>HttpFrontend</code> is wired per WebSocket connection. Events go
+  through the socket; permission requests round-trip via a correlated
+  request/response over the same socket.
+</p>
+
+<pre><code>pub struct HttpFrontend {
+    tx: mpsc::UnboundedSender&lt;ServerFrame&gt;,
+    pending_perms: Mutex&lt;HashMap&lt;Uuid, oneshot::Sender&lt;Permission&gt;&gt;&gt;,
+}
+
+#[async_trait]
+impl Frontend for HttpFrontend {
+    async fn on_event(&amp;self, ev: SessionEvent) {
+        let _ = self.tx.send(ev.into_server_frame());
+    }
+
+    async fn request_permission(&amp;self, req: PermissionRequest) -&gt; Permission {
+        let id = Uuid::new_v4();
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.pending_perms.lock().await.insert(id, resp_tx);
+        let _ = self.tx.send(ServerFrame::PermissionRequest { id, req });
+        resp_rx.await.unwrap_or(Permission::Deny)
+    }
+}</code></pre>
+
+<p>
+  A small dispatcher on the socket's recv side resolves
+  <code>permission_response</code> frames against the pending map.
+</p>
+
+<h2 id="host">Host, in this adapter</h2>
+
+<p>
+  V1: <code>LocalHost</code>. The server has direct access to the host
+  filesystem &mdash; tools read and write there.
+</p>
+
+<p>
+  This is fine for self-hosted setups where the operator controls who
+  can talk to the server. <em>It is not safe for multi-tenant deployments</em>
+  where untrusted users can submit prompts; an untrusted user with a
+  <code>bash</code> tool would have shell access to the server. Two ways to
+  address that down the road, both deliberately out of scope for V1:
+</p>
+
+<ul>
+  <li>
+    A <strong><code>SandboxedEnv</code></strong> impl that runs tools in a
+    container or a chroot with restricted permissions.
+  </li>
+  <li>
+    A <strong><code>RemoteEnv</code></strong> impl where filesystem and
+    terminal calls round-trip to a per-tenant worker (the same trick ACP
+    uses, but with a different transport).
+  </li>
+</ul>
+
+<h2 id="state">Session lifecycle and state</h2>
+
+<p>
+  Sessions live in a process-wide <code>SessionRegistry</code>: a
+  <code>HashMap&lt;SessionId, Arc&lt;Mutex&lt;Session&gt;&gt;&gt;</code>. Created
+  on <code>POST /v1/sessions</code>, deleted on
+  <code>DELETE /v1/sessions/{id}</code>, GC'd if idle for too long. A
+  session can have at most one active prompt at a time; concurrent
+  <code>POST .../prompt</code> requests respond with 409 Conflict.
+</p>
+
+<h2 id="auth">Authentication</h2>
+
+<p>
+  V1: a single bearer token configured at server start. Every request must
+  carry <code>Authorization: Bearer &lt;token&gt;</code>; missing or wrong
+  token returns 401. WS upgrades validate the token in the upgrade request.
+</p>
+
+<p>
+  V2: pluggable auth provider trait, plus optional per-user scoping (so
+  user A cannot see user B's sessions). Deferred until there is a real
+  multi-user deployment to design against.
+</p>
+
+<h2 id="cors">CORS, content security, and the browser</h2>
+
+<p>
+  If a browser UI talks to the server, CORS must be configured. Default:
+  permissive on <code>/healthz</code>, restrictive on everything else
+  (no <code>*</code>; require an explicit allow-list of origins in the
+  server config).
+</p>
+
+<h2 id="not-doing">Non-goals for V1</h2>
+
+<ul>
+  <li><strong>No clustering or sharding.</strong> Single process, single host. Scale up before scale out.</li>
+  <li><strong>No multi-tenant isolation.</strong> One trust boundary; one token.</li>
+  <li><strong>No metrics surface.</strong> Logs only. Prometheus endpoint can come later.</li>
+  <li><strong>No rate limiting.</strong> Reverse-proxy handles it if needed.</li>
+</ul>
+
+<div class="endstate">
+  <h4>The adapter is done when</h4>
+  <p>
+    <code>arnes-serve --bind 127.0.0.1:7878 --token $T</code> stays up,
+    accepts <code>POST /v1/sessions</code> + <code>/prompt</code>, streams
+    a browser UI through <code>/ws</code>, and survives a few hours of
+    daily use as your daily-driver remote agent. The ACP-over-WS handler
+    can be slotted in once upstream's spec stabilises.
+  </p>
+</div>
+
+<div class="pager">
+  <a class="prev" href="adapter-acp.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">Agent Client Protocol</span>
+  </a>
+  <a class="next" href="adapter-gui.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">GUI</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>
