@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phase 2 &mdash; Core types</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 2</span>
+  <h1>Core types</h1>
+  <p class="lead">
+    Define the vocabulary the rest of the workspace depends on. Six PRs,
+    each one file (plus the deps that file needs), each with its own
+    discussion of the architectural choices it represents. The type
+    shapes also encode the design's
+    <a href="../../core.html#future-compat">sub-agent commitments</a>
+    from M1 onward.
+  </p>
+</div>
+
+<h2 id="prs">PRs in this phase</h2>
+
+<table>
+  <thead><tr><th>Order</th><th>PR</th><th>One-line goal</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td><a href="error-type.html"><code>feat/error-type</code></a></td>
+      <td>The crate's error enum (small at M1; grows with each milestone).</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><a href="agent-identity.html"><code>feat/agent-identity</code></a></td>
+      <td><code>AgentId</code> and <code>ModelKey</code> &mdash; the identity vocabulary.</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><a href="message-types.html"><code>feat/message-types</code></a></td>
+      <td><code>Message</code> + <code>ContentBlock</code>. <strong>Includes the thinking-blocks discussion.</strong></td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td><a href="frontend-trait.html"><code>feat/frontend-trait</code></a></td>
+      <td><code>Frontend</code> trait, <code>SessionEvent</code>, <code>EventKind</code>, M3 permission stubs.</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><a href="host-trait.html"><code>feat/host-trait</code></a></td>
+      <td><code>Host</code> trait, terminal/dir types, <code>LocalHost</code> default-Unsupported impl.</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td><a href="tool-context.html"><code>feat/tool-context</code></a></td>
+      <td><code>ToolContext</code>, <code>ProgressSink</code>, <code>SubAgentSpawner</code> stub.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  Order matters: each PR's code references types from earlier PRs in
+  this phase. Specifically: agent-identity is referenced by message
+  types (none directly at M1) and by frontend (<code>SessionEvent</code>
+  carries an <code>AgentId</code>); host references its own types only;
+  tool-context bundles host + agent-identity + the not-yet-existing
+  progress sink. Building bottom-up keeps the compiler green between
+  PRs.
+</p>
+
+<p>
+  <strong>The <code>lib.rs</code> re-exports</strong> are extended in
+  each PR &mdash; whoever adds a new pub type also adds the pub use line.
+  No separate re-exports PR.
+</p>
+
+<h2 id="cross-cutting">Cross-cutting decisions (settled)</h2>
+
+<p>
+  Two choices apply to multiple PRs in this phase. Captured here so each
+  PR doc can reference them rather than re-litigate.
+</p>
+
+<p>
+  <strong>1. <code>async-trait</code> for dyn-compatible async traits.</strong>
+  <code>Frontend</code> is generic in <code>Session&lt;F: Frontend, H: Host&gt;</code>
+  (no dyn required), but <code>Host</code> is held as <code>Arc&lt;dyn Host&gt;</code>
+  in <code>ToolContext</code> &mdash; so <code>Host</code> must be
+  dyn-compatible. Native <code>async fn</code> in traits (stable since
+  Rust 1.75) does not produce dyn-compatible traits by default. We use
+  <code>async-trait</code> &mdash; macro that boxes the returned future;
+  small per-call alloc overhead, ecosystem-standard. Applied to
+  <code>Frontend</code>, <code>Host</code>, <code>SubAgentSpawner</code>,
+  and later <code>Tool</code> in M2. Alternatives considered and
+  rejected: <code>trait_variant::make</code> (more macro magic),
+  hand-rolled <code>Pin&lt;Box&lt;dyn Future&gt;&gt;</code> returns (same
+  overhead, more verbose).
+</p>
+
+<p>
+  <strong>2. No <code>thiserror</code> yet.</strong> The M1 enum is small
+  (3&ndash;5 variants); hand-written <code>Display</code> and
+  <code>Error</code> impls are ~20 lines and don't pull in a proc-macro
+  build-time dep. Revisit when the enum grows past ~8 variants or the
+  <code>From</code> conversions start to multiply.
+</p>
+
+<h2 id="discussion-pattern">Discussion sections in each PR doc</h2>
+
+<p>
+  Every per-PR doc in this phase has a <strong>Discussion</strong> section
+  surfacing the architectural choices the PR represents &mdash; even if
+  they look obvious. The point is to make every choice reviewable
+  individually rather than bundling them away. Examples of what gets
+  discussed:
+</p>
+
+<ul>
+  <li><strong>error-type</strong>: variant naming; growth path; whether to expose <code>From</code> conversions or keep the enum closed.</li>
+  <li><strong>agent-identity</strong>: <code>ModelKey</code> versioning question; whether <code>AgentId</code> uses a tagged enum or a more compact representation.</li>
+  <li><strong>message-types</strong>: <strong>thinking blocks</strong> (Claude extended thinking, Gemini 2.5 reasoning); ContentBlock variant set; serde tagging shape (load-bearing for M6 persistence); whether <code>Message::System</code> should be content-blocks too.</li>
+  <li><strong>frontend-trait</strong>: <code>StopReason</code> variant set; <code>EventKind</code> exhaustiveness; whether <code>FrontendCapabilities</code> should be a struct or bitflags.</li>
+  <li><strong>host-trait</strong>: the conservative ACP-aligned method set; whether to ship <code>list_directory</code> vs delay.</li>
+  <li><strong>tool-context</strong>: the early arrival of tokio in arnes-core; <code>SubAgentSpawner</code> stub shape.</li>
+</ul>
+
+<h2 id="tests">Test strategy for the phase</h2>
+
+<p>
+  Two integration test files land in <code>crates/arnes-core/tests/</code>
+  during this phase:
+</p>
+
+<ul>
+  <li><strong><code>local_host_unsupported.rs</code></strong> (lands with
+      <code>feat/host-trait</code>) &mdash; one <code>#[tokio::test]</code>
+      per <code>Host</code> method, each calling the default impl on
+      <code>LocalHost</code> and asserting
+      <code>err.kind() == io::ErrorKind::Unsupported</code>.</li>
+  <li><strong><code>serde_roundtrip.rs</code></strong> (lands with
+      <code>feat/message-types</code>) &mdash; round-trip <code>Message</code>
+      through <code>serde_json</code>; pin the on-the-wire JSON shape with
+      a literal-string assertion so a future <code>#[serde(tag = ...)]</code>
+      change has to deliberately update the test.</li>
+</ul>
+
+<p>
+  No shared <code>tests/support/</code> module yet &mdash; that lands in
+  phase 4 with the session scaffolding. Each integration-test file in
+  this phase is self-contained.
+</p>
+
+<h2 id="acceptance">Phase acceptance</h2>
+
+<ul>
+  <li>All six PRs merged.</li>
+  <li><code>cargo check --workspace</code> clean (CI green throughout).</li>
+  <li><code>cargo test -p arnes-core</code> green; the two integration tests pass.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean &mdash; every public item documented.</li>
+  <li>No code in <code>arnes-core</code> spawns a tokio runtime or calls <code>tokio::spawn</code>; the runtime dep is there for the <code>CancellationToken</code> type and for the <code>#[tokio::test]</code> harness only.</li>
+  <li>Module-level doc comment in <code>identity.rs</code> links the future-compat section of <a href="../../core.html#future-compat">core.html</a>.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="../plan.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">M1 work plan</span>
+  </a>
+  <a class="next" href="error-type.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/error-type</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

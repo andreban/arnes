@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>M1 work plan &mdash; phases &amp; PRs</title>
+<link rel="stylesheet" href="../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../architecture.html">Modular design</a></li>
+    <li><a href="../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="index.html">M1: Foundation</a></li>
+    <li><a href="plan.html">M1 work plan</a></li>
+    <li><a href="../m2/index.html">M2: First tool</a></li>
+    <li><a href="../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../m5/index.html">M5: Skills</a></li>
+    <li><a href="../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 work plan</span>
+  <h1>Foundation, by phase</h1>
+  <p class="lead">
+    M1 is organized into <strong>phases</strong>; each phase contains one or
+    more PRs sized so the user can fully review every architectural choice
+    before it lands. For the design rationale that motivates the work, see
+    the <a href="index.html">M1 milestone page</a>.
+  </p>
+</div>
+
+<div class="note">
+  <strong>Sizing rule.</strong> Each PR is small enough to discuss
+  end-to-end: usually one Rust file (or one logical type), the deps it
+  needs, the tests it earns, and one acceptance gate. Six similar files
+  is six PRs &mdash; not one. The architectural choices each PR represents
+  must be surfaced in its plan doc for explicit discussion before
+  implementation.
+</div>
+
+<h2 id="phases">Phases</h2>
+
+<table>
+  <thead><tr><th>#</th><th>Phase</th><th>Status</th><th>PR count</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td><a href="#repo-bootstrap">Repo bootstrap</a></td><td>done</td><td>direct-to-main</td></tr>
+    <tr><td>1</td><td><a href="#workspace-ci">Workspace + CI</a></td><td>done</td><td>1 (merged)</td></tr>
+    <tr><td>2</td><td><a href="core-types/index.html">Core types</a></td><td>planned in detail</td><td>6</td></tr>
+    <tr><td>3</td><td><a href="#usage-pricing">Usage + pricing</a></td><td>scope only, to be detailed</td><td>~4</td></tr>
+    <tr><td>4</td><td><a href="#session-scaffolding">Session + test scaffolding</a></td><td>scope only, to be detailed</td><td>~5</td></tr>
+    <tr><td>5</td><td><a href="#acp-transport">ACP transport spike</a></td><td>scope only</td><td>1</td></tr>
+    <tr><td>6</td><td><a href="#acp-protocol">ACP minimal protocol</a></td><td>scope only, to be detailed</td><td>~4</td></tr>
+    <tr><td>7</td><td><a href="#gemini-provider">Wire Gemini provider</a></td><td>scope only</td><td>1</td></tr>
+    <tr><td>8</td><td><a href="#tui-minimal">Minimal TUI</a></td><td>scope only, to be detailed</td><td>~4</td></tr>
+    <tr><td>9</td><td><a href="#end-state">M1 end-state: smoke tests + docs</a></td><td>scope only</td><td>1</td></tr>
+  </tbody>
+</table>
+
+<p>
+  <strong>Detailing strategy.</strong> Phases are detailed (full plan docs
+  per PR, with discussion sections) <em>just-in-time</em> &mdash; before
+  starting work on the phase, not all up front. This keeps the planning
+  cost in sync with how much we actually know, and lets earlier phases'
+  decisions inform later phases' details. Right now only phase 2 is fully
+  detailed; the others have scope-level entries below that get expanded
+  before they're started.
+</p>
+
+<p>
+  <strong>Critical path.</strong> 0 &rarr; 1 &rarr; 2 &rarr; 3 &rarr; 4
+  &rarr; 7 &rarr; 8/9. Phase 5 starts in parallel with phase 2 (different
+  crate, no shared types yet); phase 6 unblocks the ACP path independently
+  of TUI work.
+</p>
+
+<h2 id="repo-bootstrap">Phase 0 &mdash; Repo bootstrap <small>(done)</small></h2>
+
+<p>
+  Stand up the repo with planning docs, meta files, and a clean first
+  commit on <code>main</code>. No Rust. Direct-to-main per design (the
+  bootstrap window predates the feature-branch workflow). See the commit
+  history on <code>main</code>: README, AGENTS, CONTRIBUTING, LICENSE,
+  <code>.gitignore</code>, <code>.gitattributes</code>.
+</p>
+
+<h2 id="workspace-ci">Phase 1 &mdash; Workspace + CI <small>(done, PR #2 on GitHub)</small></h2>
+
+<p>
+  <strong>Goal.</strong> <code>cargo check --workspace</code> passing in CI
+  before any real code lands. Pure workspace <code>Cargo.toml</code> with
+  three empty member crates (<code>arnes-core</code>, <code>arnes-tui</code>,
+  <code>arnes-acp</code>); GitHub Actions matrix on Linux/macOS/Windows
+  running fmt, clippy <code>-D warnings</code>, and test.
+</p>
+
+<p><strong>Deliberately deferred at phase 1</strong> (rationale matters because future PRs will be tempted to add these):</p>
+<ul>
+  <li><strong>No <code>rust-version</code> MSRV pin.</strong> Pays off for crates.io publishing or external support policies; neither applies yet.</li>
+  <li><strong>No <code>rust-toolchain.toml</code>.</strong> Pinning <code>channel = "stable"</code> only auto-installs stable for rustup users who don't already have it &mdash; tiny convenience, no reproducibility.</li>
+  <li><strong>No <code>rustfmt.toml</code> / <code>clippy.toml</code>.</strong> Only useful for overriding defaults. Empty stubs invite bikeshedding.</li>
+  <li><strong>No pre-declared <code>[workspace.dependencies]</code>.</strong> Each later PR adds the deps its own code introduces, in the same commit.</li>
+</ul>
+
+<h2 id="core-types">Phase 2 &mdash; Core types <small>(planned in detail)</small></h2>
+
+<p>
+  Define the vocabulary the rest of the workspace depends on:
+  <code>Frontend</code> and <code>Host</code> traits, <code>Message</code>
+  and <code>ContentBlock</code>, the agent-identity types, the error type,
+  the tool-context bundle. Each lands as its own PR so every architectural
+  choice gets discussed individually.
+</p>
+
+<p>
+  <strong>See <a href="core-types/index.html">the Core types phase plan</a></strong>
+  for the six per-PR docs, the settled cross-cutting decisions (async-trait,
+  no thiserror), and the discussion items each PR must surface before
+  implementation.
+</p>
+
+<h2 id="usage-pricing">Phase 3 &mdash; Usage + pricing <small>(scope only)</small></h2>
+
+<p>
+  <strong>Goal.</strong> Token/cost types with three-state pricing
+  (Priced / Free / Unknown), per-<code>(agent, model)</code> aggregation,
+  and a tested registry loaded from bundled TOML with user overrides.
+</p>
+
+<p>
+  <strong>Anticipated PRs</strong> (to be detailed before phase starts):
+</p>
+
+<ul>
+  <li><code>feat/usage-types</code> &mdash; <code>Usage</code>, <code>Cost</code>, <code>Micros</code>, <code>ModelUsage</code>, <code>CumulativeUsage</code>, <code>ModelCostInfo</code>, <code>ModelPricing</code>.</li>
+  <li><code>feat/pricing-registry</code> &mdash; <code>PricingRegistry</code> struct + lookup; TOML schema; bundled-vs-user merge rules.</li>
+  <li><code>feat/pricing-toml-loader</code> &mdash; reads the bundled <code>arnes-core/data/pricing.toml</code>; merges in <code>~/.arnes/pricing.toml</code> if present.</li>
+  <li><code>feat/cumulative-usage-projections</code> &mdash; <code>by_model()</code> / <code>by_agent()</code> derived views; record-keeping for unknown-cost turns.</li>
+  <li><code>feat/turnend-usage-wiring</code> &mdash; add the <code>usage: Usage</code> field to <code>EventKind::TurnEnd</code>; emission still lands in phase 4.</li>
+</ul>
+
+<h2 id="session-scaffolding">Phase 4 &mdash; Session + test scaffolding <small>(scope only)</small></h2>
+
+<p>
+  <strong>Goal.</strong> The agent-rig wrapper plus the mocks every later
+  PR will reuse for testing. The acid test: a deterministic two-turn
+  round-trip test that runs without any API key.
+</p>
+
+<p>
+  <strong>Anticipated PRs</strong> (to be detailed before phase starts):
+</p>
+
+<ul>
+  <li><code>chore/agent-rig-dep</code> &mdash; add <code>agent-rig</code> to workspace deps (no provider features yet).</li>
+  <li><code>feat/session-struct</code> &mdash; <code>Session&lt;F, H&gt;</code> with <code>new</code>, <code>prompt</code>, <code>cancel</code>, <code>cumulative_usage</code>; event-stream translation.</li>
+  <li><code>feat/recording-frontend</code> &mdash; test helper that captures every event for assertions.</li>
+  <li><code>feat/in-memory-host</code> &mdash; fake host (real fs/process impls land in M3).</li>
+  <li><code>feat/scripted-llm</code> &mdash; <code>LlmModel</code> impl that replays canned responses with known token counts.</li>
+  <li><code>feat/session-roundtrip-test</code> &mdash; the two-turn integration test pulling everything together.</li>
+</ul>
+
+<h2 id="acp-transport">Phase 5 &mdash; ACP transport spike <small>(single PR)</small></h2>
+
+<p>
+  <strong>Goal.</strong> Bidirectional JSON-RPC over stdio works; the
+  library decision is made and recorded as an ADR.
+</p>
+
+<p>
+  jsonrpsee server on stdin/stdout; outbound-call helper to validate
+  server-initiated request path; integration test for malformed frames
+  and unknown methods. ADR <code>docs/adr/0001-jsonrpc-library.md</code>
+  records the decision and any fallback triggers that almost fired.
+</p>
+
+<p>
+  <strong>Acceptance gate</strong>: if any M1 fallback trigger fires
+  (outbound boilerplate &gt;10 lines per method, cancellation
+  interference, <code>_meta</code> friction), this PR is replaced with
+  the hand-rolled framer alternative.
+</p>
+
+<h2 id="acp-protocol">Phase 6 &mdash; ACP minimal protocol <small>(scope only)</small></h2>
+
+<p>
+  <strong>Goal.</strong> Four inbound methods + one outbound notification,
+  end-to-end through a real <code>Session</code>.
+</p>
+
+<p>
+  <strong>Anticipated PRs</strong> (to be detailed before phase starts):
+</p>
+
+<ul>
+  <li><code>feat/acp-initialize</code> &mdash; protocol version negotiation; capability advertisement.</li>
+  <li><code>feat/acp-session-new-and-prompt</code> &mdash; construct <code>Session&lt;AcpFrontend, AcpHost&gt;</code>; mint a UUID v7; push user message; return stop reason.</li>
+  <li><code>feat/acp-session-cancel</code> &mdash; notification routing into the session's cancellation token.</li>
+  <li><code>feat/acp-frontend-and-update</code> &mdash; <code>AcpFrontend</code>; translates <code>SessionEvent::AgentMessageDelta</code> into <code>session/update</code> notifications. Includes the golden test.</li>
+</ul>
+
+<h2 id="gemini-provider">Phase 7 &mdash; Wire Gemini provider + real usage <small>(single PR)</small></h2>
+
+<p>
+  <strong>Goal.</strong> A real LLM call produces a real reply, real token
+  counts, and a real cost.
+</p>
+
+<p>
+  Enable agent-rig's <code>gemini</code> feature; construct
+  <code>GeminiModel</code> in both binaries from <code>GEMINI_API_KEY</code>;
+  verify usage extraction. Smoke tests gated on the env var via
+  <code>#[ignore]</code>; CI runs them in a job with the secret available.
+</p>
+
+<h2 id="tui-minimal">Phase 8 &mdash; Minimal TUI <small>(scope only)</small></h2>
+
+<p>
+  <strong>Goal.</strong> <code>arnes</code> binary drops you into a
+  ratatui session that streams a Gemini reply, with clean shutdown on any
+  exit path (terminal raw mode restored even on panic).
+</p>
+
+<p>
+  <strong>Anticipated PRs</strong> (to be detailed before phase starts):
+</p>
+
+<ul>
+  <li><code>feat/tui-skeleton</code> &mdash; clap CLI; crossterm raw-mode setup with RAII guard; empty render loop.</li>
+  <li><code>feat/tui-input-task</code> &mdash; key event reader; submit on Enter; Ctrl-C exit; Esc cancel.</li>
+  <li><code>feat/tui-render-task</code> &mdash; transcript region; input box; ratatui layout.</li>
+  <li><code>feat/tui-agent-task-wiring</code> &mdash; <code>TuiFrontend</code>; bridges <code>Session</code> events into the render task's command channel.</li>
+</ul>
+
+<h2 id="end-state">Phase 9 &mdash; M1 end-state: smoke tests + docs <small>(single PR)</small></h2>
+
+<p>
+  <strong>Goal.</strong> Tie everything off; M1 is mergeable to
+  <code>main</code> as &quot;done.&quot;
+</p>
+
+<p>
+  Top-level README with five-line examples for both binaries; per-crate
+  READMEs; a "Hello, arnes" walkthrough doc. CI smoke job verifies
+  <code>cargo install --path crates/arnes-tui</code> and
+  <code>crates/arnes-acp</code> succeed on all three OSes.
+</p>
+
+<h2 id="out-of-scope">What is deliberately not in M1</h2>
+
+<ul>
+  <li><strong>Tool calling end-to-end.</strong> Lands in M2.
+      <code>arnes-core::tools::register_defaults()</code> doesn't exist yet;
+      the registry from phase 2 is empty at session start.</li>
+  <li><strong>Real permission flow.</strong> The trait surface is in place
+      from phase 2; the modal, <code>session/request_permission</code>
+      outbound call, and <code>matches_scope</code> logic are M3.</li>
+  <li><strong>Persistence.</strong> No JSONL write/read in M1. Sessions are
+      ephemeral.</li>
+  <li><strong>Multi-provider support.</strong> Gemini only at M1. Adding
+      Anthropic/OpenAI is the parallel "Additional providers" workstream.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="index.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">M1: Foundation</span>
+  </a>
+  <a class="next" href="core-types/index.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">Phase 2: Core types</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>M1 &mdash; agent-rig + minimal TUI + minimal ACP</title>
-<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+<link rel="stylesheet" href="../../build-your-own-harness/assets/styles.css" />
 </head>
 <body>
 <div class="layout">
@@ -15,35 +15,35 @@
     <span>arnes &middot; plan</span>
   </div>
   <div class="nav-group"><h4>Overview</h4><ul>
-    <li><a href="index.html">Introduction</a></li>
+    <li><a href="../index.html">Introduction</a></li>
   </ul></div>
   <div class="nav-group"><h4>Architecture</h4><ul>
-    <li><a href="architecture.html">Modular design</a></li>
-    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="../architecture.html">Modular design</a></li>
+    <li><a href="../core.html" data-accent="coding">arnes-core</a></li>
   </ul></div>
   <div class="nav-group"><h4>Adapters</h4><ul>
-    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
-    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
-    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
-    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+    <li><a href="../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../adapter-gui.html"  data-accent="coding">GUI</a></li>
   </ul></div>
   <div class="nav-group"><h4>Plan</h4><ul>
-    <li><a href="roadmap.html">Roadmap</a></li>
+    <li><a href="../roadmap.html">Roadmap</a></li>
   </ul></div>
   <div class="nav-group"><h4>Milestones</h4><ul>
-    <li><a href="m1.html">M1: Foundation</a></li>
-    <li><a href="m1-plan.html">M1 work plan</a></li>
-    <li><a href="m2.html">M2: First tool</a></li>
-    <li><a href="m3.html">M3: Coding toolkit</a></li>
-    <li><a href="m4.html">M4: System prompt</a></li>
-    <li><a href="m5.html">M5: Skills</a></li>
-    <li><a href="m6.html">M6: Sessions</a></li>
-    <li><a href="m7.html">M7: Compaction</a></li>
-    <li><a href="m8.html">M8: HTTP / WS</a></li>
-    <li><a href="m9.html">M9: GUI</a></li>
+    <li><a href="index.html">M1: Foundation</a></li>
+    <li><a href="plan.html">M1 work plan</a></li>
+    <li><a href="../m2/index.html">M2: First tool</a></li>
+    <li><a href="../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../m5/index.html">M5: Skills</a></li>
+    <li><a href="../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../m9/index.html">M9: GUI</a></li>
   </ul></div>
   <div class="nav-group"><h4>Reference</h4><ul>
-    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+    <li><a href="../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
   </ul></div>
 </aside>
 
@@ -192,7 +192,7 @@ pub trait Frontend: Send + Sync {
 
 pub enum AgentId {
     Root,
-    SubAgent(Ulid),         // never minted at V1; reserved for post-V1 sub-agents
+    SubAgent(Uuid),         // never minted at V1; reserved for post-V1 sub-agents
 }
 
 pub struct SessionEvent {
@@ -283,7 +283,7 @@ impl&lt;F, H&gt; Session&lt;F, H&gt; where F: Frontend, H: Host {
 </p>
 
 <ul>
-  <li>Types: <code>ModelKey</code>, <code>Usage</code> (carries <code>agent_id</code> + <code>model</code>), <code>Cost</code>, <code>Micros</code>, <code>ModelCostInfo</code>, <code>ModelPricing</code>, <code>ModelUsage</code>, <code>CumulativeUsage</code> (indexed by <code>(AgentId, ModelKey)</code>). See <a href="core.html#usage-module">core.html &sect; usage</a> for the full shape.</li>
+  <li>Types: <code>ModelKey</code>, <code>Usage</code> (carries <code>agent_id</code> + <code>model</code>), <code>Cost</code>, <code>Micros</code>, <code>ModelCostInfo</code>, <code>ModelPricing</code>, <code>ModelUsage</code>, <code>CumulativeUsage</code> (indexed by <code>(AgentId, ModelKey)</code>). See <a href="../core.html#usage-module">core.html &sect; usage</a> for the full shape.</li>
   <li>Bundled pricing TOML at <code>arnes-core/data/pricing.toml</code>, seeded for the Gemini models we wire up at M1 and a wildcard <code>Free</code> entry for Ollama.</li>
   <li><code>Session</code> reads token counts off agent-rig's stream at turn end, builds <code>Usage</code> with its own <code>agent_id</code> + the active <code>ModelKey</code>, computes <code>cost</code> via the registry, emits <code>EventKind::TurnEnd { stop_reason, usage }</code>.</li>
   <li><code>Session::cumulative_usage() -&gt; CumulativeUsage</code> accessor for frontends. V1 only ever has one entry under <code>(AgentId::Root, model)</code>, but the per-(agent, model) map is the source of truth so post-V1 sub-agents and mid-session model switches are additive, not breaking.</li>
@@ -315,7 +315,7 @@ impl&lt;F, H&gt; Session&lt;F, H&gt; where F: Frontend, H: Host {
 </div>
 
 <ul>
-  <li>ratatui + crossterm. Three tokio tasks: input, agent, render (per <a href="adapter-tui.html#three-tasks">adapter-tui.html</a>).</li>
+  <li>ratatui + crossterm. Three tokio tasks: input, agent, render (per <a href="../adapter-tui.html#three-tasks">adapter-tui.html</a>).</li>
   <li>Plain text rendering &mdash; no markdown, no syntax highlighting.</li>
   <li><kbd>Enter</kbd> submits, <kbd>Ctrl-C</kbd> exits, <kbd>Esc</kbd> cancels the current turn if one is running.</li>
   <li>No history scrollback (just whatever the terminal naturally shows).</li>
@@ -333,7 +333,7 @@ impl&lt;F, H&gt; Session&lt;F, H&gt; where F: Frontend, H: Host {
     </tr>
     <tr>
       <td><code>session/new</code></td>
-      <td>Construct a <code>Session&lt;AcpFrontend, AcpHost&gt;</code>; mint a ULID; return it. cwd from client may be ignored at M1.</td>
+      <td>Construct a <code>Session&lt;AcpFrontend, AcpHost&gt;</code>; mint a UUID v7; return it. cwd from client may be ignored at M1.</td>
     </tr>
     <tr>
       <td><code>session/prompt</code></td>
@@ -372,30 +372,12 @@ $ arnes-acp                          # speak ACP on stdio (editor-spawned)</code
   <code>#[command(flatten)]</code>.
 </p>
 
-<h2 id="tasks">Implementation tasks, in order</h2>
-
-<p>
-  A coarse orientation list, in execution order. Each task corresponds
-  to one or more PRs in the detailed work plan.
-</p>
-
-<ol class="steps">
-  <li>Bootstrap the repo: <code>git init</code>, copy the planning docs into <code>docs/</code>, write the meta files (<code>README.md</code>, <code>AGENTS.md</code>, <code>CONTRIBUTING.md</code>, <code>LICENSE</code>, <code>.gitignore</code>), first commit on <code>main</code>.</li>
-  <li>Initialize the Cargo workspace (no MSRV pin, no toolchain file &mdash; see PR #1 in the work plan for rationale); CI runs fmt/clippy/test on stable across Linux/macOS/Windows.</li>
-  <li>Define <code>arnes-core</code> types: <code>Frontend</code>, <code>Host</code>, <code>Message</code>, and the usage subsystem with seed <code>pricing.toml</code>.</li>
-  <li>Wire <code>Session</code> around agent-rig's <code>AgentRunner</code>; land the mock <code>Frontend</code>/<code>Host</code> and scripted-LLM test scaffolding.</li>
-  <li>Bring up <code>jsonrpsee</code> for ACP transport (or fall back to a hand-rolled framer per the M1 triggers); land the four inbound methods + one outbound notification; commit the ADR.</li>
-  <li>Add a small <code>main.rs</code> to each of <code>arnes-tui</code> and <code>arnes-acp</code> so they produce binaries (<code>arnes</code> and <code>arnes-acp</code>). Wire the real Gemini provider; verify a real chat round-trip in both modes.</li>
-</ol>
-
 <div class="prod">
   <span class="prod-label">Work plan</span>
   <p>
-    For PR-by-PR breakdown &mdash; scope, files touched, acceptance gate
-    for each &mdash; see the
-    <a href="m1-plan.html"><strong>M1 work plan</strong></a>. Nine PRs,
-    each small enough to review, each leaves <code>main</code> in a
-    working state.
+    For the broken-down execution plan &mdash; phase by phase, PR by PR,
+    with the architectural choices surfaced for discussion in each
+    &mdash; see the <a href="plan.html"><strong>M1 work plan</strong></a>.
   </p>
 </div>
 
@@ -430,18 +412,18 @@ $ arnes-acp                          # speak ACP on stdio (editor-spawned)</code
 </div>
 
 <div class="pager">
-  <a class="prev" href="roadmap.html">
+  <a class="prev" href="../roadmap.html">
     <span class="pager-label">&larr; Back</span>
     <span class="pager-title">Roadmap</span>
   </a>
-  <a class="next" href="m2.html">
+  <a class="next" href="plan.html">
     <span class="pager-label">Next &rarr;</span>
-    <span class="pager-title">M2: First tool</span>
+    <span class="pager-title">M1 work plan</span>
   </a>
 </div>
 
 </main>
 </div>
-<script src="../build-your-own-harness/assets/nav.js"></script>
+<script src="../../build-your-own-harness/assets/nav.js"></script>
 </body>
 </html>

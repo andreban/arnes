@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/error-type</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 2 &middot; PR 1 of 6</span>
+  <h1><code>feat/error-type</code></h1>
+  <p class="lead">
+    Stand up the crate's error type. Tiny enum at M1 with one variant
+    reserved for the session loop; designed so each later PR adds one or
+    two variants without churning the public API.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  <code>arnes_core::Result&lt;T&gt;</code> and <code>arnes_core::CoreError</code>
+  exist and can be returned from trait methods in later PRs of this phase.
+  That's the whole job. No <code>From</code> impls, no rich variants, no
+  catch-all <code>Other</code>.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/error.rs</code></li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; declare module, re-export <code>CoreError</code> + <code>Result</code>.</li>
+</ul>
+
+<p>No <code>Cargo.toml</code> changes &mdash; the per-phase decision is no <code>thiserror</code> at this stage (see <a href="index.html#cross-cutting">phase cross-cutting decisions</a>).</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>The architectural choices to settle in this PR's review:</p>
+
+<p>
+  <strong>1. What variants does the enum need at M1, given no other code
+  has landed yet?</strong> Strictly: zero, because no in-tree code returns
+  it. Pragmatically: at least one placeholder so the type can flow through
+  trait signatures (<code>Frontend::request_permission</code> can return
+  <code>Result&lt;Permission&gt;</code> in a later PR without needing
+  <code>error.rs</code> to be re-touched). Recommendation: a single
+  <code>Session(String)</code> variant earmarked for the session loop.
+</p>
+
+<p>
+  <strong>2. Growth path.</strong> What does this enum look like at the
+  end of M1? Plausibly:
+</p>
+
+<pre><code>pub enum CoreError {
+    Session(String),     // session loop runtime errors
+    Pricing(String),     // pricing-registry lookup / TOML parse errors
+    Acp(String),         // ACP protocol / transport errors (in adapter, but might wrap up here)
+    Io(io::Error),       // wrapping Host io errors when they cross the boundary
+}</code></pre>
+
+<p>
+  At ~5 variants we should re-evaluate the no-thiserror decision; at ~8
+  variants thiserror probably becomes worth it.
+</p>
+
+<p>
+  <strong>3. <code>String</code> message vs structured fields.</strong>
+  Stringly-typed messages are easy to construct but lossy for callers who
+  want to programmatically match on the cause. M1 has no callers
+  matching on errors (every consumer just propagates), so
+  <code>String</code> messages are fine. Revisit when the first caller
+  wants to branch on the failure mode.
+</p>
+
+<p>
+  <strong>4. <code>From</code> impls.</strong> Skip until the first
+  conversion is actually needed. Adding <code>From&lt;io::Error&gt;</code>
+  the moment we have an <code>Io</code> variant is reasonable; adding it
+  pre-emptively isn't.
+</p>
+
+<p>
+  <strong>5. The <code>Result</code> alias.</strong> Standard pattern;
+  saves typing across the crate. Defined in the same module as the error
+  type so a single <code>use crate::Result</code> reads as expected.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<p>The full file, ready to type:</p>
+
+<pre><code>// Copyright 2026 Andre Cipriani Bandarra
+// SPDX-License-Identifier: Apache-2.0
+
+//! Error type for the crate.
+//!
+//! Hand-written `Display` and `Error` impls; no `thiserror` at M1
+//! (see [Phase 2 cross-cutting decisions]
+//! (../../docs/implementation-plan/m1/core-types/index.html#cross-cutting)).
+
+use std::fmt;
+
+/// The crate's unified error type. New variants are added in the PR that
+/// first needs them.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum CoreError {
+    /// Runtime failure inside the session loop (e.g. agent-rig stream
+    /// terminated unexpectedly). Variant exists so the type can be
+    /// threaded through signatures before the session loop lands.
+    Session(String),
+}
+
+impl fmt::Display for CoreError {
+    fn fmt(&amp;self, f: &amp;mut fmt::Formatter&lt;'_&gt;) -&gt; fmt::Result {
+        match self {
+            CoreError::Session(msg) =&gt; write!(f, "session error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for CoreError {}
+
+/// Convenience alias used throughout the crate.
+pub type Result&lt;T&gt; = std::result::Result&lt;T, CoreError&gt;;</code></pre>
+
+<p>
+  <code>#[non_exhaustive]</code> on the enum so adding variants in later
+  PRs isn't a breaking change for any (future) external consumer.
+  <code>Debug</code> derived so error chains print usefully in
+  <code>panic!</code> output and test failures.
+</p>
+
+<h2 id="lib-rs">lib.rs additions</h2>
+
+<pre><code>// Append to crates/arnes-core/src/lib.rs (under the existing header)
+
+mod error;
+
+pub use error::{CoreError, Result};</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>
+  None for this PR. The variant has no behavior to test beyond the
+  trivial <code>Display</code> impl, and there's no in-tree caller yet.
+  The next PR in this phase (<code>feat/agent-identity</code>) is also
+  test-free; tests land starting with <code>feat/message-types</code>
+  (serde round-trip) and <code>feat/host-trait</code> (Unsupported
+  default assertions).
+</p>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean &mdash; <code>CoreError</code>, the <code>Session</code> variant, and <code>Result</code> all documented.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="index.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">Phase 2: Core types</span>
+  </a>
+  <a class="next" href="agent-identity.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/agent-identity</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

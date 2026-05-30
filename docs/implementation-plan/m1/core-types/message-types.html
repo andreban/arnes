@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/message-types</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 2 &middot; PR 3 of 6</span>
+  <h1><code>feat/message-types</code></h1>
+  <p class="lead">
+    <code>Message</code> and <code>ContentBlock</code> &mdash; the content
+    vocabulary that flows in and out of the LLM, gets persisted to disk
+    in M6, and crosses the wire in ACP and HTTP/WS frames. The serde
+    shape pinned in this PR is load-bearing for years.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Land a <code>Message</code> enum (per-role) holding
+  <code>Vec&lt;ContentBlock&gt;</code>, with the <code>ContentBlock</code>
+  variants M1 needs <em>plus</em> the variants M2 needs as stubs (so M2
+  doesn't churn the enum). Pin the JSON wire shape via a round-trip
+  test against a literal string so any future change is deliberate.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/message.rs</code></li>
+  <li><strong>new</strong>: <code>crates/arnes-core/tests/serde_roundtrip.rs</code></li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code></li>
+  <li><strong>modify</strong>: root + <code>arnes-core</code> <code>Cargo.toml</code> &mdash; add <code>serde</code>, <code>serde_json</code>.</li>
+</ul>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  This is the PR with the most genuine design weight in the phase. Every
+  choice here is hard to revisit later (persistence file format, ACP
+  payload shape, frontend rendering assumptions all build on it).
+</p>
+
+<h3 id="thinking-blocks">1. Thinking blocks (the previously-missed concern)</h3>
+
+<p>
+  Modern LLMs emit a content type that isn't the model's response text:
+  the model's <em>reasoning / thinking</em>. arnes must represent this
+  as a first-class <code>ContentBlock</code> from M1, not bolt it on
+  later.
+</p>
+
+<table>
+  <thead><tr><th>Provider</th><th>What's emitted</th><th>Wire shape</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Anthropic (Claude with extended thinking)</td>
+      <td>Plain-text thinking + occasionally encrypted thinking</td>
+      <td><code>{type: "thinking", thinking: "..."}</code>; <code>{type: "redacted_thinking", data: "encrypted-blob"}</code></td>
+    </tr>
+    <tr>
+      <td>Google (Gemini 2.5 Flash/Pro thinking mode)</td>
+      <td>Reasoning text marked with a <code>thought: true</code> flag on the part</td>
+      <td>part with <code>thought: true</code></td>
+    </tr>
+    <tr>
+      <td>OpenAI (o-series, gpt-5)</td>
+      <td>Reasoning tokens, mostly opaque to caller</td>
+      <td>Reasoning summary or hidden; token counts in usage</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  Why arnes cares from M1:
+</p>
+
+<ul>
+  <li><strong>Persistence (M6) needs to record it</strong> &mdash; an honest replay should include what the model was thinking, not just what it said. If we don't ship the variant now, M6's JSONL gets a breaking-shape change when we do.</li>
+  <li><strong>Frontends choose what to do with it</strong> &mdash; TUI may render in dim color or hide behind a key; ACP forwards to the editor; HTTP streams it for inspector tools. The harness shouldn't pre-decide.</li>
+  <li><strong>Cost accounting attributes it</strong> &mdash; <code>Usage.thinking_tokens</code> already exists in the design (see <a href="../../core.html#usage-module">usage module spec</a>). Without a thinking content block, the token count is unattributable to any visible artifact.</li>
+  <li><strong>M1's Gemini integration will emit them</strong> if the model is configured for thinking mode. Skipping this variant means M1 silently drops content that the API returned.</li>
+</ul>
+
+<p>
+  <strong>Decision:</strong> M1 ships a <code>ContentBlock::Thinking { text: String }</code>
+  variant. We skip <code>RedactedThinking</code> for now since we're
+  Gemini-only at M1 and Gemini doesn't produce encrypted blobs; the
+  <code>#[non_exhaustive]</code> attribute means adding it later (when
+  we wire Anthropic) is non-breaking. <code>signature</code> field
+  (Anthropic's signed-thinking attestation) is also deferred until
+  Anthropic lands.
+</p>
+
+<h3 id="contentblock-set">2. ContentBlock variant set at M1</h3>
+
+<p>
+  After the thinking discussion, the M1 set is:
+</p>
+
+<ul>
+  <li><strong><code>Text { text: String }</code></strong> &mdash; M1 constructs and renders.</li>
+  <li><strong><code>Thinking { text: String }</code></strong> &mdash; M1 constructs (from Gemini); frontends choose to render.</li>
+  <li><strong><code>ToolUse { id: String, name: String, input: serde_json::Value }</code></strong> &mdash; declared so M2 doesn't churn the enum; M1 never constructs.</li>
+  <li><strong><code>ToolResult { tool_use_id: String, content: serde_json::Value, is_error: bool }</code></strong> &mdash; same M1 rationale.</li>
+</ul>
+
+<p>Deliberately deferred variants (add when there's a real consumer):</p>
+
+<ul>
+  <li><code>RedactedThinking { data: String }</code> &mdash; Anthropic-specific; add when we wire Anthropic.</li>
+  <li><code>Image { source: ImageSource }</code> &mdash; multimodal; M4 is when prompt-building lands, image input is plausibly M5+.</li>
+  <li><code>Document { source: DocSource }</code> &mdash; PDF / file upload; same timing.</li>
+  <li><code>Citation { ... }</code> &mdash; Claude RAG-specific; defer.</li>
+</ul>
+
+<p>
+  <code>#[non_exhaustive]</code> on <code>ContentBlock</code> means all
+  these are non-breaking additions later.
+</p>
+
+<h3 id="serde-tagging">3. Serde tagging shape (load-bearing)</h3>
+
+<p>
+  Three options for representing <code>ContentBlock</code> variants in JSON:
+</p>
+
+<ul>
+  <li>
+    <strong>Internally tagged</strong> (<code>#[serde(tag = "type")]</code>):
+    <code>{"type": "text", "text": "hi"}</code>. Matches Anthropic's API
+    shape directly. Compact and readable. <em>Recommended.</em>
+  </li>
+  <li>
+    <strong>Adjacently tagged</strong> (<code>#[serde(tag = "type", content = "data")]</code>):
+    <code>{"type": "text", "data": {"text": "hi"}}</code>. More uniform
+    for tooling; slightly less readable.
+  </li>
+  <li>
+    <strong>Externally tagged</strong> (default): <code>{"Text": {"text": "hi"}}</code>.
+    Verbose and Rust-flavored; bad fit for JSON.
+  </li>
+</ul>
+
+<p>
+  The persistence format (M6 JSONL) and the ACP wire format will both
+  read whatever shape we ship here. <strong>Decision:</strong> internally
+  tagged with <code>rename_all = "snake_case"</code>, matching the
+  Anthropic-style on-the-wire convention. Pinned by a literal-string
+  assertion in the round-trip test.
+</p>
+
+<h3 id="system-role">4. <code>Message::System</code>: <code>String</code> or <code>Vec&lt;ContentBlock&gt;</code>?</h3>
+
+<p>
+  The user/assistant roles need <code>Vec&lt;ContentBlock&gt;</code> for
+  multi-part messages (text + tool use + thinking, etc.). The system role
+  carries just instructions. Two options:
+</p>
+
+<ul>
+  <li>
+    <strong><code>System { content: String }</code> (chosen)</strong>:
+    simpler, matches "one system instruction per turn" idiom, matches
+    most provider APIs at their simplest.
+  </li>
+  <li>
+    <strong><code>System { content: Vec&lt;ContentBlock&gt; }</code> with text-only enforced</strong>:
+    more uniform with user/assistant; allows future cache_control
+    annotations per system block (Anthropic prompt caching).
+  </li>
+</ul>
+
+<p>
+  Provider caching matters for cost (huge win on long system prompts)
+  but lands later (post-M1). The decision is "make this simple now;
+  introduce the block-list shape when caching wiring shows up." With
+  <code>#[non_exhaustive]</code> on <code>Message</code> the variant's
+  internal shape isn't <em>technically</em> non-breaking to change, but
+  the persistence migration is a known cost we'll pay deliberately.
+</p>
+
+<h3 id="constructors">5. Helper constructors</h3>
+
+<p>
+  Add the obvious one (<code>Message::user_text</code>) so tests and the
+  scripted-LLM in phase 4 don't have to spell out the
+  <code>vec![ContentBlock::Text { ... }]</code> ceremony every time. Other
+  constructors (<code>::assistant_text</code>, <code>::tool_result</code>)
+  earn their place when they have a caller.
+</p>
+
+<h2 id="deps">Deps</h2>
+
+<p><strong>Workspace root <code>Cargo.toml</code></strong>:</p>
+
+<pre><code>[workspace.dependencies]
+# (existing entries)
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"</code></pre>
+
+<p><strong><code>crates/arnes-core/Cargo.toml</code></strong>:</p>
+
+<pre><code>[dependencies]
+# (existing entries)
+serde      = { workspace = true }
+serde_json = { workspace = true }</code></pre>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// Copyright 2026 Andre Cipriani Bandarra
+// SPDX-License-Identifier: Apache-2.0
+
+//! Message + content-block vocabulary.
+//!
+//! Shapes pinned by the round-trip test in
+//! `tests/serde_roundtrip.rs`. Treat any change to the serde tagging
+//! or variant names as a wire-format break (M6 persistence and ACP
+//! both depend on it).
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// A message in conversation history.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "role", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Message {
+    User      { content: Vec&lt;ContentBlock&gt; },
+    Assistant { content: Vec&lt;ContentBlock&gt; },
+    /// System instructions. M1 keeps this as a plain string; if/when
+    /// prompt caching lands we may migrate to `Vec&lt;ContentBlock&gt;`
+    /// (deliberate persistence migration at that time).
+    System    { content: String },
+}
+
+/// One part of a message's content. Variants are added in the PR that
+/// first needs them; `#[non_exhaustive]` makes additions non-breaking.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ContentBlock {
+    /// User-visible text. The default case for everything at M1.
+    Text { text: String },
+    /// Model's reasoning / thinking, distinct from response text.
+    /// Frontends choose whether to display.
+    /// Token counts attributed via `Usage.thinking_tokens`.
+    Thinking { text: String },
+    /// Tool invocation. M1 never constructs these; declared so M2 does
+    /// not need an enum-breaking PR.
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
+    /// Tool result. Same M1 rationale.
+    ToolResult {
+        tool_use_id: String,
+        content: Value,
+        is_error: bool,
+    },
+}
+
+impl Message {
+    /// Convenience constructor: a single-text-block user message.
+    pub fn user_text(text: impl Into&lt;String&gt;) -&gt; Self {
+        Self::User {
+            content: vec![ContentBlock::Text { text: text.into() }],
+        }
+    }
+}</code></pre>
+
+<h2 id="lib-rs">lib.rs additions</h2>
+
+<pre><code>mod message;
+
+pub use message::{Message, ContentBlock};</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>
+  <code>tests/serde_roundtrip.rs</code>:
+</p>
+
+<pre><code>// Copyright 2026 Andre Cipriani Bandarra
+// SPDX-License-Identifier: Apache-2.0
+
+use arnes_core::{ContentBlock, Message};
+
+#[test]
+fn message_user_text_roundtrip() {
+    let m = Message::User {
+        content: vec![
+            ContentBlock::Text { text: "hi".into() },
+            ContentBlock::Thinking { text: "let me think".into() },
+        ],
+    };
+
+    let json = serde_json::to_string(&amp;m).unwrap();
+    let back: Message = serde_json::from_str(&amp;json).unwrap();
+
+    // Structural round-trip.
+    match back {
+        Message::User { content } =&gt; {
+            assert_eq!(content.len(), 2);
+            assert!(matches!(content[0], ContentBlock::Text { .. }));
+            assert!(matches!(content[1], ContentBlock::Thinking { .. }));
+        }
+        _ =&gt; panic!("expected User variant"),
+    }
+}
+
+#[test]
+fn message_wire_shape_is_pinned() {
+    // Pin the on-the-wire JSON so any future #[serde(tag = ...)] change
+    // forces a deliberate test update, not a silent format break.
+    let m = Message::User {
+        content: vec![ContentBlock::Text { text: "hi".into() }],
+    };
+    let json = serde_json::to_string(&amp;m).unwrap();
+    assert_eq!(
+        json,
+        r#"{"role":"user","content":[{"type":"text","text":"hi"}]}"#,
+    );
+}
+
+#[test]
+fn system_message_is_plain_string() {
+    // System currently carries a String (not Vec&lt;ContentBlock&gt;).
+    // Shape change requires a deliberate migration; see message-types
+    // PR plan, Discussion section 4.
+    let m = Message::System { content: "be helpful".into() };
+    let json = serde_json::to_string(&amp;m).unwrap();
+    assert_eq!(json, r#"{"role":"system","content":"be helpful"}"#);
+}</code></pre>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo test -p arnes-core --test serde_roundtrip</code> green &mdash; all three tests pass.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean &mdash; every variant documented, including the deferral rationale on <code>ToolUse</code> / <code>ToolResult</code> and the thinking-block note.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="agent-identity.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/agent-identity</span>
+  </a>
+  <a class="next" href="frontend-trait.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/frontend-trait</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/host-trait</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 2 &middot; PR 5 of 6</span>
+  <h1><code>feat/host-trait</code></h1>
+  <p class="lead">
+    The <code>Host</code> trait &mdash; OS resources (filesystem, terminal)
+    that tools talk to via abstraction. M1 ships the trait, the
+    associated data types, a <code>LocalHost</code> impl that returns
+    <code>Unsupported</code> for every method, and one
+    <code>#[tokio::test]</code> per method asserting that
+    <code>Unsupported</code> contract.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Define the OS-resource trait that every adapter ships an
+  implementation of, with all methods defaulting to <code>Unsupported</code>
+  so M1 binaries can construct a session without yet having any working
+  host. Real impls land in M3 alongside the first sensitive tools.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/host.rs</code></li>
+  <li><strong>new</strong>: <code>crates/arnes-core/tests/local_host_unsupported.rs</code></li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code></li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/Cargo.toml</code> &mdash; add <code>[dev-dependencies] tokio = { version = "1", features = ["macros", "rt"] }</code> for <code>#[tokio::test]</code>.</li>
+</ul>
+
+<p>No <code>[workspace.dependencies]</code> entry for <code>tokio</code> yet &mdash; the dev-dep is the first usage and is scoped to this crate's tests. Phase 4 promotes tokio to a workspace dep when <code>Session</code> needs it at runtime.</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. The Method set.</strong> ACP defines a long menu of host
+  capabilities (<code>fs/read_text_file</code>,
+  <code>fs/write_text_file</code>, <code>fs/list_directory</code>,
+  <code>terminal/create</code>, <code>terminal/snapshot</code>,
+  <code>terminal/kill</code>, <code>terminal/release</code>, env reads,
+  &hellip;). At M1 we ship the conservative starting set:
+</p>
+
+<ul>
+  <li><code>read_text_file</code></li>
+  <li><code>write_text_file</code></li>
+  <li><code>list_directory</code></li>
+  <li><code>terminal_create</code></li>
+  <li><code>terminal_snapshot</code></li>
+  <li><code>terminal_kill</code></li>
+  <li><code>terminal_release</code></li>
+</ul>
+
+<p>
+  No method has a caller yet at M1 (tools land in M2; ACP forwarding in
+  phase 6). The shipped set anticipates what M2's first tools
+  (<code>read</code>, <code>write</code>, <code>edit</code>,
+  <code>bash</code>) will need. <strong>Default-Unsupported pattern</strong>
+  means adding more methods later (e.g. <code>stat</code>, <code>delete</code>,
+  glob) is a one-line addition that doesn't break existing impls.
+</p>
+
+<p>
+  Worth flagging: alternative would be a much smaller M1 set (just
+  <code>read_text_file</code> and <code>terminal_create</code>) and add
+  the rest in M2. Either is defensible. Shipping the larger set now
+  keeps the trait shape settled before M2 adds real impls, and the cost
+  is purely doc-comment writing (the default bodies are
+  one-liners).
+</p>
+
+<p>
+  <strong>2. Default-to-<code>Unsupported</code> pattern.</strong> Every
+  method has a default body that returns
+  <code>Err(io::ErrorKind::Unsupported)</code>. This means:
+</p>
+
+<ul>
+  <li><code>LocalHost</code> can be a unit struct with an empty <code>impl Host for LocalHost {}</code> &mdash; no methods to write at M1.</li>
+  <li>Adding a new method to the trait doesn't break any existing impl; it just falls through to <code>Unsupported</code>.</li>
+  <li>The unit tests pin this behavior: if someone "helpfully" overrides a method without thinking it through, the test catches the missing assertion.</li>
+</ul>
+
+<p>
+  <strong>3. Why not use <code>std::io::Error</code> with custom
+  <code>ErrorKind</code>?</strong> <code>io::ErrorKind::Unsupported</code>
+  is the natural match: it already means "the operation isn't supported
+  in this context." We're not inventing semantics; we're using the
+  stdlib's exact intent.
+</p>
+
+<p>
+  <strong>4. Trait method signatures.</strong>
+</p>
+
+<ul>
+  <li><strong><code>read_text_file</code> returns <code>io::Result&lt;String&gt;</code></strong>: text-only; binary reads aren't a use case yet (M2/M3 might add <code>read_bytes</code>).</li>
+  <li><strong><code>write_text_file</code> takes <code>&amp;str</code></strong>: same logic; binary writes deferred.</li>
+  <li><strong><code>list_directory</code> returns <code>Vec&lt;DirEntry&gt;</code></strong>: not async-streamed at M1 (directory sizes are bounded for the editor / tool use cases we target).</li>
+  <li><strong><code>terminal_*</code> work on <code>TerminalHandle</code> values</strong>: opaque (just wraps a UUID); the actual process management is the impl's problem.</li>
+</ul>
+
+<p>
+  <strong>5. <code>LocalHost</code> being a unit struct.</strong> M1 it's
+  literally <code>pub struct LocalHost; impl Host for LocalHost {}</code>.
+  M3 fills in real implementations (<code>tokio::fs</code> wrappers,
+  PTY for terminals). The unit-struct shape stays the same; only the
+  <code>impl</code> grows.
+</p>
+
+<h2 id="deps">Deps</h2>
+
+<p><strong><code>crates/arnes-core/Cargo.toml</code></strong>, append:</p>
+
+<pre><code>[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }</code></pre>
+
+<p>
+  <code>tokio</code> is a dev-only dep here because we don't run anything
+  on a tokio runtime in <code>arnes-core</code> code yet &mdash; we just
+  need <code>#[tokio::test]</code> to drive async assertions. Phase 4
+  promotes tokio to a normal workspace dep when <code>Session</code>
+  spawns tasks.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// Copyright 2026 Andre Cipriani Bandarra
+// SPDX-License-Identifier: Apache-2.0
+
+//! OS-resource abstraction.
+//!
+//! Tools never touch `std::fs` / `tokio::process` directly; they route
+//! through a `&amp;dyn Host` from their `ToolContext`. Each adapter ships
+//! an implementation (`LocalHost` here for in-process; `AcpHost` in
+//! `arnes-acp` for editor-mediated I/O).
+
+use std::{io, path::Path, path::PathBuf};
+
+use async_trait::async_trait;
+use uuid::Uuid;
+
+/// OS-resource trait. Every method defaults to
+/// `io::ErrorKind::Unsupported` so adding methods is non-breaking and
+/// minimal impls (like `LocalHost` at M1) need not list every method.
+#[async_trait]
+pub trait Host: Send + Sync {
+    async fn read_text_file(&amp;self, _path: &amp;Path) -&gt; io::Result&lt;String&gt; {
+        unsupported()
+    }
+
+    async fn write_text_file(&amp;self, _path: &amp;Path, _contents: &amp;str) -&gt; io::Result&lt;()&gt; {
+        unsupported()
+    }
+
+    async fn list_directory(&amp;self, _path: &amp;Path) -&gt; io::Result&lt;Vec&lt;DirEntry&gt;&gt; {
+        unsupported()
+    }
+
+    async fn terminal_create(&amp;self, _spec: TerminalSpec) -&gt; io::Result&lt;TerminalHandle&gt; {
+        unsupported()
+    }
+
+    async fn terminal_snapshot(&amp;self, _handle: &amp;TerminalHandle) -&gt; io::Result&lt;TerminalSnapshot&gt; {
+        unsupported()
+    }
+
+    async fn terminal_kill(&amp;self, _handle: &amp;TerminalHandle) -&gt; io::Result&lt;()&gt; {
+        unsupported()
+    }
+
+    async fn terminal_release(&amp;self, _handle: TerminalHandle) -&gt; io::Result&lt;()&gt; {
+        unsupported()
+    }
+}
+
+fn unsupported&lt;T&gt;() -&gt; io::Result&lt;T&gt; {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "not implemented at this milestone",
+    ))
+}
+
+// --- Data types ---
+
+#[derive(Clone, Debug)]
+pub struct DirEntry {
+    pub name: String,
+    pub is_dir: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct TerminalSpec {
+    pub command: String,
+    pub args: Vec&lt;String&gt;,
+    pub cwd: Option&lt;PathBuf&gt;,
+}
+
+#[derive(Clone, Debug)]
+pub struct TerminalHandle {
+    pub id: Uuid,
+}
+
+#[derive(Clone, Debug)]
+pub struct TerminalSnapshot {
+    pub output: String,
+    pub exit_code: Option&lt;i32&gt;,
+}
+
+// --- The in-process default impl ---
+
+/// In-process host: real `tokio::fs` / PTY implementations land in M3.
+/// At M1 it relies on every default body, so every call returns
+/// `io::ErrorKind::Unsupported`.
+pub struct LocalHost;
+
+#[async_trait]
+impl Host for LocalHost {}</code></pre>
+
+<h2 id="lib-rs">lib.rs additions</h2>
+
+<pre><code>mod host;
+
+pub use host::{
+    Host, LocalHost,
+    DirEntry, TerminalSpec, TerminalHandle, TerminalSnapshot,
+};</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>
+  <code>tests/local_host_unsupported.rs</code> &mdash; one
+  <code>#[tokio::test]</code> per <code>Host</code> method:
+</p>
+
+<pre><code>// Copyright 2026 Andre Cipriani Bandarra
+// SPDX-License-Identifier: Apache-2.0
+
+use std::{io, path::PathBuf};
+
+use arnes_core::{Host, LocalHost, TerminalHandle, TerminalSpec};
+use uuid::Uuid;
+
+fn handle() -&gt; TerminalHandle {
+    TerminalHandle { id: Uuid::now_v7() }
+}
+
+fn spec() -&gt; TerminalSpec {
+    TerminalSpec { command: "echo".into(), args: vec!["hi".into()], cwd: None }
+}
+
+#[tokio::test]
+async fn read_text_file_is_unsupported() {
+    let err = LocalHost.read_text_file("/tmp/x".as_ref()).await.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+}
+
+#[tokio::test]
+async fn write_text_file_is_unsupported() {
+    let err = LocalHost.write_text_file("/tmp/x".as_ref(), "hi").await.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+}
+
+#[tokio::test]
+async fn list_directory_is_unsupported() {
+    let err = LocalHost.list_directory(PathBuf::from("/tmp").as_ref()).await.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+}
+
+#[tokio::test]
+async fn terminal_create_is_unsupported() {
+    let err = LocalHost.terminal_create(spec()).await.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+}
+
+#[tokio::test]
+async fn terminal_snapshot_is_unsupported() {
+    let h = handle();
+    let err = LocalHost.terminal_snapshot(&amp;h).await.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+}
+
+#[tokio::test]
+async fn terminal_kill_is_unsupported() {
+    let h = handle();
+    let err = LocalHost.terminal_kill(&amp;h).await.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+}
+
+#[tokio::test]
+async fn terminal_release_is_unsupported() {
+    let err = LocalHost.terminal_release(handle()).await.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+}</code></pre>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo test -p arnes-core --test local_host_unsupported</code> green; 7 tests pass.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean; every <code>Host</code> method documented (the Unsupported-default story belongs in the trait-level doc, not repeated per method).</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="frontend-trait.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/frontend-trait</span>
+  </a>
+  <a class="next" href="tool-context.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/tool-context</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>
