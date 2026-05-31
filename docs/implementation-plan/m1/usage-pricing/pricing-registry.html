@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/pricing-registry</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 5 of 8</span>
+  <h1><code>feat/pricing-registry</code></h1>
+  <p class="lead">
+    <code>PricingRegistry</code> &mdash; in-memory lookup of
+    <code>ModelCostInfo</code> by <code>(provider, model_id)</code>,
+    with wildcard patterns and a user-override-wins merge rule. The
+    actual TOML file loading lands in PR #6; this PR ships the registry
+    structure + lookup + the <code>compute_cost</code> helper.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Ship the data structure callers consult to turn a <code>ModelKey</code>
+  + raw token counts into a <code>ModelCostInfo</code> (and from there,
+  an <code>Option&lt;Cost&gt;</code>). Construction takes pre-parsed
+  rules; the TOML parser that produces those rules lands in PR #6.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/pricing.rs</code> &mdash; <code>PricingRegistry</code>, lookup, <code>compute_cost</code> helper.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; module + re-exports.</li>
+</ul>
+
+<p>No new deps.</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. Internal rule shape.</strong> Each pricing entry has a
+  provider, either an exact <code>model_id</code> or a wildcard pattern,
+  and a <code>ModelCostInfo</code>. The natural internal representation:
+</p>
+
+<pre><code>struct Rule {
+    provider: String,
+    matcher:  Matcher,
+    info:     ModelCostInfo,
+}
+
+enum Matcher {
+    Exact(String),  // matches a single model_id
+    Pattern(String), // glob-style: only "*" for full wildcard at M1
+}</code></pre>
+
+<p>
+  M1 only needs the trivial wildcard case (the bundled Ollama rule:
+  <code>provider = "ollama", pattern = "*"</code>, info = Free). We
+  ship a minimal <code>Matcher</code> that handles exact matches and
+  <code>"*"</code>; more sophisticated patterns (prefix wildcards like
+  <code>"gemini-2.5-*"</code>) can be added when a provider needs them.
+</p>
+
+<p>
+  <strong>2. Lookup precedence.</strong> Exact matches always beat
+  patterns. Within those tiers, the order rules were inserted matters
+  only for the merge step (user overrides bundled), not for matching
+  semantics. Concretely:
+</p>
+
+<ol>
+  <li>If any rule has <code>provider == key.provider</code> and <code>Matcher::Exact(model_id) == key.model_id</code>: return that rule's info.</li>
+  <li>Else if any rule has <code>provider == key.provider</code> and <code>Matcher::Pattern("*")</code>: return that rule's info.</li>
+  <li>Else: return <code>ModelCostInfo::Unknown</code>.</li>
+</ol>
+
+<p>
+  <strong>3. Bundled-vs-user merge.</strong> User overrides win. The
+  construction API takes two rule sets:
+</p>
+
+<pre><code>pub fn from_rules(bundled: Vec&lt;Rule&gt;, user: Vec&lt;Rule&gt;) -&gt; Self;</code></pre>
+
+<p>
+  Internal merge: walk <code>user</code> first, then <code>bundled</code>.
+  Inserting a rule for <code>(provider, exact-id)</code> displaces any
+  prior rule for the same <code>(provider, exact-id)</code>. Same for
+  <code>(provider, "*")</code> patterns. User entries written first
+  means bundled entries can't displace them.
+</p>
+
+<p>
+  PR #6's loader produces the two <code>Vec&lt;Rule&gt;</code>s; this PR
+  ships the registry that consumes them and accepts test-only construction
+  with rules built directly.
+</p>
+
+<p>
+  <strong>4. <code>compute_cost</code> helper.</strong> Lives next to
+  the registry because it's the bridge from raw tokens + pricing to
+  <code>Option&lt;Cost&gt;</code>. The math is straightforward integer
+  arithmetic: per token kind, <code>(tokens * micros_per_mtok) / 1_000_000</code>.
+  For optional rates (<code>cache_read_per_mtok</code> etc.), fall back
+  to the matching base rate (<code>input_per_mtok</code> for cache,
+  <code>output_per_mtok</code> for thinking). Mapping the three-state
+  <code>ModelCostInfo</code>:
+</p>
+
+<ul>
+  <li><code>Priced(p)</code> &rarr; <code>Some(cost)</code> with values computed from <code>p</code>.</li>
+  <li><code>Free</code>     &rarr; <code>Some(Cost::default())</code>.</li>
+  <li><code>Unknown</code>  &rarr; <code>None</code>.</li>
+</ul>
+
+<p>
+  Callers (phase 4's <code>Session</code> at turn end) do
+  <code>let cost = compute_cost(&amp;registry.lookup(&amp;model), tokens);</code>
+  &mdash; one call.
+</p>
+
+<p>
+  <strong>5. Where is the registry constructed?</strong> Not in M1's
+  ToolContext or per-tool scope; it lives session-wide. Phase 4 builds
+  one <code>PricingRegistry</code> at <code>Session::new</code> and
+  shares it for the session's lifetime. M1's registry struct doesn't
+  need to be <code>Sync</code>-by-default since it's immutable post-load
+  (we'd reach for <code>Arc&lt;PricingRegistry&gt;</code> at the call
+  sites if shared), but the type derives <code>Clone</code> for
+  flexibility.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// Copyright 2026 Andre Cipriani Bandarra
+// SPDX-License-Identifier: Apache-2.0
+
+//! Pricing registry: lookup of `ModelCostInfo` by `(provider, model_id)`.
+
+use crate::{Cost, Micros, ModelCostInfo, ModelKey, ModelPricing};
+
+#[derive(Clone, Debug)]
+pub struct Rule {
+    pub provider: String,
+    pub matcher:  Matcher,
+    pub info:     ModelCostInfo,
+}
+
+#[derive(Clone, Debug)]
+pub enum Matcher {
+    Exact(String),
+    Pattern(String),  // "*" only at M1
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PricingRegistry {
+    rules: Vec&lt;Rule&gt;,
+}
+
+impl PricingRegistry {
+    /// Build a registry from bundled and user-override rule sets.
+    /// User entries take precedence over bundled entries for the same
+    /// `(provider, matcher)`.
+    pub fn from_rules(bundled: Vec&lt;Rule&gt;, user: Vec&lt;Rule&gt;) -&gt; Self {
+        let mut rules = Vec::with_capacity(user.len() + bundled.len());
+        rules.extend(user);
+        for b in bundled {
+            let already_present = rules.iter().any(|r| {
+                r.provider == b.provider &amp;&amp; same_matcher(&amp;r.matcher, &amp;b.matcher)
+            });
+            if !already_present {
+                rules.push(b);
+            }
+        }
+        PricingRegistry { rules }
+    }
+
+    /// Look up the cost info for a `ModelKey`.
+    /// Exact matches beat patterns; unmatched models return `Unknown`.
+    pub fn lookup(&amp;self, key: &amp;ModelKey) -&gt; ModelCostInfo {
+        for r in &amp;self.rules {
+            if r.provider == key.provider {
+                if let Matcher::Exact(id) = &amp;r.matcher {
+                    if id == &amp;key.model_id {
+                        return r.info.clone();
+                    }
+                }
+            }
+        }
+        for r in &amp;self.rules {
+            if r.provider == key.provider {
+                if let Matcher::Pattern(p) = &amp;r.matcher {
+                    if p == "*" {
+                        return r.info.clone();
+                    }
+                }
+            }
+        }
+        ModelCostInfo::Unknown
+    }
+}
+
+fn same_matcher(a: &amp;Matcher, b: &amp;Matcher) -&gt; bool {
+    match (a, b) {
+        (Matcher::Exact(x), Matcher::Exact(y))     =&gt; x == y,
+        (Matcher::Pattern(x), Matcher::Pattern(y)) =&gt; x == y,
+        _ =&gt; false,
+    }
+}
+
+/// Compute the cost for a turn given the model's `ModelCostInfo` and raw
+/// token counts. Returns `None` for `Unknown`.
+pub fn compute_cost(info: &amp;ModelCostInfo, tokens: &amp;TokenCounts) -&gt; Option&lt;Cost&gt; {
+    match info {
+        ModelCostInfo::Unknown =&gt; None,
+        ModelCostInfo::Free    =&gt; Some(Cost::default()),
+        ModelCostInfo::Priced(p) =&gt; Some(price(p, tokens)),
+    }
+}
+
+fn price(p: &amp;ModelPricing, t: &amp;TokenCounts) -&gt; Cost {
+    let input       = mul(t.input,       p.input_per_mtok);
+    let output      = mul(t.output,      p.output_per_mtok);
+    let cache_read  = mul(t.cache_read,  p.cache_read_per_mtok.unwrap_or(p.input_per_mtok));
+    let cache_write = mul(t.cache_write, p.cache_write_per_mtok.unwrap_or(p.input_per_mtok));
+    let thinking    = mul(t.thinking,    p.thinking_per_mtok.unwrap_or(p.output_per_mtok));
+    let total       = input + output + cache_read + cache_write + thinking;
+    Cost { input, output, cache_read, cache_write, thinking, total }
+}
+
+fn mul(tokens: u64, per_mtok: Micros) -&gt; Micros {
+    // Integer math: (tokens * micros_per_mtok) / 1_000_000.
+    // Use i128 intermediate to avoid overflow at large token counts.
+    let product = (tokens as i128) * (per_mtok.0 as i128);
+    Micros((product / 1_000_000) as i64)
+}
+
+pub struct TokenCounts {
+    pub input:       u64,
+    pub output:      u64,
+    pub cache_read:  u64,
+    pub cache_write: u64,
+    pub thinking:    u64,
+}</code></pre>
+
+<h2 id="lib-rs">lib.rs additions</h2>
+
+<pre><code>mod pricing;
+
+pub use pricing::{Matcher, PricingRegistry, Rule, TokenCounts, compute_cost};</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<ul>
+  <li><strong>Exact match</strong>: rule for <code>("gemini", "gemini-2.5-flash")</code> matches that exact key; doesn't match <code>("gemini", "gemini-2.5-pro")</code>.</li>
+  <li><strong>Wildcard match</strong>: rule for <code>("ollama", "*", Free)</code> matches every <code>ollama</code> model_id.</li>
+  <li><strong>Exact beats wildcard</strong>: if both a <code>("provider", "exact-id")</code> and a <code>("provider", "*")</code> rule exist, the exact one wins.</li>
+  <li><strong>Unmatched returns Unknown</strong>: looking up a provider/model with no rules returns <code>ModelCostInfo::Unknown</code>.</li>
+  <li><strong>User overrides bundled</strong>: bundled rule says Free; user override for the same exact key says Priced; lookup returns Priced.</li>
+  <li><strong><code>compute_cost</code> three-state</strong>: Priced returns <code>Some</code> with computed amounts; Free returns <code>Some(Cost::default())</code>; Unknown returns <code>None</code>.</li>
+  <li><strong><code>compute_cost</code> optional fallback</strong>: a <code>ModelPricing</code> with <code>cache_read_per_mtok = None</code> falls back to <code>input_per_mtok</code>.</li>
+  <li><strong>Arithmetic</strong>: 75 micros/Mtok &times; 1,000,000 tokens = Micros(75) (a.k.a. $0.000075).</li>
+</ul>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green; new registry + compute tests pass.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="cumulative-usage.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/cumulative-usage</span>
+  </a>
+  <a class="next" href="pricing-toml-loader.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/pricing-toml-loader</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

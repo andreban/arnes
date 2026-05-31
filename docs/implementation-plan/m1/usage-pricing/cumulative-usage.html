@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/cumulative-usage</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 4 of 8</span>
+  <h1><code>feat/cumulative-usage</code></h1>
+  <p class="lead">
+    The aggregation primitive: a <code>HashMap&lt;(AgentId, ModelKey), ModelUsage&gt;</code>
+    with a <code>record()</code> method that folds a <code>Usage</code>
+    into the matching bucket.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Ship <code>CumulativeUsage</code> with <code>record()</code>,
+  <code>total_known_cost()</code>, and
+  <code>total_turns_with_unknown_cost()</code>. The derived views
+  (<code>by_model</code> / <code>by_agent</code>) land in PR #7.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; append <code>CumulativeUsage</code>.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; re-export.</li>
+</ul>
+
+<p>No new deps. (<code>std::collections::HashMap</code> is in std.)</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. Indexing by <code>(AgentId, ModelKey)</code>.</strong>
+  Already established in <code>core.html</code>'s future-compat table:
+  one bucket per (agent, model) pair. V1 only ever populates
+  <code>(AgentId::Root, model)</code> entries (one or two if a session
+  switches models mid-run); post-V1 sub-agents and sub-agent model
+  choices each get their own bucket additively. The hash-map keying is
+  why we derived <code>Hash</code> on <code>AgentId</code> and
+  <code>ModelKey</code> in phase 2.
+</p>
+
+<p>
+  <strong>2. <code>record()</code> semantics.</strong> Fold one
+  <code>Usage</code> into the bucket identified by
+  <code>(usage.agent_id, usage.model)</code>, creating the bucket if it
+  doesn't yet exist. Field-by-field:
+</p>
+
+<ul>
+  <li>Add each <code>*_tokens</code> count to the bucket's matching field.</li>
+  <li>Increment <code>turns</code> by 1.</li>
+  <li>Increment <code>turns_total</code> on the outer struct by 1.</li>
+  <li>If <code>usage.cost</code> is <code>Some(c)</code>: <code>bucket.known_cost += c</code>.</li>
+  <li>If <code>usage.cost</code> is <code>None</code>: <code>bucket.turns_with_unknown_cost += 1</code>.</li>
+</ul>
+
+<p>
+  Note that <em>both</em> bucket-level counters update for every turn:
+  <code>turns</code> increments unconditionally; <code>known_cost</code>
+  or <code>turns_with_unknown_cost</code> increments depending on
+  whether cost was known. So
+  <code>turns == known_cost_turn_count + turns_with_unknown_cost</code>
+  is an invariant. (Where <code>known_cost_turn_count</code> is what
+  isn't stored but is derivable.)
+</p>
+
+<p>
+  <strong>3. Separating <code>known_cost</code> from
+  <code>turns_with_unknown_cost</code>.</strong> The alternative would
+  be to coerce unknown-cost turns to <code>Cost::default()</code> and
+  add them to <code>known_cost</code>. We don't, because this is the
+  cross-cutting "Unknown is never silently zero" decision in action:
+  the consumer needs to be able to render "5 unknown-cost turns"
+  separately from "$0.123 across 47 known-cost turns."
+</p>
+
+<p>
+  <strong>4. <code>total_known_cost()</code> implementation.</strong>
+  Sum every bucket's <code>known_cost</code>. Linear in the number of
+  buckets (typically 1&ndash;2 at V1; bounded by the small number of
+  distinct (agent, model) pairs ever seen). No caching &mdash; the
+  consumer can cache the result if they care.
+</p>
+
+<p>
+  <strong>5. Outer <code>turns_total</code> as a public field.</strong>
+  Maintained by <code>record()</code>; exposed because frontends want
+  "total turns this session" without summing per-bucket. Could equally
+  be a method (<code>turns_total()</code>) that sums; the field is
+  cheaper and the value is trivially-derivable so the duplication risk
+  is low.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// Appended to crates/arnes-core/src/usage.rs:
+
+use std::collections::HashMap;
+
+/// All token + cost totals for one session, bucketed by (agent, model).
+#[derive(Clone, Debug, Default)]
+pub struct CumulativeUsage {
+    by_agent_and_model: HashMap&lt;(AgentId, ModelKey), ModelUsage&gt;,
+    pub turns_total: u32,
+}
+
+impl CumulativeUsage {
+    /// Fold one turn's `Usage` into the matching bucket.
+    pub fn record(&amp;mut self, u: Usage) {
+        let key = (u.agent_id.clone(), u.model.clone());
+        let bucket = self
+            .by_agent_and_model
+            .entry(key)
+            .or_insert_with(|| ModelUsage {
+                model: u.model.clone(),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                thinking_tokens: 0,
+                turns: 0,
+                known_cost: Cost::default(),
+                turns_with_unknown_cost: 0,
+            });
+
+        bucket.input_tokens       += u.input_tokens;
+        bucket.output_tokens      += u.output_tokens;
+        bucket.cache_read_tokens  += u.cache_read_tokens;
+        bucket.cache_write_tokens += u.cache_write_tokens;
+        bucket.thinking_tokens    += u.thinking_tokens;
+        bucket.turns              += 1;
+
+        match u.cost {
+            Some(c) =&gt; bucket.known_cost += c,
+            None    =&gt; bucket.turns_with_unknown_cost += 1,
+        }
+
+        self.turns_total += 1;
+    }
+
+    /// Sum of `known_cost` across every bucket.
+    pub fn total_known_cost(&amp;self) -&gt; Cost {
+        let mut total = Cost::default();
+        for bucket in self.by_agent_and_model.values() {
+            total += bucket.known_cost;
+        }
+        total
+    }
+
+    /// Total count of turns whose cost was `None` (model pricing Unknown).
+    pub fn total_turns_with_unknown_cost(&amp;self) -&gt; u32 {
+        self.by_agent_and_model
+            .values()
+            .map(|b| b.turns_with_unknown_cost)
+            .sum()
+    }
+}</code></pre>
+
+<h2 id="lib-rs">lib.rs additions</h2>
+
+<pre><code>pub use usage::{Cost, CumulativeUsage, Micros, ModelCostInfo, ModelPricing, ModelUsage, Usage};</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<ul>
+  <li><strong>Empty default</strong>: <code>CumulativeUsage::default()</code> has zero <code>turns_total</code> and empty totals.</li>
+  <li><strong>One bucket</strong>: record one <code>Usage</code>; <code>turns_total == 1</code>; <code>total_known_cost</code> equals the input cost.</li>
+  <li><strong>Two buckets</strong> (per-(agent, model) bucketing): record two <code>Usage</code>s with different <code>ModelKey</code>s; the internal map has two entries; <code>total_known_cost</code> is the sum.</li>
+  <li><strong>Unknown-cost counting</strong>: record one <code>Usage</code> with <code>cost: Some(...)</code> and one with <code>cost: None</code>; <code>total_known_cost</code> only includes the priced one; <code>total_turns_with_unknown_cost == 1</code>.</li>
+  <li><strong>Invariant</strong>: for every bucket, <code>turns == (turns_with_known_cost) + turns_with_unknown_cost</code> (derived in the test).</li>
+</ul>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green; new aggregation tests pass.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="usage-record.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/usage-record</span>
+  </a>
+  <a class="next" href="pricing-registry.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/pricing-registry</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

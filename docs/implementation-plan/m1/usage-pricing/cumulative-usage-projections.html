@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/cumulative-usage-projections</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 7 of 8</span>
+  <h1><code>feat/cumulative-usage-projections</code></h1>
+  <p class="lead">
+    <code>CumulativeUsage::by_model()</code> and
+    <code>by_agent()</code> &mdash; derived flatten-style views over the
+    underlying <code>(AgentId, ModelKey)</code> map. The data the
+    frontend's per-model and per-agent renderings consume.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Add two projection methods to <code>CumulativeUsage</code>; cover them
+  with a projection-consistency test (sums match across views).
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; append projection methods on <code>CumulativeUsage</code>.</li>
+</ul>
+
+<p>No new deps. No new exports (the methods are on an already-exported type).</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. What the projections return.</strong> Each is a flatten of
+  the underlying <code>(AgentId, ModelKey) -&gt; ModelUsage</code> map
+  onto a single dimension:
+</p>
+
+<ul>
+  <li><strong><code>by_model()</code></strong>: for each <code>ModelKey</code>, sum every bucket that shares that key (across agents). Useful for "what did each model cost / how many tokens did each model produce, regardless of which agent invoked it."</li>
+  <li><strong><code>by_agent()</code></strong>: for each <code>AgentId</code>, sum every bucket that shares that ID (across models). Useful at V1 only-Root, but mandatory for post-V1 sub-agent attribution.</li>
+</ul>
+
+<p>
+  <strong>2. Return type: owned vs borrowed keys.</strong> Two options:
+</p>
+
+<ul>
+  <li><strong><code>HashMap&lt;&amp;ModelKey, ModelUsage&gt;</code></strong> (chosen): keys are borrowed from the underlying map; values are owned (constructed by summing). Callers can't outlive the registry, but they don't need to &mdash; rendering is synchronous; the projection is computed on demand.</li>
+  <li><strong><code>HashMap&lt;ModelKey, ModelUsage&gt;</code></strong>: keys cloned. Simpler ownership story; trivial extra cost (the keys are two small Strings). Less idiomatic for a quick view.</li>
+</ul>
+
+<p>
+  The borrowed-key version is the natural fit and matches what
+  <code>core.html</code>'s usage spec already commits to. Recheck if
+  callers ever need to outlive the registry &mdash; if so, we add a
+  <code>by_model_owned()</code> convenience later.
+</p>
+
+<p>
+  <strong>3. <code>ModelUsage</code> values in the projection</strong>
+  carry the <code>model</code> field (and effectively encode the
+  <code>AgentId</code> in <code>by_agent</code>) so a consumer iterating
+  the values doesn't need the key. The
+  <code>turns_with_unknown_cost</code> count flows through the sum: a
+  per-model row's <code>turns_with_unknown_cost</code> is the sum across
+  agents for that model.
+</p>
+
+<p>
+  <strong>4. Projection-consistency invariant.</strong> Two sums that
+  must always match (proven by the test):
+</p>
+
+<ul>
+  <li>Sum of <code>by_model()</code> values' <code>known_cost</code> = sum of <code>by_agent()</code> values' <code>known_cost</code> = <code>total_known_cost()</code>.</li>
+  <li>Same for <code>turns_with_unknown_cost</code> (each sum = <code>total_turns_with_unknown_cost()</code>) and each individual token-kind total.</li>
+</ul>
+
+<p>
+  This invariant is what makes the projections trustworthy. The test
+  asserts it on a fixture with at least two distinct (agent, model)
+  pairs to make the projection non-trivial.
+</p>
+
+<p>
+  <strong>5. Why projections rather than just iterators?</strong> A
+  consumer could iterate <code>cumulative.values()</code> and bucket
+  themselves. Pros of shipping the projections:
+</p>
+
+<ul>
+  <li>The "right" bucketing logic lives in one place (this PR), not duplicated in every frontend / persistence row / ACP usage frame.</li>
+  <li>Discoverability: a developer asking "how do I get per-model totals?" finds <code>by_model()</code> immediately.</li>
+  <li>The consistency invariant is testable centrally rather than per-consumer.</li>
+</ul>
+
+<p>
+  Cost of shipping them: ~20 lines of code per projection. Worth it.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// Appended to crates/arnes-core/src/usage.rs:
+
+impl CumulativeUsage {
+    /// Flatten across agents: total per `ModelKey`.
+    pub fn by_model(&amp;self) -&gt; HashMap&lt;&amp;ModelKey, ModelUsage&gt; {
+        let mut out: HashMap&lt;&amp;ModelKey, ModelUsage&gt; = HashMap::new();
+        for ((_, model), bucket) in &amp;self.by_agent_and_model {
+            let entry = out.entry(model).or_insert_with(|| ModelUsage {
+                model: model.clone(),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                thinking_tokens: 0,
+                turns: 0,
+                known_cost: Cost::default(),
+                turns_with_unknown_cost: 0,
+            });
+            merge_into(entry, bucket);
+        }
+        out
+    }
+
+    /// Flatten across models: total per `AgentId`. The `model` field on
+    /// the returned `ModelUsage` is undefined (kept for shape; callers
+    /// inspecting per-agent rows should treat it as opaque).
+    pub fn by_agent(&amp;self) -&gt; HashMap&lt;&amp;AgentId, ModelUsage&gt; {
+        let mut out: HashMap&lt;&amp;AgentId, ModelUsage&gt; = HashMap::new();
+        for ((agent, model), bucket) in &amp;self.by_agent_and_model {
+            let entry = out.entry(agent).or_insert_with(|| ModelUsage {
+                model: model.clone(),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                thinking_tokens: 0,
+                turns: 0,
+                known_cost: Cost::default(),
+                turns_with_unknown_cost: 0,
+            });
+            merge_into(entry, bucket);
+        }
+        out
+    }
+}
+
+fn merge_into(into: &amp;mut ModelUsage, from: &amp;ModelUsage) {
+    into.input_tokens            += from.input_tokens;
+    into.output_tokens           += from.output_tokens;
+    into.cache_read_tokens       += from.cache_read_tokens;
+    into.cache_write_tokens      += from.cache_write_tokens;
+    into.thinking_tokens         += from.thinking_tokens;
+    into.turns                   += from.turns;
+    into.known_cost              += from.known_cost;
+    into.turns_with_unknown_cost += from.turns_with_unknown_cost;
+}</code></pre>
+
+<p>
+  Open call: the <code>by_agent()</code> projection returns a
+  <code>ModelUsage</code> whose <code>model</code> field is whichever
+  model happened to be picked from <code>or_insert_with</code> &mdash;
+  semantically meaningless when summing across models. A cleaner shape
+  would be a separate <code>AgentUsage</code> type with no
+  <code>model</code> field, but that's a duplication for one field. The
+  doc comment notes "treat as opaque." Revisit if callers find this
+  awkward.
+</p>
+
+<h2 id="tests">Tests</h2>
+
+<ul>
+  <li><strong>Empty</strong>: both projections return empty maps for an empty <code>CumulativeUsage</code>.</li>
+  <li><strong>Single bucket</strong>: one recorded <code>Usage</code> shows up as one entry in both projections, with totals matching the original.</li>
+  <li><strong>Two models, one agent</strong>: two <code>Usage</code>s with same <code>AgentId</code> but different <code>ModelKey</code>s &mdash; <code>by_model</code> returns 2 entries; <code>by_agent</code> returns 1 entry with summed totals.</li>
+  <li><strong>One model, two agents</strong>: mirror of above (only meaningful post-V1, but exercises the bucketing code).</li>
+  <li><strong>Projection consistency</strong>: with a fixture of 3+ distinct (agent, model) buckets, assert sums match: sum of <code>by_model()</code> values' <code>known_cost</code> equals sum of <code>by_agent()</code> values' <code>known_cost</code> equals <code>total_known_cost()</code>. Same for <code>turns_with_unknown_cost</code>.</li>
+</ul>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green; projection-consistency test passes on a fixture with at least two buckets.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="pricing-toml-loader.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/pricing-toml-loader</span>
+  </a>
+  <a class="next" href="turnend-usage-wiring.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/turnend-usage-wiring</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>
