@@ -491,12 +491,12 @@
 
 <div class="note">
   <strong>Designed for, not built.</strong> For sub-agents in particular,
-  the V1 type system is fully sub-agent-aware (<code>AgentId</code>,
-  per-<code>(agent, model)</code> usage, principal-aware permissions, the
-  <code>spawn_subagent</code> stub on <code>Session</code>) so that
-  landing the implementation post-V1 fills in <code>unimplemented!()</code>
-  bodies and adds variants to in-tree enums rather than refactoring the
-  protocol surface. See
+  the V1 type system is sub-agent-aware (<code>AgentId</code>,
+  per-<code>(agent, model)</code> usage, principal-aware permissions) so
+  that landing the implementation post-V1 is mostly arnes-side
+  configuration plus agent-rig
+  <a href="https://github.com/andreban/agent-rig/blob/main/src/tools/agent_tool/mod.rs"><code>AgentTool</code></a>
+  registration &mdash; not a protocol-surface refactor. See
   <a href="core.html#future-compat">core.html &sect; Future-compatibility:
   sub-agents</a> for the design contract.
 </div>

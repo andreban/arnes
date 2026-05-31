@@ -251,19 +251,19 @@ impl&lt;F, H&gt; Session&lt;F, H&gt; where F: Frontend, H: Host {
         // V1: agent_id = AgentId::Root, parent = None.
     }
 
-    /// Reserved for post-V1. Body is unimplemented!() at M1; signature stable.
-    pub async fn spawn_subagent(&amp;self, _spec: SubAgentSpec) -&gt; Result&lt;SubAgentHandle&gt; {
-        unimplemented!("sub-agent spawning is post-V1")
-    }
+    // Post-V1 sub-agents are registered as agent-rig AgentTools in
+    // the ToolRegistry; no Session::spawn_subagent method exists.
 
     pub async fn prompt(&amp;mut self, text: String) -&gt; Result&lt;()&gt; {
         self.history.push(Message::user(text));
         let mut stream = self.runner.run(&amp;self.agent_def(), self.history.clone());
         self.emit(EventKind::TurnStart).await;
         while let Some(ev) = stream.next().await {
-            // M1: only AgentEvent::TextDelta matters; everything else is parked.
-            if let AgentEvent::TextDelta(text) = ev.agent_event {
-                self.emit(EventKind::AgentMessageDelta { text }).await;
+            // M1 emits only text and thinking deltas; tool calls land in M2.
+            match ev.agent_event {
+                AgentEvent::TextDelta(text)     =&gt; self.emit(EventKind::TextDelta     { text }).await,
+                AgentEvent::ThinkingDelta(text) =&gt; self.emit(EventKind::ThinkingDelta { text }).await,
+                _ =&gt; {}
             }
         }
         self.emit(EventKind::TurnEnd { /* stop_reason, usage with agent_id + model */ }).await;

@@ -54,20 +54,19 @@
   <h1><code>feat/tool-context</code></h1>
   <p class="lead">
     The bundle every <code>Tool::execute</code> receives: a host handle,
-    a progress sink, a cancellation token, the invoking agent's ID, and
-    a sub-agent spawn handle. The <code>Tool</code> trait itself lives
-    in M2; the context lives here so phase 4's test scaffolding can
-    build one and M2 lands tools against an already-frozen shape.
+    a progress sink, a cancellation token, and the invoking agent's ID.
+    The <code>Tool</code> trait itself lives in M2; the context lives
+    here so phase 4's test scaffolding can build one and M2 lands tools
+    against an already-frozen shape.
   </p>
 </div>
 
 <h2 id="goal">Goal</h2>
 
 <p>
-  Ship <code>ToolContext</code>, <code>ProgressSink</code>,
-  <code>ProgressUpdate</code>, and the <code>SubAgentSpawner</code>
-  stub. Last PR in phase 2; closes out the core type vocabulary so
-  phase 3 (usage) can build on it.
+  Ship <code>ToolContext</code>, <code>ProgressSink</code>, and
+  <code>ProgressUpdate</code>. Last PR in phase 2; closes out the core
+  type vocabulary so phase 3 (usage) can build on it.
 </p>
 
 <h2 id="files">Files touched</h2>
@@ -75,7 +74,7 @@
 <ul>
   <li><strong>new</strong>: <code>crates/arnes-core/src/tool_context.rs</code></li>
   <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code></li>
-  <li><strong>modify</strong>: root + <code>arnes-core</code> <code>Cargo.toml</code> &mdash; add <code>tokio-util</code> with the <code>rt</code> feature.</li>
+  <li><strong>modify</strong>: root + <code>arnes-core</code> <code>Cargo.toml</code> &mdash; add <code>tokio-util</code>.</li>
 </ul>
 
 <h2 id="discussion">Discussion</h2>
@@ -115,58 +114,74 @@
 
 <p>
   <strong>3. <code>ProgressSink</code> as trait, not a channel.</strong>
-  Tools emit progress; <code>Session</code> turns those into
-  <code>EventKind::ToolCallUpdate</code> events (M2). The trait-based
-  shape means the session can implement it on its event-translation
-  side without exposing channel types here. <code>ProgressUpdate</code>
-  has both <code>Text</code> (V1 default) and <code>Structured</code>
-  (post-V1 sub-agent tools emitting nested events).
+  Tools emit progress; <code>Session</code> turns those into events on
+  its own stream. The trait-based shape means the session can implement
+  it on its event-translation side without exposing channel types here.
+  <code>ProgressUpdate</code> has both <code>Text</code> (the default)
+  and <code>Structured</code> (reserved for tools that emit richer
+  payloads later).
 </p>
 
 <p>
-  <strong>4. <code>SubAgentSpawner</code> stub.</strong> Sub-agents
-  are post-V1 (see <a href="../../core.html#future-compat">future-compat
-  table</a>). The trait exists so the field type is stable; the V1
-  implementation either:
+  <strong>4. No <code>SubAgentSpawner</code> or
+  <code>spawn_subagent</code> field.</strong> An earlier draft of this
+  plan had <code>ToolContext</code> carry an
+  <code>Arc&lt;dyn SubAgentSpawner&gt;</code> so post-V1 sub-agent-aware
+  tools could compile against the M1 trait surface unchanged. Checking
+  agent-rig's
+  <a href="https://github.com/andreban/agent-rig/blob/main/src/tools/agent_tool/mod.rs"><code>src/tools/agent_tool/mod.rs</code></a>
+  shows this is the wrong abstraction.
+</p>
+
+<p>
+  agent-rig already has <code>AgentTool</code>: a wrapper that
+  registers a child <code>Agent</code> + its own <code>AgentRunner</code>
+  as a tool in the parent's <code>ToolRegistry</code>. The parent
+  invokes it like any other tool; agent-rig's runner serialises args
+  into a user message, runs the child, and forwards every child
+  <code>AgentEvent</code> back through the parent's stream (tagged with
+  <code>parent_run_id</code> so <code>Session</code> can map it to
+  <code>AgentId::SubAgent(...)</code>).
+</p>
+
+<p>
+  So sub-agents in arnes aren't a separate "spawn from inside a tool"
+  mechanism &mdash; sub-agents <em>are</em> tools, dispatched through
+  the same registry as everything else. The post-V1 enablement flow is:
+</p>
+
+<ol>
+  <li>Session config declares which sub-agents are available (name, system prompt, allowed tools, &hellip;).</li>
+  <li>On <code>Session</code> construction, arnes builds an <code>agent_rig::AgentTool</code> for each declared sub-agent and registers them via <code>ToolRegistry::register_agent</code>.</li>
+  <li>The parent model invokes them like any other tool. No new arnes runtime machinery.</li>
+  <li>Child events flow back through the same stream <code>Session</code> already consumes; the run-id-tagged events become <code>SessionEvent</code>s with <code>AgentId::SubAgent(uuid)</code> and <code>depth &gt; 0</code>.</li>
+</ol>
+
+<p>
+  Nothing in <code>ToolContext</code> needs to change for this. Tools
+  never explicitly spawn sub-agents &mdash; they don't even know
+  sub-agents exist as a category. The <code>SubAgentSpawner</code>
+  trait, the <code>SubAgentSpec</code> stub, the <code>SubAgentHandle</code>
+  stub, and the <code>spawn_subagent</code> field on
+  <code>ToolContext</code> all drop from the design (not just deferred
+  from M1).
+</p>
+
+<p>
+  <strong>5. <code>Arc&lt;dyn ...&gt;</code> on host and progress.</strong>
+  <code>host: Arc&lt;dyn Host&gt;</code> and
+  <code>progress: Arc&lt;dyn ProgressSink&gt;</code>. Reasons:
 </p>
 
 <ul>
-  <li>Returns <code>Err(CoreError::Session("sub-agents are post-V1".into()))</code> &mdash; recoverable, callers can branch.</li>
-  <li>Panics with <code>unimplemented!()</code> &mdash; explicit "you should not be calling this at V1," loud if anyone does.</li>
-</ul>
-
-<p>
-  Recommendation: <code>unimplemented!()</code> for the V1 impl. M1
-  has no caller, so the panic is never reached. Post-V1, the body gets
-  filled in; the test against the panic catches an accidental partial
-  enable.
-</p>
-
-<p>
-  Where does the actual <code>impl SubAgentSpawner</code> live at M1?
-  Phase 4's <code>Session</code> constructs the <code>ToolContext</code>
-  for its tools (when they exist in M2); for M1 there are no tools, so
-  no <code>ToolContext</code> ever gets built outside tests. Phase 4
-  test scaffolding ships a <code>NullSubAgentSpawner</code> for
-  <code>in_memory_host</code> setups.
-</p>
-
-<p>
-  <strong>5. <code>Arc&lt;dyn ...&gt;</code> everywhere?</strong>
-  <code>host: Arc&lt;dyn Host&gt;</code>,
-  <code>progress: Arc&lt;dyn ProgressSink&gt;</code>,
-  <code>spawn_subagent: Arc&lt;dyn SubAgentSpawner&gt;</code>. Reasons:
-</p>
-
-<ul>
-  <li>Tools are <code>dyn Tool</code> in <code>ToolRegistry</code>; their <code>execute</code> takes <code>&amp;ToolContext</code> not <code>&amp;ToolContext&lt;F, H, ...&gt;</code>.</li>
+  <li>Tools are <code>dyn Tool</code> in <code>ToolRegistry</code>; their <code>execute</code> takes <code>&amp;ToolContext</code>, not <code>&amp;ToolContext&lt;F, H, ...&gt;</code>.</li>
   <li><code>ToolContext</code> needs to be constructible without the caller knowing the concrete <code>Host</code> impl.</li>
-  <li><code>Arc</code> is the right shared-ownership primitive for multi-tool, possibly-concurrent execution.</li>
+  <li><code>Arc</code> is the right shared-ownership primitive for possibly-concurrent tool execution.</li>
 </ul>
 
 <p>
-  The dyn requirement is what justifies the async-trait choice from the
-  cross-cutting decisions.
+  The dyn requirement on <code>Host</code> is what justified the
+  <code>async-trait</code> choice from the cross-cutting decisions.
 </p>
 
 <h2 id="deps">Deps</h2>
@@ -175,7 +190,7 @@
 
 <pre><code>[workspace.dependencies]
 # (existing entries)
-tokio-util = { version = "0.7", features = ["rt"] }</code></pre>
+tokio-util = { version = "0.7" }</code></pre>
 
 <p><strong><code>crates/arnes-core/Cargo.toml</code></strong>:</p>
 
@@ -188,87 +203,42 @@ tokio-util = { workspace = true }</code></pre>
 <pre><code>// Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-//! Per-invocation context that every tool's `execute` receives.
-//!
-//! The `Tool` trait itself lands in M2; this PR ships the context type
-//! so M2 can land tools against an already-frozen shape, and phase 4's
-//! test scaffolding can construct one without churn.
+//! Per-invocation context passed to every tool's `execute`.
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::{AgentId, Host, Result};
+use crate::{AgentId, Host};
 
-/// Everything a tool body needs from the harness, bundled into one
-/// struct so capability additions never change the `Tool::execute`
-/// trait signature.
+/// Everything a tool body needs from the harness, bundled so capability
+/// additions don't change `Tool::execute`'s signature.
 pub struct ToolContext {
-    /// OS-resource access. Tools route every filesystem / process call
-    /// through this.
     pub host: Arc&lt;dyn Host&gt;,
-
-    /// Progress / partial-result emitter. The session translates each
-    /// update into a `SessionEvent`.
     pub progress: Arc&lt;dyn ProgressSink&gt;,
-
-    /// Cooperative cancellation. Tools poll this between work units
-    /// and bail out cleanly when set.
     pub cancellation: CancellationToken,
-
-    /// Which agent invoked this tool. V1 always `AgentId::Root`;
-    /// post-V1 sub-agent tools pass their own ID through.
     pub agent_id: AgentId,
-
-    /// Sub-agent spawn handle. V1 impls panic on call; the field
-    /// exists so future sub-agent-aware tools compile against the M1
-    /// trait surface unchanged.
-    pub spawn_subagent: Arc&lt;dyn SubAgentSpawner&gt;,
 }
 
 /// One progress payload from a running tool.
 #[derive(Clone, Debug)]
 pub enum ProgressUpdate {
     Text(String),
-    /// Structured payload, tool-defined. Reserved for post-V1
-    /// sub-agent tools emitting nested events.
+    /// Structured payload, tool-defined. Reserved for future use.
     Structured(Value),
 }
 
-/// Sink for `ProgressUpdate`s. Adapter-side: the session implements
-/// this to fold updates into its own event stream.
+/// Sink for `ProgressUpdate`s.
 pub trait ProgressSink: Send + Sync {
     fn send(&amp;self, update: ProgressUpdate);
-}
-
-/// Sub-agent spawner. V1 implementations either return an error or
-/// panic; the trait exists so `ToolContext.spawn_subagent`'s type is
-/// stable.
-#[async_trait]
-pub trait SubAgentSpawner: Send + Sync {
-    async fn spawn(&amp;self, spec: SubAgentSpec) -&gt; Result&lt;SubAgentHandle&gt;;
-}
-
-/// Sub-agent specification. Body lands post-V1; opaque at M1.
-#[derive(Clone, Debug, Default)]
-pub struct SubAgentSpec;
-
-/// Handle returned by a successful sub-agent spawn. Body lands post-V1;
-/// opaque at M1.
-#[derive(Clone, Debug, Default)]
-pub struct SubAgentHandle;</code></pre>
+}</code></pre>
 
 <h2 id="lib-rs">lib.rs additions</h2>
 
 <pre><code>mod tool_context;
 
-pub use tool_context::{
-    ToolContext,
-    ProgressSink, ProgressUpdate,
-    SubAgentSpawner, SubAgentSpec, SubAgentHandle,
-};</code></pre>
+pub use tool_context::{ProgressSink, ProgressUpdate, ToolContext};</code></pre>
 
 <h2 id="tests">Tests</h2>
 
@@ -284,7 +254,7 @@ pub use tool_context::{
 <ul>
   <li><code>cargo check --workspace</code> clean.</li>
   <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
-  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean &mdash; every field and trait documented, with the V1-stub status of <code>SubAgentSpawner</code> spelled out.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
   <li>End of phase 2: <code>arnes-core</code> exports the full M1 type vocabulary; the workspace still has no runtime-driving code.</li>
 </ul>
 

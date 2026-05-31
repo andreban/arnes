@@ -100,10 +100,11 @@ pub enum SessionRow {
     Usage(UsageEntry),
     /// Recorded when compaction (M7) runs.
     Compaction(CompactionEntry),
-    /// Reserved for post-V1 sub-agent lifecycle. V1 never writes these;
-    /// the reader recognises them and treats them as no-ops.
-    SubAgentStart { id: Uuid, parent_agent_id: AgentId, spec: SubAgentSpec },
-    SubAgentEnd   { id: Uuid, agent_id: AgentId, /* result summary */ },
+    // Post-V1 sub-agent lifecycle is captured by the existing rows:
+    // the parent's ToolCall* events appear in its Message rows (the
+    // sub-agent is invoked as an agent-rig AgentTool), and the child's
+    // own messages persist as Message rows tagged with the child's
+    // AgentId. No SubAgentStart / SubAgentEnd row variants needed.
 }
 
 pub struct UsageEntry {
