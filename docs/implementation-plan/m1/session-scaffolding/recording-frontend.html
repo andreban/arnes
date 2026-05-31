@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/recording-frontend</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="../../type-map.html" data-accent="coding">Type map</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 4 &middot; PR 4 of 7</span>
+  <h1><code>feat/recording-frontend</code></h1>
+  <p class="lead">
+    A test-only <code>Frontend</code> impl that captures every event
+    into a shared <code>Vec&lt;SessionEvent&gt;</code> for assertions.
+    First PR to land anything under
+    <code>crates/arnes-core/tests/support/</code> &mdash; creates the
+    shared test-support module skeleton phase 2 deferred.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Ship <code>RecordingFrontend</code>: implements <code>Frontend</code>,
+  pushes each <code>SessionEvent</code> received via
+  <code>on_event</code> onto an internal vec, exposes
+  <code>events()</code> returning a snapshot for the test to assert
+  against. Permission requests are denied by default.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/tests/support/mod.rs</code> &mdash; the support-module skeleton: <code>pub mod recording_frontend;</code> + (placeholder comment for the modules added by PRs #5 and #6).</li>
+  <li><strong>new</strong>: <code>crates/arnes-core/tests/support/recording_frontend.rs</code> &mdash; the helper itself + its unit test.</li>
+</ul>
+
+<p>
+  No new deps. <code>std::sync::Mutex</code> is in std; we don't need
+  <code>tokio::sync::Mutex</code> because the helper never holds the lock
+  across an <code>.await</code> (see point 2 below).
+</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. Where the support module lives.</strong>
+  <code>crates/arnes-core/tests/support/</code>, not
+  <code>crates/arnes-core/src/test_support/</code>. Two reasons:
+</p>
+
+<ul>
+  <li><strong>It's only for integration tests, not unit tests.</strong> Unit tests inside <code>src/</code> use inline fixtures (per the existing <code>metering/</code> and <code>pricing/</code> pattern). The support module exists so multiple <code>tests/*.rs</code> files can share helpers.</li>
+  <li><strong>It doesn't ship in the published crate.</strong> Anything under <code>src/</code> would be reachable from downstream crates and visible in <code>cargo doc</code>; living under <code>tests/</code> keeps it firmly test-only. (<code>arnes-core</code> is <code>publish = false</code> anyway, but the principle holds.)</li>
+</ul>
+
+<p>
+  Each integration-test file that wants the helpers adds
+  <code>mod support;</code> at the top &mdash; Cargo's
+  <code>tests/</code> convention makes <code>tests/support/mod.rs</code>
+  reachable from any sibling test file.
+</p>
+
+<p>
+  <strong>2. <code>std::sync::Mutex</code>, not <code>tokio::sync::Mutex</code>.</strong>
+  The lock is held only across pure-data ops (push to vec, clone the vec
+  out). No <code>.await</code> while holding the lock. The std mutex is
+  cheaper and doesn't require <code>RecordingFrontend</code> to be used
+  inside a tokio runtime context. (The frontend itself runs inside one
+  because <code>on_event</code> is async, but the lock's critical
+  section is sync.)
+</p>
+
+<p>
+  <strong>3. Snapshot via <code>events()</code> rather than handing out the lock.</strong>
+  Two patterns considered:
+</p>
+
+<ul>
+  <li><strong><code>fn events(&amp;self) -&gt; Vec&lt;SessionEvent&gt;</code></strong> (chosen): clones the vec under the lock; returns owned data. Cheap because <code>SessionEvent</code> is <code>Clone</code> and the vec is small (one test's worth of events &mdash; usually &lt; 20).</li>
+  <li><strong><code>fn events(&amp;self) -&gt; MutexGuard&lt;'_, Vec&lt;SessionEvent&gt;&gt;</code></strong>: hands out the lock. Lets the caller iterate without copying. But couples the test to mutex semantics; if a panic in the test poisons the lock, every subsequent assertion fails opaquely.</li>
+</ul>
+
+<p>
+  The clone-out variant trades a tiny perf cost (irrelevant in tests)
+  for test-failure ergonomics.
+</p>
+
+<p>
+  <strong>4. Permission: deny by default.</strong>
+  <code>RecordingFrontend::request_permission</code> returns
+  <code>Permission::Deny</code> always. The permission flow doesn't
+  exist yet (M3 work), but the trait method needs an impl. Denying
+  rather than allowing matches the spirit of "Unknown is never silently
+  zero" from phase 3: a test that accidentally triggers a permission
+  prompt should get a visible <em>denied</em> state in its assertions,
+  not silent acceptance. Tests that <em>do</em> want a permission flow
+  will land alongside M3 with a richer test helper.
+</p>
+
+<p>
+  <strong>5. Public API surface.</strong> Three methods:
+</p>
+
+<pre><code>impl RecordingFrontend {
+    pub fn new() -&gt; Self;
+    pub fn events(&amp;self) -&gt; Vec&lt;SessionEvent&gt;;
+    pub fn clear(&amp;self);   // for multi-prompt tests that want fresh state
+}</code></pre>
+
+<p>
+  <code>clear()</code> is added now because PR #7's two-turn test wants
+  to assert per-turn event slices without summing across both turns.
+  Could equally be done by snapshot-diffing in the test; the method is
+  cheaper to read.
+</p>
+
+<p>
+  <strong>6. No <code>Arc</code> wrapping inside the helper.</strong>
+  <code>Session</code> takes <code>Arc&lt;F&gt;</code>, so the test
+  constructs the helper as <code>Arc::new(RecordingFrontend::new())</code>
+  and passes the same <code>Arc</code> to both <code>Session::new</code>
+  and the test's assertion sites (via <code>arc.events()</code>). The
+  helper itself doesn't bake an <code>Arc</code> in &mdash; that's the
+  caller's responsibility.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<p>The module skeleton (<code>tests/support/mod.rs</code>):</p>
+
+<pre><code>// crates/arnes-core/tests/support/mod.rs
+
+pub mod recording_frontend;
+// pub mod in_memory_host;    // added in PR #5
+// pub mod scripted_llm;       // added in PR #6</code></pre>
+
+<p>The helper (<code>tests/support/recording_frontend.rs</code>):</p>
+
+<pre><code>use std::sync::Mutex;
+
+use async_trait::async_trait;
+
+use arnes_core::{Frontend, Permission, PermissionRequest, SessionEvent};
+
+#[derive(Default)]
+pub struct RecordingFrontend {
+    events: Mutex&lt;Vec&lt;SessionEvent&gt;&gt;,
+}
+
+impl RecordingFrontend {
+    pub fn new() -&gt; Self { Self::default() }
+
+    pub fn events(&amp;self) -&gt; Vec&lt;SessionEvent&gt; {
+        self.events.lock().expect("recording-frontend mutex poisoned").clone()
+    }
+
+    pub fn clear(&amp;self) {
+        self.events.lock().expect("recording-frontend mutex poisoned").clear();
+    }
+}
+
+#[async_trait]
+impl Frontend for RecordingFrontend {
+    async fn on_event(&amp;self, event: SessionEvent) {
+        self.events
+            .lock()
+            .expect("recording-frontend mutex poisoned")
+            .push(event);
+    }
+
+    async fn request_permission(&amp;self, _req: PermissionRequest) -&gt; Permission {
+        Permission::Deny
+    }
+}</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>One self-contained unit test in the same file (or in a sibling test file under <code>tests/</code> that uses <code>mod support;</code>):</p>
+
+<ul>
+  <li><strong>Round trip</strong>: construct the helper, manually call <code>on_event</code> twice with two distinct events, assert <code>events()</code> returns them in order; call <code>clear()</code>, assert <code>events()</code> is empty.</li>
+  <li><strong>Permission denied default</strong>: call <code>request_permission</code>; assert the return is <code>Permission::Deny</code>.</li>
+</ul>
+
+<p>
+  These are the test-helper's own correctness tests &mdash; <em>not</em>
+  tests of <code>Session</code>. They live wherever the
+  <code>tests/support/</code> convention places test files; the
+  conventional path is one tiny <code>tests/support_smoke.rs</code> file
+  that pulls <code>mod support;</code> and exercises each helper as it
+  lands. (PR #5 and PR #6 extend the same smoke file.)
+</p>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean &mdash; including the <code>tests/</code> tree.</li>
+  <li><code>cargo test -p arnes-core</code> green; the new helper tests pass.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean (test-support code lives under <code>tests/</code> and is not part of the doc output).</li>
+  <li>The <code>tests/support/</code> module is in place; PRs #5 and #6 can drop submodules into it without re-litigating the test-support shape.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="session-prompt.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/session-prompt</span>
+  </a>
+  <a class="next" href="in-memory-host.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/in-memory-host</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

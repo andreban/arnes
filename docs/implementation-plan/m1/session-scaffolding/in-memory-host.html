@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/in-memory-host</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="../../type-map.html" data-accent="coding">Type map</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 4 &middot; PR 5 of 7</span>
+  <h1><code>feat/in-memory-host</code></h1>
+  <p class="lead">
+    A test-only <code>Host</code> impl backed by a
+    <code>HashMap&lt;PathBuf, String&gt;</code>. Implements the fs
+    methods (<code>read_text_file</code>, <code>write_text_file</code>,
+    <code>list_directory</code>); leaves the terminal methods at the
+    trait's default <code>Unsupported</code>.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Ship <code>InMemoryHost</code> under
+  <code>crates/arnes-core/tests/support/in_memory_host.rs</code>. M1's
+  <code>Session</code> never calls a host method (tools don't exist
+  yet); the helper lands now so M2's tool tests have something to read
+  and write against without touching the real filesystem.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/tests/support/in_memory_host.rs</code> &mdash; the helper.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/tests/support/mod.rs</code> &mdash; uncomment / add <code>pub mod in_memory_host;</code>.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/tests/support_smoke.rs</code> &mdash; add the helper's own correctness tests next to <code>RecordingFrontend</code>'s.</li>
+</ul>
+
+<p>No new deps.</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. Why this helper exists at M1 when no test uses it yet.</strong>
+  Strictly, phase 4's only consumer is PR #7's session round-trip test
+  &mdash; which doesn't fire any tool, so doesn't touch the host. But
+  the cross-cutting decision in the phase index is that the test
+  scaffolding lands as a coherent set in phase 4; deferring
+  <code>InMemoryHost</code> to "the first PR that needs it" would mean
+  re-doing the test-support discussion when M2 lands. We pay the small
+  cost of one unused-helper PR now so M2's tool tests can just import
+  the helper.
+</p>
+
+<p>
+  <strong>2. Backing storage: <code>Mutex&lt;HashMap&lt;PathBuf, String&gt;&gt;</code>.</strong>
+  Simplest data shape that supports the three fs methods. Paths are
+  stored as-given (no canonicalisation, no <code>cwd</code>
+  resolution); the test is responsible for using absolute paths
+  consistently. <code>list_directory</code> filters the keys whose
+  parent equals the queried path; entry kind is always
+  <code>is_dir: false</code> at M1 because the store has no notion of
+  directories (every entry is a leaf file). M3 expands this when real
+  directory semantics start to matter for tests.
+</p>
+
+<p>
+  <strong>3. Terminal methods deliberately not implemented.</strong>
+  The <code>Host</code> trait's terminal methods (<code>terminal_create</code>,
+  <code>terminal_snapshot</code>, <code>terminal_kill</code>,
+  <code>terminal_release</code>) default to
+  <code>io::ErrorKind::Unsupported</code>. <code>InMemoryHost</code>
+  leaves those defaults in place. Two reasons:
+</p>
+
+<ul>
+  <li><strong>No M1 test exercises them.</strong> Bash tool lands in M2; even then it's only invoked through <code>LocalHost</code> for the smoke test, not through the in-memory host.</li>
+  <li><strong>Faking a terminal is hard to do shallowly.</strong> A useful fake terminal needs scripted output, exit codes, and timing &mdash; that's a separate helper, not a one-line addition to <code>InMemoryHost</code>. Better to acknowledge that gap now than to ship a half-faked terminal that mis-leads M2's tests.</li>
+</ul>
+
+<p>
+  Tests that need a terminal will get a separate <code>ScriptedTerminal</code>
+  helper in M2 alongside the bash tool.
+</p>
+
+<p>
+  <strong>4. Seeding initial files.</strong> Two patterns considered:
+</p>
+
+<ul>
+  <li><strong>Constructor seeds</strong>: <code>InMemoryHost::with_files(initial: impl IntoIterator&lt;Item = (PathBuf, String)&gt;)</code>. Tests pre-populate at construction.</li>
+  <li><strong>Mutation methods on the helper</strong>: <code>host.put(path, contents)</code> outside the trait. Lets tests add files at any point.</li>
+</ul>
+
+<p>
+  We ship <em>both</em>: <code>new()</code> for empty; <code>with_files(...)</code>
+  for the common "seed and run" case; <code>put(path, contents)</code>
+  for the "mutate mid-test" case (M2's tool tests will use this).
+  Cheap to add all three now; each is one line of code.
+</p>
+
+<p>
+  <strong>5. <code>std::sync::Mutex</code> again.</strong> Same reasoning
+  as <code>RecordingFrontend</code>: the lock is held only across pure-data
+  ops (<code>HashMap::get</code>, <code>HashMap::insert</code>,
+  <code>HashMap::values()</code>). No <code>.await</code> while locked.
+</p>
+
+<p>
+  <strong>6. Error shapes match <code>LocalHost</code>'s eventual behaviour.</strong>
+  Missing file: <code>io::ErrorKind::NotFound</code>. List of a path
+  that has no children: <code>Ok(Vec::new())</code> &mdash; not an
+  error. (The trait method returns <code>Vec&lt;DirEntry&gt;</code>;
+  empty is the natural representation of "no entries.") Mismatching
+  these to what <code>LocalHost</code> will do in M3 would create tests
+  that pass against the fake and fail against real fs.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// crates/arnes-core/tests/support/in_memory_host.rs
+
+use std::{
+    collections::HashMap,
+    io,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
+
+use async_trait::async_trait;
+
+use arnes_core::{DirEntry, Host};
+
+#[derive(Default)]
+pub struct InMemoryHost {
+    files: Mutex&lt;HashMap&lt;PathBuf, String&gt;&gt;,
+}
+
+impl InMemoryHost {
+    pub fn new() -&gt; Self { Self::default() }
+
+    pub fn with_files(initial: impl IntoIterator&lt;Item = (PathBuf, String)&gt;) -&gt; Self {
+        Self {
+            files: Mutex::new(initial.into_iter().collect()),
+        }
+    }
+
+    pub fn put(&amp;self, path: PathBuf, contents: String) {
+        self.files
+            .lock()
+            .expect("in-memory-host mutex poisoned")
+            .insert(path, contents);
+    }
+}
+
+#[async_trait]
+impl Host for InMemoryHost {
+    async fn read_text_file(&amp;self, path: &amp;Path) -&gt; io::Result&lt;String&gt; {
+        self.files
+            .lock()
+            .expect("in-memory-host mutex poisoned")
+            .get(path)
+            .cloned()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such file"))
+    }
+
+    async fn write_text_file(&amp;self, path: &amp;Path, contents: &amp;str) -&gt; io::Result&lt;()&gt; {
+        self.files
+            .lock()
+            .expect("in-memory-host mutex poisoned")
+            .insert(path.to_path_buf(), contents.to_string());
+        Ok(())
+    }
+
+    async fn list_directory(&amp;self, path: &amp;Path) -&gt; io::Result&lt;Vec&lt;DirEntry&gt;&gt; {
+        let map = self.files.lock().expect("in-memory-host mutex poisoned");
+        let mut out = Vec::new();
+        for stored in map.keys() {
+            if stored.parent() == Some(path) {
+                let name = stored.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                out.push(DirEntry { name, is_dir: false });
+            }
+        }
+        Ok(out)
+    }
+
+    // terminal_* methods inherit Unsupported defaults.
+}</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>Extend <code>tests/support_smoke.rs</code> with:</p>
+
+<ul>
+  <li><strong>Read after write</strong>: write a path, read it back, assert the contents match.</li>
+  <li><strong>Missing file → NotFound</strong>: read an unseeded path; assert <code>err.kind() == io::ErrorKind::NotFound</code>.</li>
+  <li><strong>List directory</strong>: seed three files under <code>/a/</code>, list <code>/a/</code>; assert three entries (any order) and all have <code>is_dir == false</code>.</li>
+  <li><strong>Terminal still Unsupported</strong>: call <code>terminal_create</code> with a dummy spec; assert <code>err.kind() == io::ErrorKind::Unsupported</code> &mdash; confirms we didn't accidentally override the default.</li>
+</ul>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green; the four new smoke tests pass.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+  <li>The helper is reachable from any sibling integration-test file via <code>mod support;</code> + <code>support::in_memory_host::InMemoryHost</code>.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="recording-frontend.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/recording-frontend</span>
+  </a>
+  <a class="next" href="scripted-llm.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/scripted-llm</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

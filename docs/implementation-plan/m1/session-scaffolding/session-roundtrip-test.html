@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/session-roundtrip-test</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="../../type-map.html" data-accent="coding">Type map</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 4 &middot; PR 7 of 7</span>
+  <h1><code>feat/session-roundtrip-test</code></h1>
+  <p class="lead">
+    The acid test for phase 4: a deterministic two-turn integration test
+    that runs <code>Session::prompt</code> twice against
+    <code>RecordingFrontend</code> + <code>InMemoryHost</code> +
+    <code>ScriptedLlm</code>, and asserts on every output channel &mdash;
+    event sequence, history shape, cumulative usage.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  One integration-test file, one <code>#[tokio::test]</code>, that ties
+  together every helper landed in this phase and validates that
+  <code>Session</code> behaves end-to-end without an API key. Closes
+  phase 4.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/tests/session_roundtrip.rs</code> &mdash; the integration test.</li>
+</ul>
+
+<p>No source changes; no new deps.</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. Why two turns and not one.</strong> A single-turn test was
+  already written as PR #3's happy-path unit test. The integration test
+  earns its name by exercising what one-turn doesn't:
+</p>
+
+<ul>
+  <li><strong>History persistence across turns.</strong> Turn 2's prompt builds on turn 1's assistant message; the test asserts the history contains both turns' messages in order.</li>
+  <li><strong>Cumulative usage actually cumulating.</strong> After two turns of two different scripted models, <code>cumulative_usage()</code> has two buckets and <code>turns_total == 2</code>.</li>
+  <li><strong>Frontend sees a contiguous event stream.</strong> No spurious <code>TurnStart</code> or missing <code>TurnEnd</code> between turns; the recorded vec is a clean concatenation of turn-1 events then turn-2 events.</li>
+</ul>
+
+<p>
+  <strong>2. Test scenario: text-then-thinking-then-text.</strong>
+  Turn 1's scripted LLM emits two text deltas, one thinking delta, one
+  text delta, then stops. The assembled assistant message therefore has
+  three <code>ContentBlock</code>s: a text block (concatenating the
+  first two deltas), a thinking block, a text block. Turn 2 emits one
+  text delta + stop &mdash; the simplest possible turn. This exercises
+  the block-accumulator's "same-kind extends, different-kind opens"
+  branch from PR #3, which a single all-text turn doesn't.
+</p>
+
+<p>
+  <strong>3. Pricing in the test.</strong> The test seeds a
+  <code>PricingRegistry</code> with one provider block that prices turn
+  1's model and leaves turn 2's model unknown. After both turns, the
+  test asserts:
+</p>
+
+<ul>
+  <li>Turn 1's <code>TurnEnd.usage.cost</code> is <code>Some(...)</code> with the expected micros.</li>
+  <li>Turn 2's <code>TurnEnd.usage.cost</code> is <code>None</code>.</li>
+  <li><code>cumulative_usage()</code>'s <code>total_known_cost()</code> matches turn 1's known cost.</li>
+  <li><code>cumulative_usage()</code>'s <code>total_turns_with_unknown_cost()</code> equals 1.</li>
+</ul>
+
+<p>
+  This bakes the cross-cutting "Unknown is never silently zero" decision
+  from phase 3 into the integration test &mdash; if a future refactor
+  starts coercing unknown costs to zero, this test fails loudly.
+</p>
+
+<p>
+  <strong>4. Event-sequence assertions.</strong> Two styles considered:
+</p>
+
+<ul>
+  <li><strong>Full-equality assertion</strong>: <code>assert_eq!(events, vec![...])</code> with every expected event spelled out. Pro: any mismatch fails clearly. Con: brittle to even cosmetic event-vocabulary changes; failures are long-diff.</li>
+  <li><strong>Shape-and-count assertions</strong> (chosen): assert specific predicates &mdash; the recorded vec starts with <code>TurnStart</code>, contains two <code>TurnEnd</code>s, contains exactly <em>n</em> <code>TextDelta</code>s with concatenated text equal to the script. Robust to non-essential changes; surfaces the structural invariants explicitly.</li>
+</ul>
+
+<p>
+  The shape-style assertions communicate intent ("the translator must
+  emit one TurnEnd per turn") better than a literal-vec assertion
+  ("here is every byte the translator produced"). Future-PR changes that
+  add new event variants don't have to update an opaque vec.
+</p>
+
+<p>
+  <strong>5. Deterministic ordering.</strong> The test relies on
+  <code>ScriptedLlm</code> being synchronous (no <code>tokio::time::sleep</code>)
+  and on <code>RecordingFrontend</code> appending in the order
+  <code>on_event</code> is called. The translator awaits each
+  <code>on_event</code> before pulling the next delta from the stream,
+  so the recorded vec's order matches the script's order exactly &mdash;
+  no
+  <code>std::collections::HashSet</code>-style "any order" assertions
+  needed. If a future PR introduces concurrency between event emission
+  and stream pulling (it shouldn't), this test will catch the
+  reordering.
+</p>
+
+<p>
+  <strong>6. <code>InMemoryHost</code> is built but unused.</strong>
+  The test wires up an <code>InMemoryHost</code> because
+  <code>Session::new</code> requires a host arg, but the M1 translator
+  doesn't call any host method (no tools yet). The host is constructed
+  with <code>InMemoryHost::new()</code> &mdash; empty. M2's integration
+  tests will seed it.
+</p>
+
+<p>
+  <strong>7. Cancellation is not exercised here.</strong> A
+  cancellation test belongs in PR #3 (unit-test of the translator's
+  cancel path) or a separate <code>session_cancel.rs</code> integration
+  test. Bundling it into the round-trip test would obscure the
+  happy-path assertion. Out of scope for this PR.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// crates/arnes-core/tests/session_roundtrip.rs
+
+mod support;
+
+use std::sync::Arc;
+
+use arnes_core::{
+    AgentId, EventKind, ModelKey, PricingRegistry, Session, TokenCounts,
+};
+
+use support::{
+    in_memory_host::InMemoryHost,
+    recording_frontend::RecordingFrontend,
+    scripted_llm::{ScriptedLlm, TurnScript, ScriptedDelta, ScriptedStop},
+};
+
+#[tokio::test]
+async fn two_turn_roundtrip() {
+    let frontend = Arc::new(RecordingFrontend::new());
+    let host     = Arc::new(InMemoryHost::new());
+
+    // Turn 1: two text deltas, one thinking, one text. Priced model.
+    // Turn 2: one text delta. Unknown-priced model.
+    let llm = Arc::new(ScriptedLlm::new(vec![
+        TurnScript {
+            deltas: vec![
+                ScriptedDelta::Text("Hello ".into()),
+                ScriptedDelta::Text("world.".into()),
+                ScriptedDelta::Thinking("(planning step)".into()),
+                ScriptedDelta::Text(" Goodbye.".into()),
+            ],
+            stop: ScriptedStop {
+                reason: /* end-of-turn */,
+                tokens: TokenCounts { input: 10, output: 5, ..TokenCounts::default() },
+                model:  ModelKey { provider: "gemini".into(), model_id: "g-2.5-flash".into() },
+            },
+        },
+        TurnScript {
+            deltas: vec![ScriptedDelta::Text("ack".into())],
+            stop: ScriptedStop {
+                reason: /* end-of-turn */,
+                tokens: TokenCounts { input: 2, output: 1, ..TokenCounts::default() },
+                model:  ModelKey { provider: "unknown".into(), model_id: "mystery".into() },
+            },
+        },
+    ]));
+
+    let pricing = PricingRegistry::from_providers([
+        /* one priced provider block for "gemini"; "unknown" deliberately omitted */
+    ]);
+
+    let mut session = Session::new(frontend.clone(), host, llm, pricing);
+
+    session.prompt("hi").await.expect("turn 1 ok");
+    session.prompt("ping").await.expect("turn 2 ok");
+
+    let events = frontend.events();
+
+    // Shape assertions:
+    // - 2 TurnStart, 2 TurnEnd
+    // - text deltas for turn 1 concatenate to "Hello world. Goodbye."
+    // - one ThinkingDelta in between
+    // - turn-2 events all follow turn-1 events
+    // - TurnEnd[0].usage.cost is Some(_); TurnEnd[1].usage.cost is None
+
+    let cu = session.cumulative_usage();
+    assert_eq!(cu.turns_total, 2);
+    assert_eq!(cu.total_turns_with_unknown_cost(), 1);
+    // assert total_known_cost matches the priced turn-1 cost
+
+    // History shape:
+    // - 4 entries: user, assistant, user, assistant
+    // - assistant[0].content == [Text("Hello world."), Thinking("(planning step)"), Text(" Goodbye.")]
+    // - assistant[1].content == [Text("ack")]
+}</code></pre>
+
+<p>
+  The history-shape assertion goes through a crate-private accessor
+  added in this PR for the test's sake &mdash; or, equivalently, a
+  <code>#[cfg(test)]</code> getter on <code>Session</code>. The choice
+  between those two is the only meaningful one in this PR's
+  implementation; bias toward the <code>#[cfg(test)]</code> getter
+  because it's strictly internal and doesn't leak into the public
+  surface.
+</p>
+
+<h2 id="tests">Tests</h2>
+
+<p>
+  This PR's deliverable <em>is</em> the test. There is no additional
+  test surface. The single <code>#[tokio::test]</code> exercises the
+  full M1 happy path.
+</p>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green; <code>session_roundtrip</code> passes without any environment variables (no <code>GEMINI_API_KEY</code> etc).</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+  <li><strong>End of phase 4.</strong> <code>arnes-core</code> ships <code>Session&lt;F, H&gt;</code> with a tested happy path; <code>tests/support/</code> carries three reusable mocks; phase 5 (ACP transport spike) is unblocked; phase 7 (wire Gemini) has a working <code>Session</code> to plug a real <code>LlmModel</code> into.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="scripted-llm.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/scripted-llm</span>
+  </a>
+  <a class="next" href="../plan.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">Back to M1 work plan</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

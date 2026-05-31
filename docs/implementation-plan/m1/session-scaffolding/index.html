@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phase 4 &mdash; Session + test scaffolding</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="../../type-map.html" data-accent="coding">Type map</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 4</span>
+  <h1>Session + test scaffolding</h1>
+  <p class="lead">
+    The agent-rig wrapper plus the mocks every later PR will reuse for
+    testing. First phase that ships <em>runtime behaviour</em> &mdash;
+    previous phases shipped type vocabularies (phase 2) and pure
+    arithmetic (phase 3). The acid test: a deterministic two-turn
+    round-trip integration test that runs without any API key.
+  </p>
+</div>
+
+<h2 id="prs">PRs in this phase</h2>
+
+<table>
+  <thead><tr><th>Order</th><th>PR</th><th>One-line goal</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><a href="agent-rig-dep.html"><code>chore/agent-rig-dep</code></a></td><td>Add <code>agent-rig</code> to <code>arnes-core</code>'s deps; no provider features at M1.</td></tr>
+    <tr><td>2</td><td><a href="session-skeleton.html"><code>feat/session-skeleton</code></a></td><td><code>Session&lt;F, H&gt;</code> struct, <code>new()</code>, <code>cancel()</code>, <code>cumulative_usage()</code> accessor.</td></tr>
+    <tr><td>3</td><td><a href="session-prompt.html"><code>feat/session-prompt</code></a></td><td>The translator: per-delta event emission + content-block accumulation + <code>TurnEnd</code> emission with <code>TurnUsage</code>.</td></tr>
+    <tr><td>4</td><td><a href="recording-frontend.html"><code>feat/recording-frontend</code></a></td><td>Test helper that captures every event for assertions.</td></tr>
+    <tr><td>5</td><td><a href="in-memory-host.html"><code>feat/in-memory-host</code></a></td><td>Fake host backed by an in-memory map; real fs/process impls land in M3.</td></tr>
+    <tr><td>6</td><td><a href="scripted-llm.html"><code>feat/scripted-llm</code></a></td><td><code>LlmModel</code> impl that replays canned typed deltas with known token counts.</td></tr>
+    <tr><td>7</td><td><a href="session-roundtrip-test.html"><code>feat/session-roundtrip-test</code></a></td><td>The deterministic two-turn integration test that ties scaffolding together.</td></tr>
+  </tbody>
+</table>
+
+<p>
+  Order matters. PR #1 is a dep-only chore that everything else compiles
+  against; PR #2 lays down the struct shape so PR #3's translator has a
+  body to live in; PR #4 creates the <code>tests/support/</code>
+  skeleton that PRs #5 and #6 each drop a submodule into (so #5 and #6
+  can swap order, but #4 is first of the three); PR #7 needs every
+  prior PR to assemble the integration test.
+</p>
+
+<p>
+  <strong>What &quot;chore&quot; means here.</strong> PR #1 is a pure
+  dependency / workspace-config change &mdash; no new Rust source files
+  in <code>arnes-core/src/</code>, no behavioural change. It's still its
+  own PR because the dep choice itself is an architectural decision
+  (which features to enable, which version to pin, whether to use a
+  git rev or path dep, whether to add it as a workspace dep) and folding
+  it into a behavioural PR would bundle that discussion away.
+</p>
+
+<h2 id="cross-cutting">Cross-cutting decisions (settled)</h2>
+
+<p>
+  Four choices apply to multiple PRs in this phase. Captured here so each
+  PR doc can reference them rather than re-litigate.
+</p>
+
+<p>
+  <strong>1. Generic monomorphisation over <code>F: Frontend, H: Host</code>.</strong>
+  <code>Session&lt;F, H&gt;</code> is generic; no <code>dyn Frontend</code>
+  or <code>dyn Host</code> in the hot path. Each binary monomorphises one
+  <code>Session</code> at startup &mdash; the TUI binary instantiates
+  <code>Session&lt;TuiFrontend, LocalHost&gt;</code>; the ACP binary
+  instantiates <code>Session&lt;AcpFrontend, AcpHost&gt;</code>; tests
+  instantiate <code>Session&lt;RecordingFrontend, InMemoryHost&gt;</code>.
+  This is restated from the architecture doc; phase 2's <code>async-trait</code>
+  decision for <code>Host</code> (because <code>ToolContext</code> holds
+  <code>Arc&lt;dyn Host&gt;</code>) does <em>not</em> apply at the
+  <code>Session</code> boundary &mdash; <code>Session</code> holds
+  <code>Arc&lt;H&gt;</code>, not <code>Arc&lt;dyn Host&gt;</code>, so the
+  static-dispatch promise survives.
+</p>
+
+<p>
+  <strong>2. Shared <code>tests/support/</code> module lands here.</strong>
+  Phase 2 deferred this; phase 4 needs it because three of its PRs
+  (<code>recording-frontend</code>, <code>in-memory-host</code>,
+  <code>scripted-llm</code>) all ship test-only helpers reused across
+  later integration tests. The first PR to add anything under
+  <code>tests/support/</code> (PR #4, recording-frontend) creates the
+  module skeleton (<code>mod.rs</code> with the relevant <code>pub mod</code>
+  declarations); subsequent PRs each add one submodule. Modules under
+  <code>tests/support/</code> are <code>pub(crate)</code>-as-far-as-tests-go
+  &mdash; reachable from every integration-test file in the same
+  <code>tests/</code> directory via <code>mod support;</code> at the top.
+</p>
+
+<p>
+  <strong>3. Cancellation via <code>tokio_util::CancellationToken</code>.</strong>
+  Already in tree from phase 2 (in <code>ToolContext</code>).
+  <code>Session</code> owns a <code>CancellationToken</code> field;
+  <code>Session::cancel()</code> calls <code>token.cancel()</code>;
+  agent-rig's <code>AgentRunner</code> accepts the same token and stops
+  pulling from the provider when it fires. At M1 the cancel surface is
+  cooperative &mdash; we do not race a select! against the token in
+  the translator yet, because the translator's awaits are on agent-rig's
+  stream, and agent-rig is what reads the token. M2+ may add a direct
+  select! when tools (which run inside the translator's await tree) need
+  to be interruptible mid-execution.
+</p>
+
+<p>
+  <strong>4. <code>agent-rig</code> consumed with the minimal feature set.</strong>
+  At M1 we only need the runtime core: the <code>LlmModel</code> trait,
+  the <code>AgentRunner</code> driver, and the typed-delta stream
+  vocabulary. Provider features (<code>gemini</code>, etc.) are
+  deliberately not enabled here &mdash; the scripted LLM exercises the
+  same trait without any HTTP, and the real Gemini wire-up is phase 7's
+  job. This keeps phase 4's CI fast and dependency-light, and keeps
+  the build of <code>arnes-core</code> usable in unit tests on machines
+  without network access. Exact features and version-pin policy live in
+  <a href="agent-rig-dep.html">PR #1</a>.
+</p>
+
+<h2 id="discussion-pattern">Discussion sections in each PR doc</h2>
+
+<p>
+  Same pattern as phases 2 and 3: every per-PR doc has a Discussion
+  section surfacing the architectural choices, even when they look
+  obvious. The point is to make every choice reviewable individually
+  rather than bundling them away. Examples of what gets discussed:
+</p>
+
+<ul>
+  <li><strong>agent-rig-dep</strong>: feature flags chosen; git-rev vs published version; workspace dep vs per-crate; the rationale for sequestering this in its own chore PR.</li>
+  <li><strong>session-skeleton</strong>: type-parameter naming (<code>F, H</code> vs <code>F, E</code>); <code>Arc&lt;F&gt;</code> vs owned <code>F</code>; what <code>new()</code> takes; whether <code>cancel()</code> consumes or borrows; where <code>CumulativeUsage</code> lives (field vs computed); the <code>history: Vec&lt;Message&gt;</code> internal-vs-public question deferred to the snapshot API in M6/M8.</li>
+  <li><strong>session-prompt</strong>: the translator pattern (single fork between event emission and content-block accumulation); how each agent-rig delta maps to an <code>EventKind</code>; when <code>TurnEnd</code> fires; <code>TurnUsage</code> construction (where pricing lookup happens &mdash; or doesn't, yet); error mapping to <code>EventKind::Error</code> vs the <code>Result</code> return.</li>
+  <li><strong>recording-frontend</strong>: <code>Mutex&lt;Vec&lt;SessionEvent&gt;&gt;</code> vs <code>tokio::sync::Mutex</code>; whether the helper owns the events or hands them out as a snapshot; permission default for tests; the deny-by-default rationale.</li>
+  <li><strong>in-memory-host</strong>: which methods to implement vs leave on the trait default; backing storage shape (<code>HashMap&lt;PathBuf, String&gt;</code>); terminal methods stay Unsupported (deferred to M3); whether to seed initial files via constructor.</li>
+  <li><strong>scripted-llm</strong>: canned-deltas data shape (<code>Vec&lt;Script&gt;</code> per turn); explicit token counts on the script; whether to support thinking blocks at M1; ordering / pacing (no artificial delays); how to signal turn boundaries.</li>
+  <li><strong>session-roundtrip-test</strong>: what exactly is asserted (event sequence, history shape, cumulative usage after two turns); deterministic ordering guarantees; why two turns rather than one; how this test grows in M2 once tool calls land.</li>
+</ul>
+
+<h2 id="tests">Test strategy for the phase</h2>
+
+<p>
+  This phase's tests are <em>both</em> the deliverable and the
+  infrastructure: PRs #4&ndash;#6 ship test helpers that are themselves
+  exercised by their own per-PR unit tests, and PR #7 is the
+  integration test that ties them together. Concretely:
+</p>
+
+<ul>
+  <li><strong>PR #2 (session-skeleton)</strong>: unit tests for <code>new()</code>'s wiring + <code>cancel()</code> flipping the token + <code>cumulative_usage()</code> returning the default at construction. No agent-rig calls.</li>
+  <li><strong>PR #3 (session-prompt)</strong>: ships with a <em>tiny inline test-double LLM</em> (a few-line fixture local to PR #3's unit tests) that emits a fixed sequence of typed deltas. This keeps the PR self-contained &mdash; we don't reorder phase 4 to land <code>scripted-llm</code> first, because <code>scripted-llm</code>'s value is as a reusable helper for richer scenarios (PR #7), not as the only way to exercise the translator. PR #3's tests assert: text deltas produce <code>TextDelta</code> events; the final assembled <code>Message</code> matches the concatenation; <code>TurnEnd</code> fires once with the right <code>TurnUsage</code>.</li>
+  <li><strong>PR #4 (recording-frontend)</strong>: unit test that pushing an event into the helper makes it readable in the recorded vec.</li>
+  <li><strong>PR #5 (in-memory-host)</strong>: unit tests for <code>read_text_file</code> / <code>write_text_file</code> / <code>list_directory</code> against an in-memory map; assertion that terminal methods still return <code>Unsupported</code>.</li>
+  <li><strong>PR #6 (scripted-llm)</strong>: unit test that the canned script replays in order and reports the configured token counts.</li>
+  <li><strong>PR #7 (session-roundtrip-test)</strong>: the integration test &mdash; <code>crates/arnes-core/tests/session_roundtrip.rs</code> &mdash; constructs a <code>Session</code> with all three test doubles, runs two turns, and asserts on the event sequence, history, and cumulative usage.</li>
+</ul>
+
+<h2 id="acceptance">Phase acceptance</h2>
+
+<ul>
+  <li>All 7 PRs merged.</li>
+  <li><code>cargo check --workspace</code> clean (CI green throughout).</li>
+  <li><code>cargo test -p arnes-core</code> green; the new <code>session_roundtrip</code> integration test passes without any environment variables (no API keys).</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+  <li>End state: <code>arnes-core</code> exports <code>Session&lt;F, H&gt;</code> with <code>new()</code>, <code>prompt()</code>, <code>cancel()</code>, <code>cumulative_usage()</code>; tests/support carries three reusable mocks; phase 5 (ACP transport spike) can be sequenced independently, and phase 7 (wire Gemini) has a working <code>Session</code> to plug a real <code>LlmModel</code> into.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="../plan.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">M1 work plan</span>
+  </a>
+  <a class="next" href="agent-rig-dep.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">chore/agent-rig-dep</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>
