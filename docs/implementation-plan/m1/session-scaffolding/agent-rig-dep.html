@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>chore/agent-rig-dep</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="../../type-map.html" data-accent="coding">Type map</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 4 &middot; PR 1 of 7</span>
+  <h1><code>chore/agent-rig-dep</code></h1>
+  <p class="lead">
+    Add <code>agent-rig</code> to <code>arnes-core</code>'s dependency
+    list. No new Rust source files; no behavioural change. The whole PR
+    is the Cargo manifest edits plus a one-test smoke check that the
+    crate's surface types are importable.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Make <code>use agent_rig::{LlmModel, AgentRunner, /* ... */};</code>
+  compile from inside <code>arnes-core</code>. Nothing in this PR uses
+  those imports yet &mdash; PRs #2 and #3 do &mdash; but landing the dep
+  as its own PR isolates the dependency-choice discussion from any
+  behavioural change.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>modify</strong>: <code>Cargo.toml</code> &mdash; one new entry under <code>[workspace.dependencies]</code>.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/Cargo.toml</code> &mdash; one new entry under <code>[dependencies]</code> that picks up the workspace dep.</li>
+  <li><strong>modify</strong>: <code>Cargo.lock</code> &mdash; the resolved set of transitive deps; reviewed but not hand-edited.</li>
+</ul>
+
+<p>
+  No new modules, no new source files, no new <code>pub use</code> lines
+  in <code>lib.rs</code>.
+</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. Source: git rev vs published crate.</strong> Two options:
+</p>
+
+<ul>
+  <li><strong>Published crates.io version</strong>: <code>agent-rig = "X.Y"</code>. Pros: standard, cacheable, no submodule-style fragility. Cons: only available if agent-rig has actually published a version we want, and pinning floats inside the SemVer range unless we also commit a precise <code>Cargo.lock</code> (we already commit one).</li>
+  <li><strong>Git revision</strong>: <code>agent-rig = { git = "https://github.com/andreban/agent-rig", rev = "&lt;sha&gt;" }</code>. Pros: lets us live on a specific main-branch commit before agent-rig stabilises a release cadence. Cons: no docs.rs autoindex; <code>cargo doc</code> still works locally but link-checked rustdoc is weaker.</li>
+</ul>
+
+<p>
+  <strong>Recommendation:</strong> git revision with an explicit
+  <code>rev</code> (not <code>branch = "main"</code> &mdash; that would make
+  builds non-reproducible across <code>cargo update</code>). Switch to a
+  crates.io version when agent-rig publishes one we want; the dep-source
+  change is then itself a one-line PR.
+</p>
+
+<p>
+  <strong>2. Features.</strong> Pin <code>default-features = false</code>
+  and explicitly opt into only what <code>arnes-core</code> needs at M1.
+  Concretely: whatever feature exposes <code>LlmModel</code>,
+  <code>AgentRunner</code>, and the typed-delta stream. <strong>No provider
+  features</strong> (<code>gemini</code>, <code>anthropic</code>,
+  <code>ollama</code>, &hellip;) &mdash; those are phase 7's call,
+  and adding them here would silently pull in <code>reqwest</code> /
+  <code>rustls</code> / TLS-backend bikeshedding into a chore PR.
+</p>
+
+<p>
+  <strong>3. Workspace dep vs per-crate dep.</strong> Phase 1's deferred
+  decisions said "no pre-declared <code>[workspace.dependencies]</code>";
+  but the convention since has been "each PR adds the deps its own code
+  introduces, in the workspace table." Continuing that pattern:
+  <code>agent-rig</code> goes in <code>[workspace.dependencies]</code>
+  with its version + rev + features, and <code>arnes-core/Cargo.toml</code>
+  picks it up with <code>{ workspace = true }</code>. Later adapter crates
+  (<code>arnes-tui</code>, <code>arnes-acp</code>) that need to construct
+  concrete provider <code>LlmModel</code>s in phase 7 will then pick up
+  the same workspace entry &mdash; without re-litigating the rev/version.
+</p>
+
+<p>
+  <strong>4. Why a separate PR instead of folding into PR #2?</strong>
+  Three reasons:
+</p>
+
+<ul>
+  <li><strong>Dependency choices are architectural.</strong> Source (git vs crates.io), rev pin, feature set, workspace vs per-crate &mdash; each has tradeoffs worth a Discussion section, and bundling them into a behavioural PR buries them.</li>
+  <li><strong>The blast radius is the whole workspace.</strong> A bad pin breaks every downstream PR; isolating it lets a revert be one-commit-clean.</li>
+  <li><strong>Reviewability.</strong> The diff is small, the build log is the meaningful artifact (no warnings? <code>cargo check --workspace</code> still clean? <code>Cargo.lock</code> changes look sane?). A reviewer can confirm those in seconds without context-switching into Rust source.</li>
+</ul>
+
+<p>
+  <strong>5. No smoke test in <code>src/</code>.</strong> One temptation
+  is to add a <code>#[allow(unused_imports)] use agent_rig::LlmModel;</code>
+  somewhere as a "the dep resolves" canary. We don't &mdash;
+  <code>cargo check --workspace</code> in CI already confirms the dep
+  resolves. Adding a dead-import canary is noise that the next PR has to
+  delete anyway.
+</p>
+
+<h2 id="code">Manifest edits</h2>
+
+<p>Workspace root <code>Cargo.toml</code>:</p>
+
+<pre><code>[workspace.dependencies]
+# &hellip; existing entries &hellip;
+agent-rig = { git = "https://github.com/andreban/agent-rig", rev = "&lt;sha&gt;", default-features = false, features = ["&lt;core feature name&gt;"] }</code></pre>
+
+<p><code>crates/arnes-core/Cargo.toml</code>:</p>
+
+<pre><code>[dependencies]
+# &hellip; existing entries &hellip;
+agent-rig = { workspace = true }</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>
+  None new in this PR. The workspace-wide <code>cargo check</code> and
+  <code>cargo build</code> jobs in CI are what assert the dep resolves.
+</p>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo build --workspace</code> succeeds on all three OSes (Linux/macOS/Windows).</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green (existing tests unchanged).</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+  <li><code>Cargo.lock</code> change is committed and the transitive set looks sane (no surprise heavy deps pulled by the chosen feature flags).</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="index.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">Phase 4 overview</span>
+  </a>
+  <a class="next" href="session-skeleton.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/session-skeleton</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

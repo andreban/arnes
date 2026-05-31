@@ -78,8 +78,8 @@
     <tr><td>0</td><td><a href="#repo-bootstrap">Repo bootstrap</a></td><td>done</td><td>direct-to-main</td></tr>
     <tr><td>1</td><td><a href="#workspace-ci">Workspace + CI</a></td><td>done</td><td>1 (merged)</td></tr>
     <tr><td>2</td><td><a href="core-types/index.html">Core types</a></td><td>done</td><td>6 (merged)</td></tr>
-    <tr><td>3</td><td><a href="usage-pricing/index.html">Usage + pricing</a></td><td>planned in detail</td><td>8</td></tr>
-    <tr><td>4</td><td><a href="#session-scaffolding">Session + test scaffolding</a></td><td>scope only, to be detailed</td><td>~5</td></tr>
+    <tr><td>3</td><td><a href="usage-pricing/index.html">Usage + pricing</a></td><td>done</td><td>8 (merged)</td></tr>
+    <tr><td>4</td><td><a href="session-scaffolding/index.html">Session + test scaffolding</a></td><td>planned in detail</td><td>7</td></tr>
     <tr><td>5</td><td><a href="#acp-transport">ACP transport spike</a></td><td>scope only</td><td>1</td></tr>
     <tr><td>6</td><td><a href="#acp-protocol">ACP minimal protocol</a></td><td>scope only, to be detailed</td><td>~4</td></tr>
     <tr><td>7</td><td><a href="#gemini-provider">Wire Gemini provider</a></td><td>scope only</td><td>1</td></tr>
@@ -93,8 +93,8 @@
   per PR, with discussion sections) <em>just-in-time</em> &mdash; before
   starting work on the phase, not all up front. This keeps the planning
   cost in sync with how much we actually know, and lets earlier phases'
-  decisions inform later phases' details. Right now only phase 2 is fully
-  detailed; the others have scope-level entries below that get expanded
+  decisions inform later phases' details. Phases 2, 3, and 4 are detailed;
+  the remaining phases have scope-level entries below that get expanded
   before they're started.
 </p>
 
@@ -167,26 +167,24 @@
   each PR must surface before implementation.
 </p>
 
-<h2 id="session-scaffolding">Phase 4 &mdash; Session + test scaffolding <small>(scope only)</small></h2>
+<h2 id="session-scaffolding">Phase 4 &mdash; Session + test scaffolding <small>(planned in detail)</small></h2>
 
 <p>
   <strong>Goal.</strong> The agent-rig wrapper plus the mocks every later
   PR will reuse for testing. The acid test: a deterministic two-turn
-  round-trip test that runs without any API key.
+  round-trip test that runs without any API key. First phase that ships
+  runtime behaviour; previous phases shipped type vocabularies and pure
+  arithmetic only.
 </p>
 
 <p>
-  <strong>Anticipated PRs</strong> (to be detailed before phase starts):
+  <strong>See <a href="session-scaffolding/index.html">the Session + test scaffolding phase plan</a></strong>
+  for the seven per-PR docs, the cross-cutting decisions (generic
+  monomorphisation over <code>F: Frontend, H: Host</code>; shared
+  <code>tests/support/</code> module first lands here; cancellation via
+  <code>tokio_util::CancellationToken</code>), and the discussion items
+  each PR must surface before implementation.
 </p>
-
-<ul>
-  <li><code>chore/agent-rig-dep</code> &mdash; add <code>agent-rig</code> to workspace deps (no provider features yet).</li>
-  <li><code>feat/session-struct</code> &mdash; <code>Session&lt;F, H&gt;</code> with <code>new</code>, <code>prompt</code>, <code>cancel</code>, <code>cumulative_usage</code>; event-stream translation.</li>
-  <li><code>feat/recording-frontend</code> &mdash; test helper that captures every event for assertions.</li>
-  <li><code>feat/in-memory-host</code> &mdash; fake host (real fs/process impls land in M3).</li>
-  <li><code>feat/scripted-llm</code> &mdash; <code>LlmModel</code> impl that replays canned responses with known token counts.</li>
-  <li><code>feat/session-roundtrip-test</code> &mdash; the two-turn integration test pulling everything together.</li>
-</ul>
 
 <h2 id="acp-transport">Phase 5 &mdash; ACP transport spike <small>(single PR)</small></h2>
 

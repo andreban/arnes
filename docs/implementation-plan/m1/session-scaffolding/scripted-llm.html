@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/scripted-llm</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="../../type-map.html" data-accent="coding">Type map</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 4 &middot; PR 6 of 7</span>
+  <h1><code>feat/scripted-llm</code></h1>
+  <p class="lead">
+    A test-only <code>LlmModel</code> impl (agent-rig's trait) that
+    replays a canned sequence of typed deltas with known token counts.
+    Drives PR #7's integration test &mdash; and any future test that
+    needs deterministic LLM behaviour without a network call.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Ship <code>ScriptedLlm</code> under
+  <code>crates/arnes-core/tests/support/scripted_llm.rs</code>.
+  Configured with a vector of "turn scripts" (each turn = a list of
+  deltas + a stop frame with token counts); each call into
+  <code>LlmModel</code>'s run-stream method consumes the next turn
+  script.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/tests/support/scripted_llm.rs</code> &mdash; the helper.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/tests/support/mod.rs</code> &mdash; add <code>pub mod scripted_llm;</code>.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/tests/support_smoke.rs</code> &mdash; add helper-correctness tests.</li>
+</ul>
+
+<p>No new deps; agent-rig is the LLM trait source.</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. Script data shape.</strong> Two layers:
+</p>
+
+<pre><code>pub struct TurnScript {
+    pub deltas: Vec&lt;ScriptedDelta&gt;,   // text, thinking, etc.
+    pub stop:   ScriptedStop,          // reason + tokens + model
+}
+
+pub enum ScriptedDelta {
+    Text(String),
+    Thinking(String),
+}
+
+pub struct ScriptedStop {
+    pub reason: /* agent-rig stop reason */,
+    pub tokens: TokenCounts,
+    pub model:  ModelKey,
+}</code></pre>
+
+<p>
+  Why one struct per turn instead of a flat <code>Vec&lt;Delta&gt;</code>?
+  Because each turn needs a stop frame with token counts attached
+  &mdash; embedding that as just another delta variant works, but it
+  makes "the deltas for turn 1" implicit (everything up to the next
+  stop). The explicit <code>TurnScript</code> struct is also what PR
+  #7's two-turn test will construct twice with different content.
+</p>
+
+<p>
+  <strong>2. Token counts are explicit on each <code>ScriptedStop</code>.</strong>
+  Not derived from the deltas (e.g., "input = sum of input tokens
+  from the history"); the test author writes them in. The translator's
+  job is to <em>thread</em> the counts from agent-rig into a
+  <code>TurnUsage</code> &mdash; the test exercises that threading and
+  needs to assert on specific values. Auto-deriving from delta lengths
+  would couple the helper to a counting convention that real providers
+  don't share.
+</p>
+
+<p>
+  <strong>3. Thinking deltas at M1.</strong> Supported. The
+  <code>ContentBlock::Thinking</code> variant exists in the message-types
+  PR; <code>EventKind::ThinkingDelta</code> exists in the frontend PR.
+  PR #3's translator already handles them. Including thinking deltas in
+  the helper at M1 means PR #7's round-trip test can exercise the
+  text-then-thinking-then-text interleaving without us adding the helper
+  variant later.
+</p>
+
+<p>
+  <strong>4. Ordering / pacing.</strong> Deltas are emitted in script
+  order, synchronously inside the stream (no
+  <code>tokio::time::sleep</code> or other artificial delays). M1's
+  translator never observes time; M2+ tests that want to exercise
+  rate-related behaviour can add a pacing knob then.
+</p>
+
+<p>
+  <strong>5. Turn-script consumption: pop, not index.</strong>
+  <code>ScriptedLlm</code> stores its scripts in a
+  <code>Mutex&lt;VecDeque&lt;TurnScript&gt;&gt;</code>; each call into
+  the agent-rig run-stream method pops the front turn script and
+  streams its deltas + stop. Calling the LLM more times than scripts
+  were provided is a panic in the helper (with a clear message). This
+  surfaces "test under-specified the scripts" loudly instead of
+  silently replaying or hanging.
+</p>
+
+<p>
+  <strong>6. Construction API.</strong>
+</p>
+
+<pre><code>pub struct ScriptedLlm { /* Mutex&lt;VecDeque&lt;TurnScript&gt;&gt; */ }
+
+impl ScriptedLlm {
+    pub fn new(turns: Vec&lt;TurnScript&gt;) -&gt; Self;
+}</code></pre>
+
+<p>
+  Builder API (<code>.text("...").stop(...)</code>) considered and
+  rejected for M1 &mdash; the explicit struct literals are noisier to
+  type but unambiguous to read, and PR #7 has exactly two turns to
+  write. If a future test needs many turn scripts, a builder can be
+  added without changing the underlying struct.
+</p>
+
+<p>
+  <strong>7. Coupling to agent-rig's API.</strong> Two implementation
+  paths:
+</p>
+
+<ul>
+  <li><strong>Implement <code>LlmModel</code> directly</strong> (chosen): the helper <code>impl LlmModel for ScriptedLlm</code> and produces a stream of agent-rig's native delta type. The translator in PR #3 sees the same shape it'd see from a real provider.</li>
+  <li><strong>Implement a higher-level "Session-input" stream</strong>: skip <code>LlmModel</code> and hand the translator a stream of arnes types directly. Lighter for the helper, but it short-circuits the agent-rig boundary &mdash; the integration test would never exercise the LlmModel-to-translator seam, defeating the point.</li>
+</ul>
+
+<p>
+  We pay the cost of mapping our script types to agent-rig's so the
+  translator sees a realistic boundary.
+</p>
+
+<p>
+  <strong>8. Why not a closure-based mock?</strong>
+  <code>impl Fn(history) -&gt; stream</code> is more flexible but encodes
+  no shape; readers of a test have to follow the closure to understand
+  what the mock does. The explicit-script shape is self-documenting in
+  the test's source.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// crates/arnes-core/tests/support/scripted_llm.rs
+
+use std::{collections::VecDeque, sync::Mutex};
+
+use async_trait::async_trait;
+
+use agent_rig::LlmModel;                         // exact trait surface depends on agent-rig
+use arnes_core::{ModelKey, TokenCounts};
+
+pub struct ScriptedLlm {
+    turns: Mutex&lt;VecDeque&lt;TurnScript&gt;&gt;,
+}
+
+pub struct TurnScript {
+    pub deltas: Vec&lt;ScriptedDelta&gt;,
+    pub stop:   ScriptedStop,
+}
+
+pub enum ScriptedDelta {
+    Text(String),
+    Thinking(String),
+}
+
+pub struct ScriptedStop {
+    pub reason: /* agent-rig stop reason */,
+    pub tokens: TokenCounts,
+    pub model:  ModelKey,
+}
+
+impl ScriptedLlm {
+    pub fn new(turns: Vec&lt;TurnScript&gt;) -&gt; Self {
+        Self { turns: Mutex::new(turns.into_iter().collect()) }
+    }
+}
+
+#[async_trait]
+impl LlmModel for ScriptedLlm {
+    // The exact method here is whatever agent-rig defines on LlmModel
+    // for streaming a turn. Implementation: pop the front TurnScript;
+    // build a stream that yields each `deltas[i]` (mapped to agent-rig's
+    // delta type), then the stop frame; return that stream.
+}</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>Add to <code>tests/support_smoke.rs</code>:</p>
+
+<ul>
+  <li><strong>Single turn replays in order</strong>: construct with one <code>TurnScript</code> of three text deltas + stop; drive the LlmModel's run; collect the emitted deltas; assert order and content.</li>
+  <li><strong>Stop frame carries the configured tokens</strong>: assert the stop's <code>tokens</code> field matches what the test passed in.</li>
+  <li><strong>Empty deltas list is OK</strong>: a <code>TurnScript</code> with no deltas just emits a stop &mdash; assert the stream produces exactly the stop frame.</li>
+  <li><strong>Over-consumption panics with a clear message</strong>: construct with one turn; call run twice; assert the second call panics (use <code>std::panic::catch_unwind</code>; assert the panic message mentions "no more turn scripts" or similar).</li>
+</ul>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green; the four new helper tests pass.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+  <li>The helper is usable from any sibling integration-test file via <code>mod support;</code> + <code>support::scripted_llm::ScriptedLlm</code>; PR #7's round-trip test is unblocked.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="in-memory-host.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/in-memory-host</span>
+  </a>
+  <a class="next" href="session-roundtrip-test.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/session-roundtrip-test</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

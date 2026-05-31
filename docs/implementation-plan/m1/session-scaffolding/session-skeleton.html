@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/session-skeleton</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="../../type-map.html" data-accent="coding">Type map</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 4 &middot; PR 2 of 7</span>
+  <h1><code>feat/session-skeleton</code></h1>
+  <p class="lead">
+    The <code>Session&lt;F, H&gt;</code> struct, its constructor, the
+    cancel-handle accessor, and a <code>cumulative_usage()</code>
+    accessor. Lays down the shape that PR #3's translator hangs its
+    <code>prompt()</code> on; no agent-rig pulling happens yet.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Define the load-bearing struct: its generic parameters, its fields,
+  its constructor signature, and the two lifecycle methods that don't
+  need the translator (<code>cancel_handle()</code> and
+  <code>cumulative_usage()</code>). Land it with unit tests of the
+  pieces that <em>can</em> be tested without an LLM, leaving
+  <code>prompt()</code> for PR #3.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/session/mod.rs</code> &mdash; the struct + constructor + non-prompt methods.</li>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/session/tests.rs</code> &mdash; unit tests (per the tests-in-sibling-file convention used in <code>metering/</code> and <code>pricing/</code>).</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; <code>mod session;</code> + <code>pub use session::Session;</code>.</li>
+</ul>
+
+<p>
+  No new deps beyond what <a href="agent-rig-dep.html">PR #1</a> already
+  added. <code>tokio_util::sync::CancellationToken</code> is already in
+  tree from phase 2.
+</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. Type-parameter names: <code>F, H</code> not <code>F, E</code>.</strong>
+  The architecture doc's code blocks use <code>Session&lt;F: Frontend, E: Host&gt;</code>
+  &mdash; <code>E</code> as a nod to "extension / environment." We use
+  <code>H</code> for <code>Host</code>: it's the trait's own initial; it
+  matches every other generic over <code>Host</code> already in the crate
+  (the doc-comments in <code>tool_context.rs</code> refer to
+  <code>H: Host</code> implicitly via <code>Arc&lt;dyn Host&gt;</code>);
+  and the architecture doc is the one place that disagrees with itself
+  on this name, which we'll fix as part of this PR's docs sweep.
+</p>
+
+<p>
+  <strong>2. <code>Arc&lt;F&gt;</code> and <code>Arc&lt;H&gt;</code>, not owned.</strong>
+  The session needs <code>Arc&lt;H&gt;</code> because <code>ToolContext</code>
+  already holds <code>Arc&lt;dyn Host&gt;</code> (phase 2), and PR #3's
+  translator will clone the host arc to hand to each tool invocation in
+  M2. <code>Arc&lt;F&gt;</code> is less obvious &mdash; the frontend is
+  called from one place (the translator) inside one task &mdash; but
+  <em>some</em> M3+ flows (notification-style emission from inside a
+  tool, mid-session join in M8) need the frontend reachable from more
+  than one task at a time. Picking <code>Arc&lt;F&gt;</code> now avoids a
+  re-shape later. Cost: one extra atomic increment at construction;
+  immeasurable.
+</p>
+
+<p>
+  <strong>3. What <code>new()</code> takes.</strong> The minimum set
+  this phase needs:
+</p>
+
+<pre><code>pub fn new(
+    frontend: Arc&lt;F&gt;,
+    host:     Arc&lt;H&gt;,
+    llm:      Arc&lt;dyn LlmModel&gt;,   // agent-rig
+) -&gt; Self</code></pre>
+
+<p>
+  Deliberately <em>not</em> taking: a <code>ToolRegistry</code> (empty at
+  M1; lands in M2), a <code>SystemPromptBuilder</code> (M4), a
+  <code>SessionWriter</code> (M6), a <code>PricingRegistry</code> (see
+  point 5 below). Each of those becomes an additional <code>new()</code>
+  argument in the milestone that introduces it; M1 keeps the constructor
+  to its core three.
+</p>
+
+<p>
+  <strong>4. <code>llm</code> as <code>Arc&lt;dyn LlmModel&gt;</code>, not a generic.</strong>
+  Three generics on <code>Session</code> would propagate type parameters
+  through every helper, every test fixture, and every adapter binary; the
+  ergonomic cost compounds fast. <code>LlmModel</code> is held behind an
+  arc-dyn at the seam where agent-rig itself takes it (the
+  <code>AgentRunner</code> constructor), so we don't introduce a new
+  layer of dynamic dispatch &mdash; we mirror agent-rig's existing one.
+  The frontend / host stay generic because the architecture doc's
+  no-dyn-in-hot-paths promise is about those two specifically.
+</p>
+
+<p>
+  <strong>5. <code>CumulativeUsage</code> lives on the struct, not in agent-rig.</strong>
+  Field, not method-computed. PR #3 calls <code>cumulative_usage.record(turn)</code>
+  inside the translator on every <code>TurnEnd</code>. The accessor here
+  is a borrowing getter:
+</p>
+
+<pre><code>pub fn cumulative_usage(&amp;self) -&gt; &amp;CumulativeUsage { &amp;self.cumulative_usage }</code></pre>
+
+<p>
+  Returning a borrow rather than a clone keeps the <code>HashMap</code>
+  inside <code>CumulativeUsage</code> from being copied every call.
+  Frontends that want a snapshot can clone explicitly. No pricing
+  lookup happens here &mdash; pricing-vs-unknown is decided at
+  <code>TurnUsage</code> construction in PR #3, which is when we have a
+  <code>ModelKey</code> to look up. Wiring a <code>PricingRegistry</code>
+  into <code>Session::new()</code> is also deferred to PR #3 (it's the
+  PR that needs it).
+</p>
+
+<p>
+  <strong>6. <code>cancel_handle()</code>, not <code>cancel()</code>.</strong>
+  A frontend wants to fire cancellation from a different task than the
+  one driving <code>prompt()</code> &mdash; a Ctrl-C handler, an ACP
+  <code>session/cancel</code> notification, an HTTP DELETE.
+  <code>prompt()</code> takes <code>&amp;mut self</code> for its history
+  / usage mutation, so a sibling <code>cancel(&amp;self)</code> method is
+  uncallable while <code>prompt()</code> is awaiting (the
+  <code>&amp;mut</code> borrow excludes it). Instead, expose a cheap
+  <em>handle</em>: <code>cancel_handle(&amp;self) -&gt; CancellationToken</code>
+  returns a clone of the internal token (the token is internally
+  arc-shared, so the clone is one atomic increment). Callers stash the
+  handle at construction time and call <code>handle.cancel()</code> from
+  any task &mdash; including while <code>prompt()</code> is running.
+  agent-rig's <code>AgentRunner</code> sees the same cancellation via
+  the token clone that <code>prompt()</code> passes it.
+</p>
+
+<p>
+  The architecture doc shows a <code>session.cancel(&amp;self)</code>
+  sugar method &mdash; that shape only works if <code>Session</code> is
+  wrapped in <code>Arc</code> with interior mutability everywhere, which
+  bloats the design for one method's ergonomics. The handle pattern is
+  the idiomatic Rust solution; the architecture doc's sample code gets
+  updated alongside this PR.
+</p>
+
+<p>
+  <strong>7. <code>history: Vec&lt;Message&gt;</code> is private.</strong>
+  Per the architecture doc's "history vs events" split: clients never
+  poll history; they bootstrap once at attach and stream events from
+  then on. So <code>Session</code> holds <code>history</code> as a
+  private field; the snapshot API that exposes it (a
+  <code>snapshot()</code> method returning a shape suitable for ACP /
+  HTTP / GUI consumers) is M6 / M8 work. M1 has no consumer that needs
+  it. We do <em>not</em> introduce a placeholder
+  <code>snapshot()</code> method now &mdash; it would be a half-finished
+  implementation, which the project commenting rules warn against.
+</p>
+
+<p>
+  <strong>8. <code>cancel_token</code> field, not parameter.</strong>
+  Two alternatives:
+</p>
+
+<ul>
+  <li><strong>Owned by <code>Session</code></strong> (chosen): the session creates a <code>CancellationToken::new()</code> in <code>new()</code>, clones it into the <code>AgentRunner</code> during <code>prompt()</code>, and <code>cancel()</code> fires the owned one. Caller doesn't have to plumb the token.</li>
+  <li><strong>Passed in</strong>: <code>new(..., cancel: CancellationToken)</code>. Lets the caller own cancellation (one token can cancel several sessions). Adds plumbing the caller may not want.</li>
+</ul>
+
+<p>
+  The session-owned variant matches the architecture doc's
+  <code>session.cancel()</code> API; the caller-owned variant would
+  bypass that method entirely. Sticking with the doc.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// crates/arnes-core/src/session/mod.rs
+
+use std::sync::Arc;
+
+use agent_rig::LlmModel;
+use tokio_util::sync::CancellationToken;
+
+use crate::{CumulativeUsage, Frontend, Host, Message};
+
+#[cfg(test)]
+mod tests;
+
+/// The single entry point a frontend talks to.
+pub struct Session&lt;F: Frontend, H: Host&gt; {
+    frontend:         Arc&lt;F&gt;,
+    host:             Arc&lt;H&gt;,
+    llm:              Arc&lt;dyn LlmModel&gt;,
+    history:          Vec&lt;Message&gt;,
+    cumulative_usage: CumulativeUsage,
+    cancel_token:     CancellationToken,
+}
+
+impl&lt;F: Frontend, H: Host&gt; Session&lt;F, H&gt; {
+    pub fn new(frontend: Arc&lt;F&gt;, host: Arc&lt;H&gt;, llm: Arc&lt;dyn LlmModel&gt;) -&gt; Self {
+        Self {
+            frontend,
+            host,
+            llm,
+            history: Vec::new(),
+            cumulative_usage: CumulativeUsage::default(),
+            cancel_token: CancellationToken::new(),
+        }
+    }
+
+    pub fn cancel_handle(&amp;self) -&gt; CancellationToken {
+        self.cancel_token.clone()
+    }
+
+    pub fn cumulative_usage(&amp;self) -&gt; &amp;CumulativeUsage {
+        &amp;self.cumulative_usage
+    }
+}</code></pre>
+
+<p>
+  Field visibility: <strong>all private</strong>. Crate-internal access
+  for PR #3's translator comes from the same module file
+  (<code>session/prompt.rs</code> is a submodule of
+  <code>session</code>, declared in PR #3).
+</p>
+
+<h2 id="lib-rs">lib.rs additions</h2>
+
+<pre><code>mod session;
+pub use session::Session;</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>Three <code>#[tokio::test]</code> unit tests in <code>session/tests.rs</code>:</p>
+
+<ul>
+  <li><strong>Constructor wires the fields</strong>: build a <code>Session</code> with mock frontend / host / LLM; assert <code>cumulative_usage()</code> returns a default (zero-turn) value and history is observably empty (via the fact that no event has been dispatched).</li>
+  <li><strong><code>cancel_handle()</code> shares cancellation</strong>: call <code>cancel_handle()</code> to obtain a clone, fire it, then assert that a second clone (obtained <em>after</em>) reports <code>is_cancelled() == true</code>. Confirms the handle is the internal token, not a fresh one.</li>
+  <li><strong><code>cumulative_usage()</code> returns an updatable borrow</strong>: not really testable without the translator; this one shrinks to a compile-only assertion that the return type is what we claim.</li>
+</ul>
+
+<p>
+  The mock <code>Frontend</code> / <code>Host</code> / <code>LlmModel</code>
+  for these tests are inline trivial impls in <code>tests.rs</code> (a
+  no-op frontend, a default <code>LocalHost</code>, and a
+  panic-on-call LLM &mdash; we never invoke it in this PR's tests). The
+  reusable test helpers (<code>RecordingFrontend</code>,
+  <code>InMemoryHost</code>, <code>ScriptedLlm</code>) land in PRs #4,
+  #5, #6.
+</p>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green; the three new tests pass.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+  <li><code>Session</code> is re-exported from <code>arnes-core</code>'s root; <code>use arnes_core::Session;</code> works from a downstream crate.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="agent-rig-dep.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">chore/agent-rig-dep</span>
+  </a>
+  <a class="next" href="session-prompt.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/session-prompt</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

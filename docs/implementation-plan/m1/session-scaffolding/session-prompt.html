@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/session-prompt</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="../../type-map.html" data-accent="coding">Type map</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 4 &middot; PR 3 of 7</span>
+  <h1><code>feat/session-prompt</code></h1>
+  <p class="lead">
+    The translator. One method, <code>prompt(&amp;mut self, input)</code>,
+    that pulls typed deltas from agent-rig, forks each one into a live
+    <code>SessionEvent</code> and an accumulating <code>ContentBlock</code>,
+    and on turn end emits <code>TurnEnd { stop_reason, usage }</code>
+    and pushes the assembled <code>Message</code> onto history. The seam
+    the architecture doc calls
+    <a href="../../architecture.html#session-fork">"the hardest concept in arnes' runtime."</a>
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Implement <code>Session::prompt</code>. Wire <code>PricingRegistry</code>
+  into <code>Session::new()</code> so the translator can turn agent-rig's
+  token counts into a <code>TurnUsage</code> with a real (or
+  <code>None</code>) cost. Land the test that asserts the per-delta
+  fork is the only place doing both jobs.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/session/prompt.rs</code> &mdash; the translator. (Submodule of <code>session</code>; <code>impl&lt;F, H&gt; Session&lt;F, H&gt;</code> block with the <code>prompt</code> method.)</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/session/mod.rs</code> &mdash; <code>mod prompt;</code>, add <code>pricing: PricingRegistry</code> field, extend <code>Session::new()</code> with the new arg.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/session/tests.rs</code> &mdash; extend PR #2's tests to thread the new <code>PricingRegistry</code> arg; add the translator tests below.</li>
+</ul>
+
+<p>
+  No new crate deps. The <code>StreamExt</code>-style traits we use come
+  from agent-rig or <code>futures-util</code> (transitively available via
+  agent-rig); no direct dep needed.
+</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. <code>prompt</code> signature.</strong>
+</p>
+
+<pre><code>pub async fn prompt(&amp;mut self, input: impl Into&lt;String&gt;) -&gt; Result&lt;()&gt;;</code></pre>
+
+<p>
+  <code>impl Into&lt;String&gt;</code> rather than a bespoke
+  <code>UserInput</code> type: at M1 a user message is one text block, and
+  <code>Message::user_text(input)</code> already exists as a convenience
+  constructor. Introducing <code>UserInput</code> now would be
+  abstraction-for-future, which the project commenting / sizing rules
+  warn against. When M2 adds image attachments or M3 adds
+  injected-context, the signature can grow to take a richer
+  <code>UserInput</code> at that point.
+</p>
+
+<p>
+  The return type is <code>Result&lt;()&gt;</code> (alias for
+  <code>Result&lt;(), CoreError&gt;</code>). The interesting outputs are
+  side-effects: events on the frontend; mutations on
+  <code>self.history</code> and <code>self.cumulative_usage</code>.
+</p>
+
+<p>
+  <strong>2. The translator: one loop, one fork.</strong> The architecture
+  doc is emphatic on this: the translator is the <em>single</em> seam
+  between streaming events and durable history. Two output channels, but
+  exactly one place that writes to both. Schematically:
+</p>
+
+<pre><code>// Pseudocode &mdash; the actual agent-rig API will shape the calls.
+let mut stream = self.llm.run(messages, self.cancel_token.clone());
+let mut blocks: Vec&lt;ContentBlock&gt; = Vec::new();
+
+self.frontend.on_event(SessionEvent {
+    agent_id: AgentId::Root, depth: 0, kind: EventKind::TurnStart,
+}).await;
+
+while let Some(delta) = stream.next().await {
+    match delta {
+        Ok(Delta::Text(t))     =&gt; { emit_event(TextDelta { text: t.clone() }); append_text(&amp;mut blocks, t); }
+        Ok(Delta::Thinking(t)) =&gt; { emit_event(ThinkingDelta { text: t.clone() }); append_thinking(&amp;mut blocks, t); }
+        Ok(Delta::Stop { reason, tokens, model }) =&gt; {
+            let cost  = self.pricing.compute_cost(&amp;model, &amp;tokens);
+            let usage = TurnUsage { agent_id: AgentId::Root, model, tokens, cost };
+            self.cumulative_usage.record(usage.clone());
+            self.history.push(Message::Assistant { content: blocks });
+            emit_event(TurnEnd { stop_reason: reason, usage });
+            return Ok(());
+        }
+        Err(e) =&gt; { emit_event(Error { message: e.to_string() }); return Err(...); }
+    }
+}</code></pre>
+
+<p>
+  Two output channels (event + block-accumulator) but the
+  <em>one</em> match arm per delta variant is where both happen. No
+  other code in the crate fans this fork; M2's tool-call handling will
+  extend the match arms in the same translator.
+</p>
+
+<p>
+  <strong>3. Mapping agent-rig deltas to <code>EventKind</code>s.</strong>
+  agent-rig's typed-delta vocabulary is the source-of-truth shape we
+  consume; the translator is the only place that needs to know about
+  it. The mapping at M1 is one-to-one for the variants currently in
+  <code>EventKind</code>:
+</p>
+
+<table>
+  <thead><tr><th>agent-rig delta</th><th><code>EventKind</code> emitted</th><th>Block accumulator action</th></tr></thead>
+  <tbody>
+    <tr><td>text delta</td><td><code>TextDelta { text }</code></td><td>append to current <code>ContentBlock::Text</code>, or start a new one</td></tr>
+    <tr><td>thinking delta</td><td><code>ThinkingDelta { text }</code></td><td>append to current <code>ContentBlock::Thinking</code>, or start a new one</td></tr>
+    <tr><td>stop / turn-end</td><td><code>TurnEnd { stop_reason, usage }</code></td><td>finalize blocks; push <code>Message::Assistant { content: blocks }</code></td></tr>
+    <tr><td>error from stream</td><td><code>Error { message }</code> + return <code>Err</code></td><td>do not push partial blocks (see point 6)</td></tr>
+  </tbody>
+</table>
+
+<p>
+  <strong>4. Block accumulation: same-kind extends, different-kind opens.</strong>
+  When a text delta arrives, if the last block in <code>blocks</code> is
+  <code>ContentBlock::Text</code>, append to its <code>text</code>; else
+  push a new <code>Text</code> block. Same logic for thinking deltas.
+  The provider may interleave text and thinking (Gemini 2.5 reasoning
+  does); the assembled message preserves the interleaving as separate
+  blocks &mdash; the message-types phase deliberately picked
+  <code>Vec&lt;ContentBlock&gt;</code> for this. A helper
+  <code>append_block</code> in <code>prompt.rs</code> encapsulates the
+  "extend or open" branch.
+</p>
+
+<p>
+  <strong>5. <code>TurnUsage</code> construction: pricing lookup happens here.</strong>
+  agent-rig's stop delta carries token counts and the model identity (a
+  <code>ModelKey</code>-shaped pair); <code>PricingRegistry::compute_cost(&amp;key, &amp;tokens)</code>
+  returns <code>Option&lt;Cost&gt;</code>. That feeds straight into
+  <code>TurnUsage</code>'s <code>cost</code> field, preserving the
+  cross-cutting "Unknown is never silently zero" invariant from phase 3.
+  No fallback to <code>Cost::default()</code> &mdash; if pricing is
+  unknown, the cost is <code>None</code> and
+  <code>CumulativeUsage::record</code> counts it as an unknown-cost turn.
+</p>
+
+<p>
+  The agent identity in <code>TurnUsage.agent_id</code> is
+  <code>AgentId::Root</code> at M1. Sub-agent attribution is a post-V1
+  concern.
+</p>
+
+<p>
+  <strong>6. Error handling: emit + return, not one or the other.</strong>
+  If the stream yields <code>Err(e)</code>, the translator emits
+  <code>EventKind::Error { message: e.to_string() }</code> via
+  <code>frontend.on_event</code> and returns
+  <code>Err(CoreError::Session(...))</code>. Both channels carry the
+  failure because each has a different audience:
+</p>
+
+<ul>
+  <li><strong>Event channel:</strong> the frontend already renders the live transcript; users see the error in-line, after whatever partial text had already streamed.</li>
+  <li><strong>Result channel:</strong> the caller (the binary's main loop) decides what to do next (retry, give up, drop the session).</li>
+</ul>
+
+<p>
+  Partial blocks are <em>not</em> pushed to history on error &mdash; the
+  half-message would corrupt the next turn's prompt. The user-visible
+  partial text was already streamed live, so nothing is lost; the
+  frontend chooses how to mark the failure.
+</p>
+
+<p>
+  <strong>7. Cancellation: pass the token to agent-rig, do not <code>select!</code> here.</strong>
+  Per the phase index's cross-cutting decision: cooperative cancellation
+  via agent-rig. We clone <code>self.cancel_token</code> into the runner;
+  when the token fires, agent-rig stops pulling from the provider and
+  the stream ends with a "cancelled" stop variant which we map to
+  <code>StopReason::Cancelled</code>. We do <em>not</em> wrap each
+  <code>stream.next().await</code> in a
+  <code>select! { token.cancelled() =&gt; ..., delta = stream.next() =&gt; ... }</code>
+  &mdash; that would terminate the stream mid-frame and could leak
+  agent-rig resources. M2+ may add a direct <code>select!</code> when a
+  tool body itself needs to be interrupted; M1's translator stays
+  one-loop-one-fork.
+</p>
+
+<p>
+  <strong>8. <code>prompt.rs</code> as a submodule of <code>session</code>.</strong>
+  Two patterns considered:
+</p>
+
+<ul>
+  <li><strong>One <code>session/mod.rs</code></strong>: the file from PR #2 grows to include <code>prompt</code>. ~150 lines total. Pro: everything in one place. Con: the translator is the most subtle piece in the crate and benefits from its own file with focused comments.</li>
+  <li><strong>Two files: <code>mod.rs</code> + <code>prompt.rs</code></strong> (chosen): the struct, constructor, and accessors stay in <code>mod.rs</code>; the translator gets its own file with the <code>impl</code> block. Same crate-internal access (the submodule sees private fields of the parent module). Better local discoverability for both reading and reviewing.</li>
+</ul>
+
+<p>
+  <strong>9. <code>PricingRegistry</code> on <code>Session::new()</code>.</strong>
+  PR #2's <code>Session::new(frontend, host, llm)</code> grows to
+  <code>Session::new(frontend, host, llm, pricing)</code>. Three callers
+  to sweep: the tests in <code>session/tests.rs</code> from PR #2, plus
+  the inline test fixture this PR adds. No production caller yet
+  (binaries get wired in phase 7+). The PricingRegistry is held as an
+  owned value, not <code>Arc&lt;...&gt;</code>, because session-pricing
+  is per-session and not shared across sessions in M1; M6+ multi-session
+  setups can wrap one <code>PricingRegistry</code> in <code>Arc</code> at
+  that point and call <code>(&amp;*arc).clone()</code> for each new
+  session if needed.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<p>Additions to <code>session/mod.rs</code>:</p>
+
+<pre><code>mod prompt;
+
+pub struct Session&lt;F: Frontend, H: Host&gt; {
+    // ...
+    pricing: PricingRegistry,
+    // ...
+}
+
+impl&lt;F: Frontend, H: Host&gt; Session&lt;F, H&gt; {
+    pub fn new(
+        frontend: Arc&lt;F&gt;,
+        host:     Arc&lt;H&gt;,
+        llm:      Arc&lt;dyn LlmModel&gt;,
+        pricing:  PricingRegistry,
+    ) -&gt; Self {
+        Self {
+            frontend, host, llm, pricing,
+            history: Vec::new(),
+            cumulative_usage: CumulativeUsage::default(),
+            cancel_token: CancellationToken::new(),
+        }
+    }
+}</code></pre>
+
+<p>New file <code>session/prompt.rs</code> (sketch):</p>
+
+<pre><code>use crate::{
+    AgentId, ContentBlock, CoreError, EventKind, Frontend, Host, Message,
+    Result, SessionEvent, StopReason, TurnUsage,
+};
+
+use super::Session;
+
+impl&lt;F: Frontend, H: Host&gt; Session&lt;F, H&gt; {
+    pub async fn prompt(&amp;mut self, input: impl Into&lt;String&gt;) -&gt; Result&lt;()&gt; {
+        let user_msg = Message::user_text(input);
+        self.history.push(user_msg.clone());
+
+        self.frontend.on_event(event(EventKind::TurnStart)).await;
+
+        let mut stream = /* agent-rig: run(history, cancel_token.clone()) */;
+        let mut blocks: Vec&lt;ContentBlock&gt; = Vec::new();
+
+        while let Some(delta) = stream.next().await {
+            match delta {
+                Ok(/* text */)     =&gt; { /* event + append_block */ }
+                Ok(/* thinking */) =&gt; { /* event + append_block */ }
+                Ok(/* stop */)     =&gt; {
+                    let usage = TurnUsage { agent_id: AgentId::Root, model, tokens,
+                                            cost: self.pricing.compute_cost(&amp;model, &amp;tokens) };
+                    self.cumulative_usage.record(usage.clone());
+                    self.history.push(Message::Assistant { content: blocks });
+                    self.frontend.on_event(event(EventKind::TurnEnd { stop_reason, usage })).await;
+                    return Ok(());
+                }
+                Err(e) =&gt; {
+                    self.frontend.on_event(event(EventKind::Error { message: e.to_string() })).await;
+                    return Err(CoreError::Session(e.to_string()));
+                }
+            }
+        }
+
+        // Stream ended without a Stop delta &mdash; treat as transport error.
+        Err(CoreError::Session("stream ended without stop".into()))
+    }
+}
+
+fn event(kind: EventKind) -&gt; SessionEvent {
+    SessionEvent { agent_id: AgentId::Root, depth: 0, kind }
+}
+
+fn append_block(blocks: &amp;mut Vec&lt;ContentBlock&gt;, /* delta, kind */) {
+    // Extend the last same-kind block, or push a new one.
+}</code></pre>
+
+<p>
+  The exact agent-rig API surface (the names of the delta variants and
+  the runner constructor) is what shapes the <code>match</code> arms; the
+  skeleton above shows the structure that has to hold regardless.
+</p>
+
+<h2 id="tests">Tests</h2>
+
+<p>
+  Three new <code>#[tokio::test]</code>s, plus a tiny inline test-double
+  <code>LlmModel</code> at the top of <code>session/tests.rs</code> that
+  emits a fixed sequence of deltas (text, text, stop). The full
+  <code>ScriptedLlm</code> helper (PR #6) is not used here &mdash; this
+  test wants minimum coupling.
+</p>
+
+<ul>
+  <li><strong>Happy path</strong>: prompt with one text turn; assert events emitted in order (<code>TurnStart</code>, two <code>TextDelta</code>s, one <code>TurnEnd</code>); assert <code>history</code> has two entries (user + assistant); assert <code>assistant.content</code> is one <code>Text</code> block with the concatenated text; assert <code>cumulative_usage.turns_total == 1</code>.</li>
+  <li><strong>Unknown pricing</strong>: build the session with an empty <code>PricingRegistry::default()</code>; assert the emitted <code>TurnEnd.usage.cost</code> is <code>None</code> and the bucket counts as <code>turns_with_unknown_cost == 1</code>.</li>
+  <li><strong>Stream error mid-turn</strong>: scripted LLM emits one text delta then an error; assert <code>TextDelta</code> fires, then <code>Error</code>, then <code>prompt()</code> returns <code>Err</code>; assert <code>history</code> still has only the user message (partial assistant blocks were not pushed).</li>
+</ul>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green; the three new tests pass alongside PR #2's three.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+  <li><code>Session::prompt</code> is reachable through the public re-export (<code>arnes_core::Session</code>).</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="session-skeleton.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/session-skeleton</span>
+  </a>
+  <a class="next" href="recording-frontend.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/recording-frontend</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>
