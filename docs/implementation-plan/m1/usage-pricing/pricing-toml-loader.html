@@ -57,7 +57,7 @@
     TOML schema + loader. Reads the bundled
     <code>arnes-core/data/pricing.toml</code> and the optional user
     override at <code>~/.arnes/pricing.toml</code>, hands the parsed
-    rules to <code>PricingRegistry::from_rules</code> (PR #5).
+    entries to <code>PricingRegistry::from_entries</code> (PR #5).
   </p>
 </div>
 
@@ -65,9 +65,9 @@
 
 <p>
   Define the on-disk TOML shape for pricing data; ship the loader that
-  parses bundled + user files into <code>Vec&lt;Rule&gt;</code>s
+  parses bundled + user files into <code>Vec&lt;PricingEntry&gt;</code>s
   consumable by the registry. Seed the bundled file with the Gemini
-  model(s) M1 uses and the Ollama wildcard.
+  model(s) M1 uses and the Ollama provider default.
 </p>
 
 <h2 id="files">Files touched</h2>
@@ -82,7 +82,9 @@
 <h2 id="discussion">Discussion</h2>
 
 <p>
-  <strong>1. TOML schema.</strong> Array-of-tables form:
+  <strong>1. TOML schema.</strong> Two array-of-tables: one for exact
+  <code>(provider, model_id)</code> entries, one for per-provider
+  defaults.
 </p>
 
 <pre><code># Bundled at crates/arnes-core/data/pricing.toml
@@ -95,9 +97,8 @@ input_per_mtok       = 0.075       # USD per million tokens
 output_per_mtok      = 0.30
 cache_read_per_mtok  = 0.01875
 
-[[model]]
+[[provider_default]]
 provider = "ollama"
-pattern  = "*"
 cost     = "free"</code></pre>
 
 <p>
@@ -106,9 +107,28 @@ cost     = "free"</code></pre>
 
 <ul>
   <li><code>provider</code> (required).</li>
-  <li>Exactly one of <code>id</code> (exact match) or <code>pattern</code> (wildcard &mdash; M1 supports only <code>"*"</code>).</li>
+  <li><code>id</code> (required) &mdash; the exact <code>model_id</code> this entry prices.</li>
   <li>Exactly one of: a <code>cost = "free"</code> tag, or the per-mtok rate fields (<code>input_per_mtok</code>, <code>output_per_mtok</code> required; <code>cache_read_per_mtok</code>, <code>cache_write_per_mtok</code>, <code>thinking_per_mtok</code> optional). Absent of both means <code>Unknown</code> &mdash; but unknown entries aren't worth declaring, so the loader rejects them.</li>
 </ul>
+
+<p>
+  Each <code>[[provider_default]]</code> entry has:
+</p>
+
+<ul>
+  <li><code>provider</code> (required) &mdash; the provider whose unmatched models this entry applies to.</li>
+  <li>The same cost/rate fields as <code>[[model]]</code>, with the same validation. The Ollama case sets <code>cost = "free"</code>; a self-hosted paid endpoint would set rate fields.</li>
+</ul>
+
+<p>
+  This replaces the earlier single-table schema where one entry could
+  declare either <code>id</code> or <code>pattern = "*"</code>. Splitting
+  into two tables makes the intent explicit at the source: exact entries
+  belong in <code>[[model]]</code>, provider-wide fallbacks belong in
+  <code>[[provider_default]]</code>. See the
+  <a href="pricing-registry.html#discussion">discussion in PR #5</a> for
+  why we ditched wildcards.
+</p>
 
 <p>
   Rates in the TOML are <code>f64</code> dollars-per-Mtok (so the file
@@ -154,7 +174,7 @@ cost     = "free"</code></pre>
 
 <p>
   <strong>5. Parse errors.</strong> Loader returns
-  <code>(Vec&lt;Rule&gt;, Vec&lt;Diagnostic&gt;)</code> rather than
+  <code>(Vec&lt;PricingEntry&gt;, Vec&lt;Diagnostic&gt;)</code> rather than
   <code>Result</code>: a malformed entry shouldn't abort loading the
   rest of the file. The bundled file should parse cleanly (we author
   it); a malformed user override should warn but not break the session.
@@ -200,9 +220,8 @@ input_per_mtok       = 0.075
 output_per_mtok      = 0.30
 cache_read_per_mtok  = 0.01875
 
-[[model]]
+[[provider_default]]
 provider = "ollama"
-pattern  = "*"
 cost     = "free"</code></pre>
 
 <p>Loader (sketched, in <code>pricing.rs</code> or a sibling module):</p>
@@ -220,15 +239,15 @@ pub fn load_pricing() -&gt; (PricingRegistry, Vec&lt;LoadDiagnostic&gt;) {
     let mut diagnostics = Vec::new();
 
     let bundled_src = include_str!("../data/pricing.toml");
-    let bundled = parse_rules(bundled_src, PathBuf::from("&lt;bundled&gt;"), &amp;mut diagnostics);
+    let bundled = parse_entries(bundled_src, PathBuf::from("&lt;bundled&gt;"), &amp;mut diagnostics);
 
     let user_path = user_override_path();
     let user = match user_path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()) {
-        Some(src) =&gt; parse_rules(&amp;src, user_path.unwrap(), &amp;mut diagnostics),
+        Some(src) =&gt; parse_entries(&amp;src, user_path.unwrap(), &amp;mut diagnostics),
         None      =&gt; Vec::new(),
     };
 
-    (PricingRegistry::from_rules(bundled, user), diagnostics)
+    (PricingRegistry::from_entries(bundled, user), diagnostics)
 }
 
 fn user_override_path() -&gt; Option&lt;PathBuf&gt; {
@@ -239,13 +258,14 @@ fn user_override_path() -&gt; Option&lt;PathBuf&gt; {
 struct TomlFile {
     #[serde(default)]
     model: Vec&lt;TomlModel&gt;,
+    #[serde(default)]
+    provider_default: Vec&lt;TomlProviderDefault&gt;,
 }
 
 #[derive(Deserialize)]
 struct TomlModel {
     provider:             String,
-    id:                   Option&lt;String&gt;,
-    pattern:              Option&lt;String&gt;,
+    id:                   String,
     cost:                 Option&lt;String&gt;,        // "free" or absent
     input_per_mtok:       Option&lt;f64&gt;,
     output_per_mtok:      Option&lt;f64&gt;,
@@ -254,7 +274,18 @@ struct TomlModel {
     thinking_per_mtok:    Option&lt;f64&gt;,
 }
 
-fn parse_rules(src: &amp;str, source: PathBuf, diagnostics: &amp;mut Vec&lt;LoadDiagnostic&gt;) -&gt; Vec&lt;Rule&gt; {
+#[derive(Deserialize)]
+struct TomlProviderDefault {
+    provider:             String,
+    cost:                 Option&lt;String&gt;,
+    input_per_mtok:       Option&lt;f64&gt;,
+    output_per_mtok:      Option&lt;f64&gt;,
+    cache_read_per_mtok:  Option&lt;f64&gt;,
+    cache_write_per_mtok: Option&lt;f64&gt;,
+    thinking_per_mtok:    Option&lt;f64&gt;,
+}
+
+fn parse_entries(src: &amp;str, source: PathBuf, diagnostics: &amp;mut Vec&lt;LoadDiagnostic&gt;) -&gt; Vec&lt;PricingEntry&gt; {
     let parsed: TomlFile = match toml::from_str(src) {
         Ok(p) =&gt; p,
         Err(e) =&gt; {
@@ -263,33 +294,43 @@ fn parse_rules(src: &amp;str, source: PathBuf, diagnostics: &amp;mut Vec&lt;Load
         }
     };
 
-    let mut rules = Vec::with_capacity(parsed.model.len());
+    let mut entries = Vec::with_capacity(parsed.model.len() + parsed.provider_default.len());
     for (i, m) in parsed.model.into_iter().enumerate() {
-        match build_rule(m) {
-            Ok(r)  =&gt; rules.push(r),
+        match build_exact(m) {
+            Ok(e)  =&gt; entries.push(e),
             Err(e) =&gt; diagnostics.push(LoadDiagnostic {
                 source: source.clone(),
-                message: format!("entry [{i}]: {e}"),
+                message: format!("[[model]] [{i}]: {e}"),
             }),
         }
     }
-    rules
+    for (i, d) in parsed.provider_default.into_iter().enumerate() {
+        match build_provider_default(d) {
+            Ok(e)  =&gt; entries.push(e),
+            Err(e) =&gt; diagnostics.push(LoadDiagnostic {
+                source: source.clone(),
+                message: format!("[[provider_default]] [{i}]: {e}"),
+            }),
+        }
+    }
+    entries
 }
 
-// build_rule: validates "exactly one of id/pattern"; "exactly one of
-// cost/rates"; converts f64 dollars to Micros; constructs Rule.</code></pre>
+// build_exact / build_provider_default: validate "exactly one of cost/rates";
+// convert f64 dollars to Micros; construct the matching PricingEntry variant.</code></pre>
 
 <h2 id="lib-rs">lib.rs additions</h2>
 
-<pre><code>pub use pricing::{LoadDiagnostic, Matcher, PricingRegistry, Rule, TokenCounts, compute_cost, load_pricing};</code></pre>
+<pre><code>pub use pricing::{LoadDiagnostic, PricingEntry, PricingRegistry, load_pricing};</code></pre>
 
 <h2 id="tests">Tests</h2>
 
 <ul>
   <li><strong>Parse the bundled file</strong>: <code>load_pricing()</code> succeeds with no diagnostics; the resulting registry resolves <code>gemini-2.5-flash</code> to a Priced entry and any <code>ollama</code> model to Free.</li>
-  <li><strong>Parse a malformed entry</strong>: a TOML with one valid and one missing-required-field entry returns the one valid rule + one diagnostic.</li>
-  <li><strong>User override wins</strong>: parse a fake "user" TOML that re-declares <code>gemini-2.5-flash</code> with different rates; the merged registry uses the user rates.</li>
-  <li><strong>f64 &rarr; Micros conversion</strong>: <code>input_per_mtok = 0.075</code> in TOML produces <code>Micros(75)</code> in the rule.</li>
+  <li><strong>Parse a malformed entry</strong>: a TOML with one valid and one missing-required-field entry returns the one valid entry + one diagnostic.</li>
+  <li><strong>User override wins (exact)</strong>: parse a fake "user" TOML that re-declares <code>gemini-2.5-flash</code> with different rates; the merged registry uses the user rates.</li>
+  <li><strong>User override wins (provider default)</strong>: bundled <code>[[provider_default]]</code> says <code>cost = "free"</code>; user TOML re-declares the same provider with rate fields; the merged registry uses the user rates for any unmatched model.</li>
+  <li><strong>f64 &rarr; Micros conversion</strong>: <code>input_per_mtok = 0.075</code> in TOML produces <code>Micros(75)</code> in the entry.</li>
   <li><strong>Missing user file is non-fatal</strong>: when no <code>~/.arnes/pricing.toml</code> exists, <code>load_pricing()</code> returns the bundled registry + no diagnostics.</li>
 </ul>
 
