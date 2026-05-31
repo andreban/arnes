@@ -56,8 +56,8 @@
   <p class="lead">
     Token / cost types with three-state pricing (Priced / Free / Unknown),
     per-<code>(agent, model)</code> aggregation, and a registry loaded
-    from bundled TOML + user override. The first phase that ships
-    runtime-relevant arithmetic; previous phases shipped type
+    from the user's <code>~/.arnes/pricing.json</code>. The first phase
+    that ships runtime-relevant arithmetic; previous phases shipped type
     vocabularies only.
   </p>
 </div>
@@ -72,7 +72,7 @@
     <tr><td>3</td><td><a href="usage-record.html"><code>feat/usage-record</code></a></td><td><code>Usage</code> (per-turn) + <code>ModelUsage</code> (aggregated row shape).</td></tr>
     <tr><td>4</td><td><a href="cumulative-usage.html"><code>feat/cumulative-usage</code></a></td><td><code>CumulativeUsage</code> + <code>record()</code> + <code>total_known_cost()</code>.</td></tr>
     <tr><td>5</td><td><a href="pricing-registry.html"><code>feat/pricing-registry</code></a></td><td><code>PricingRegistry</code> &mdash; lookup, per-provider defaults, override-wins merge.</td></tr>
-    <tr><td>6</td><td><a href="pricing-toml-loader.html"><code>feat/pricing-toml-loader</code></a></td><td>TOML schema; bundled + <code>~/.arnes/pricing.toml</code> loader.</td></tr>
+    <tr><td>6</td><td><a href="pricing-json-loader.html"><code>feat/pricing-json-loader</code></a></td><td>JSON schema; <code>~/.arnes/pricing.json</code> parser (no bundled defaults, no I/O).</td></tr>
     <tr><td>7</td><td><a href="cumulative-usage-projections.html"><code>feat/cumulative-usage-projections</code></a></td><td><code>by_model()</code> / <code>by_agent()</code> derived views.</td></tr>
     <tr><td>8</td><td><a href="turnend-usage-wiring.html"><code>feat/turnend-usage-wiring</code></a></td><td>Add the <code>usage: Usage</code> field to <code>EventKind::TurnEnd</code>.</td></tr>
   </tbody>
@@ -141,7 +141,7 @@
   <li><strong>usage-record</strong>: when <code>Cost</code> is computed (eager at <code>Usage</code> construction); why <code>Option&lt;Cost&gt;</code> on <code>Usage</code>; shape of <code>ModelUsage</code> as the aggregated row.</li>
   <li><strong>cumulative-usage</strong>: indexing by <code>(AgentId, ModelKey)</code>; <code>record()</code> semantics; separating <code>known_cost</code> from <code>turns_with_unknown_cost</code>.</li>
   <li><strong>pricing-registry</strong>: exact-vs-provider-default precedence; why we dropped wildcards; override precedence; the Unknown fallback.</li>
-  <li><strong>pricing-toml-loader</strong>: TOML schema shape; bundling via <code>include_str!</code> vs runtime file; where the user-override file lives.</li>
+  <li><strong>pricing-json-loader</strong>: JSON schema shape (provider-grouped vs flat); why JSON over TOML; why no bundled defaults; why I/O and path resolution are deferred to whichever later PR wires the registry into a session.</li>
   <li><strong>cumulative-usage-projections</strong>: borrowed vs owned view returns; projection consistency invariant; whether to expose iterators instead.</li>
   <li><strong>turnend-usage-wiring</strong>: minimal &mdash; one-field addition; consumer sweep.</li>
 </ul>
@@ -155,8 +155,8 @@
 
 <ul>
   <li><strong>Three-state pricing behaves correctly</strong> (PRs #2, #5): Priced / Free / Unknown each produce the expected <code>Option&lt;Cost&gt;</code> from <code>compute_cost</code>.</li>
-  <li><strong>User override wins over bundled</strong> (PR #5): override entry for a model is used instead of the bundled entry.</li>
-  <li><strong>Provider default matches</strong> (PR #5): the Ollama <code>[[provider_default]]</code> entry with <code>cost = "free"</code> resolves any <code>ollama</code> model to <code>Free</code> when no exact entry exists.</li>
+  <li><strong>Later entries override earlier in the same vec</strong> (PR #5): the only mechanism for "user overrides earlier value" now that there is no bundled source &mdash; <code>HashMap::insert</code> overwrites, so the second declaration wins.</li>
+  <li><strong>Provider default matches</strong> (PR #5): an Ollama provider block with <code>"default": "free"</code> resolves any <code>ollama</code> model to <code>Free</code> when no per-model entry overrides it.</li>
   <li><strong>Cumulative sums are consistent</strong> (PR #4 + #7): the sum of <code>by_model()</code> totals equals the sum of <code>by_agent()</code> totals equals the registry's <code>total_known_cost()</code>; unknown-cost turns count consistently.</li>
   <li><strong>Per-(agent, model) bucketing</strong> (PR #4): two synthetic <code>Usage</code> values with different <code>ModelKey</code>s produce two entries in <code>CumulativeUsage</code>.</li>
 </ul>
@@ -168,7 +168,7 @@
   <li><code>cargo check --workspace</code> clean (CI green throughout).</li>
   <li><code>cargo test -p arnes-core</code> green; the integration assertions above all pass.</li>
   <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
-  <li>End state: <code>arnes-core</code> exports the full usage/pricing vocabulary, has a working <code>PricingRegistry</code> loaded from <code>data/pricing.toml</code>, and <code>EventKind::TurnEnd</code> carries a <code>Usage</code> (emission lands in phase 4 with <code>Session</code>).</li>
+  <li>End state: <code>arnes-core</code> exports the full usage/pricing vocabulary, has a working <code>PricingRegistry</code> + a <code>parse_pricing</code> function that turns <code>~/.arnes/pricing.json</code> content into entries (file I/O lands with the session in phase 4), and <code>EventKind::TurnEnd</code> carries a <code>Usage</code> (emission also lands in phase 4 with <code>Session</code>).</li>
 </ul>
 
 <div class="pager">

@@ -465,9 +465,9 @@ pub struct Cost {
 pub struct Micros(pub i64);
 
 pub enum ModelCostInfo {
-    Priced(ModelPricing),   // bundled or user-supplied
+    Priced(ModelPricing),   // declared in ~/.arnes/pricing.json
     Free,                   // explicitly free (local Ollama, self-hosted)
-    Unknown,                // default for unrecognized models
+    Unknown,                // default for unrecognized / unconfigured models
 }
 
 pub struct ModelPricing {
@@ -515,36 +515,43 @@ impl CumulativeUsage {
 <h3 id="pricing-registry">Pricing registry</h3>
 
 <p>
-  Bundled TOML asset at <code>arnes-core/data/pricing.toml</code>, merged
-  with user overrides at <code>~/.arnes/pricing.toml</code>. Two tables:
-  <code>[[model]]</code> for exact <code>(provider, model_id)</code>
-  entries and <code>[[provider_default]]</code> for the
-  unmatched-model-on-this-provider fallback (used by self-hosted
-  providers like Ollama where the harness can't enumerate model_ids
-  ahead of time).
+  User-supplied JSON at <code>~/.arnes/pricing.json</code>. No bundled
+  defaults &mdash; shipping pricing in the binary would commit us to
+  keeping rates current, and the three-state <code>ModelCostInfo</code>
+  already handles "we don't know" honestly. The file is an array of
+  provider blocks; each block has the provider name, an optional
+  <code>default</code> (the unmatched-model-on-this-provider fallback,
+  used by self-hosted providers like Ollama where the user can't
+  enumerate model_ids ahead of time), and an optional <code>models</code>
+  array for exact <code>(provider, model_id)</code> pricing.
 </p>
 
-<pre><code># arnes-core/data/pricing.toml  (bundled; user overrides win)
-
-[[model]]
-provider             = "gemini"
-id                   = "gemini-2.5-flash"
-input_per_mtok       = 0.075
-output_per_mtok      = 0.30
-cache_read_per_mtok  = 0.01875
-
-[[provider_default]]
-provider = "ollama"
-cost     = "free"
-
-# Anything not listed defaults to Unknown.</code></pre>
+<pre><code>// ~/.arnes/pricing.json  (user-supplied; absent file is fine)
+[
+  {
+    "provider": "gemini",
+    "models": [
+      {
+        "id": "gemini-2.5-flash",
+        "input_per_mtok": 0.075,
+        "output_per_mtok": 0.30,
+        "cache_read_per_mtok": 0.01875
+      }
+    ]
+  },
+  {
+    "provider": "ollama",
+    "default": "free"
+  }
+]
+// Anything not listed defaults to Unknown.</code></pre>
 
 <p>
-  A small <code>fn load_pricing() -&gt; PricingRegistry</code> happens once
-  at session start; <code>registry.lookup(provider, model_id)</code>
-  returns the <code>ModelCostInfo</code>. The session uses that plus
-  per-turn <code>Usage</code> token counts to compute the turn's
-  <code>cost</code> field.
+  <code>parse_pricing(src: &amp;str) -&gt; Result&lt;PricingRegistry, _&gt;</code>
+  turns the file contents into the registry directly; the session reads
+  the file once at start and calls <code>registry.lookup(provider, model_id)</code>
+  to get the <code>ModelCostInfo</code>. That plus per-turn <code>Usage</code>
+  token counts computes the turn's <code>cost</code> field.
 </p>
 
 <h3 id="usage-events">Where usage flows</h3>

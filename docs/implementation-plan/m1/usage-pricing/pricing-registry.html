@@ -56,9 +56,10 @@
   <p class="lead">
     <code>PricingRegistry</code> &mdash; in-memory lookup of
     <code>ModelCostInfo</code> by <code>(provider, model_id)</code>,
-    with per-provider defaults and a user-override-wins merge rule. The
-    actual TOML file loading lands in PR #6; this PR ships the registry
-    structure, lookup, and <code>compute_cost</code> method.
+    organised as a provider map where each provider carries a default
+    plus a per-model override table. JSON parsing into this shape lands
+    in PR #6; this PR ships the registry types, lookup, and
+    <code>compute_cost</code>.
   </p>
 </div>
 
@@ -67,15 +68,15 @@
 <p>
   Ship the data structure callers consult to turn a <code>ModelKey</code>
   + raw token counts into a <code>ModelCostInfo</code> (and from there,
-  an <code>Option&lt;Cost&gt;</code>). Construction takes pre-parsed
-  rules; the TOML parser that produces those rules lands in PR #6.
+  an <code>Option&lt;Cost&gt;</code>). Construction takes pre-grouped
+  provider blocks; the JSON parser that produces them lands in PR #6.
 </p>
 
 <h2 id="files">Files touched</h2>
 
 <ul>
-  <li><strong>new</strong>: <code>crates/arnes-core/src/pricing.rs</code> &mdash; <code>PricingRegistry</code> with <code>lookup</code> and <code>compute_cost</code> methods.</li>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; add <code>TokenCounts</code> + <code>ModelPricing::cost_for</code> + private <code>scale_per_mtok</code> helper.</li>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/pricing.rs</code> &mdash; <code>ProviderPricing</code>, <code>PricingRegistry</code>, <code>lookup</code>, <code>compute_cost</code>.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; add <code>TokenCounts</code> + <code>ModelPricing::cost_for</code> + private <code>scale_per_mtok</code>; add <code>#[derive(Default)]</code> to <code>ModelCostInfo</code> with <code>Unknown</code> as the default variant (lets <code>ProviderPricing</code> derive <code>Default</code>).</li>
   <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; module + re-exports.</li>
 </ul>
 
@@ -98,64 +99,86 @@
 </ul>
 
 <p>
-  <strong>2. Internal structure.</strong> Two independently-keyed maps,
-  one for exact <code>(provider, model_id)</code> matches and one for
-  per-provider fallbacks:
+  <strong>2. Internal structure: one map, provider-grouped.</strong>
+  The registry is a single map keyed by provider name; each entry holds
+  the provider's default <code>ModelCostInfo</code> plus a per-model
+  override table.
 </p>
 
-<pre><code>struct PricingRegistry {
-    exact:            HashMap&lt;(String, String), ModelCostInfo&gt;,
-    provider_default: HashMap&lt;String, ModelCostInfo&gt;,
+<pre><code>pub struct ProviderPricing {
+    pub default: ModelCostInfo,
+    pub models:  HashMap&lt;String, ModelCostInfo&gt;,
+}
+
+pub struct PricingRegistry {
+    providers: HashMap&lt;String, ProviderPricing&gt;,
 }</code></pre>
 
 <p>
-  The loader (PR #6) produces a single <code>Vec&lt;PricingEntry&gt;</code>
-  per source &mdash; an enum that distinguishes the two kinds of entry
-  at the schema boundary:
+  An earlier draft used two independently-keyed maps
+  (<code>exact: HashMap&lt;(String, String), ModelCostInfo&gt;</code> and
+  <code>provider_default: HashMap&lt;String, ModelCostInfo&gt;</code>) plus
+  a <code>PricingEntry</code> enum that the loader produced and
+  <code>from_entries</code> dispatched into the two maps. The
+  provider-grouped shape collapses both data structures into one, drops
+  the enum entirely, and makes the registry's natural input the same
+  provider-block shape PR #6's JSON loader already deserializes into.
+  No flattening pass on the loader side, no dispatch <code>match</code>
+  on the registry side.
 </p>
 
-<pre><code>pub enum PricingEntry {
-    Exact { provider: String, model_id: String, info: ModelCostInfo },
-    ProviderDefault { provider: String, info: ModelCostInfo },
-}</code></pre>
+<p>
+  <code>ModelCostInfo::Unknown</code> is the <code>Default</code> variant
+  of the enum (the doc lists this under "Files touched"). A
+  <code>ProviderPricing</code> with no declared default therefore reads
+  as "this provider has no fallback price" &mdash; which is what
+  <code>Unknown</code> already means.
+</p>
 
 <p>
-  <strong>3. Lookup precedence.</strong> Exact match wins; provider
-  default is the fallback; <code>Unknown</code> is the floor.
+  <strong>3. Lookup precedence.</strong> Per-model entry wins;
+  provider default is the fallback; missing provider is
+  <code>Unknown</code>.
 </p>
 
 <ol>
-  <li>If <code>exact[(key.provider, key.model_id)]</code> exists: return it.</li>
-  <li>Else if <code>provider_default[key.provider]</code> exists: return it.</li>
-  <li>Else: return <code>ModelCostInfo::Unknown</code>.</li>
+  <li>If <code>providers[key.provider]</code> is absent: return <code>ModelCostInfo::Unknown</code>.</li>
+  <li>Else if <code>providers[key.provider].models[key.model_id]</code> exists: return it.</li>
+  <li>Else: return <code>providers[key.provider].default</code>.</li>
 </ol>
 
 <p>
-  This drops the <code>Matcher</code> enum, the matcher comparison
-  helper, and the two-pass scan from the earlier design. "Exact beats
-  wildcard" is no longer a contract to enforce in code &mdash; it's a
-  natural property of looking in <code>exact</code> before
-  <code>provider_default</code>.
+  "Per-model entry beats provider default" is no longer a separate
+  contract &mdash; it's a property of checking the inner map before
+  falling back to the outer default.
 </p>
 
 <p>
-  <strong>4. Bundled-vs-user merge.</strong> User overrides win. The
-  construction API takes two entry sets:
+  <strong>4. Construction and merge.</strong> User overrides win. The
+  construction API:
 </p>
 
-<pre><code>pub fn from_entries(bundled: Vec&lt;PricingEntry&gt;, user: Vec&lt;PricingEntry&gt;) -&gt; Self;</code></pre>
+<pre><code>pub fn from_providers(
+    blocks: impl IntoIterator&lt;Item = (String, ProviderPricing)&gt;,
+) -&gt; Self;</code></pre>
 
 <p>
-  Internal merge: insert <code>bundled</code> entries into the two maps,
-  then insert <code>user</code> entries on top &mdash; <code>HashMap::insert</code>
-  naturally overwrites prior values for the same key. No order-sensitive
-  scan, no "did I already see this rule" check.
+  Internal merge: <code>HashMap::insert</code> on the provider key.
+  Later blocks in the iterator replace earlier blocks for the same
+  provider <em>atomically</em> &mdash; the new <code>ProviderPricing</code>
+  takes over (its <code>default</code> and its <code>models</code>); the
+  earlier block's models do not survive. A caller that wants
+  finer-grained merging composes the blocks themselves before handing
+  them to <code>from_providers</code>; the registry doesn't try to
+  reach into per-provider state.
 </p>
 
 <p>
-  PR #6's loader produces the two <code>Vec&lt;PricingEntry&gt;</code>s;
-  this PR ships the registry that consumes them and accepts test-only
-  construction with entries built directly.
+  Atomic per-provider replacement is fine because at M1 there is only
+  one input source (the user's <code>~/.arnes/pricing.json</code>; see
+  PR #6 for why we don't bundle defaults). If a user writes two blocks
+  for the same provider in their JSON, the file is malformed in spirit
+  &mdash; "last wins entirely" is a defensible reading.
 </p>
 
 <p>
@@ -258,6 +281,17 @@ fn scale_per_mtok(tokens: u64, per_mtok: Micros) -&gt; Micros {
     Micros((product / 1_000_000) as i64)
 }</code></pre>
 
+<p><strong>Also in <code>crates/arnes-core/src/usage.rs</code></strong>
+(small change to <code>ModelCostInfo</code>):</p>
+
+<pre><code>#[derive(Clone, Debug, Default)]
+pub enum ModelCostInfo {
+    Priced(ModelPricing),
+    Free,
+    #[default]
+    Unknown,
+}</code></pre>
+
 <p><strong>New file <code>crates/arnes-core/src/pricing.rs</code></strong>:</p>
 
 <pre><code>// Copyright 2026 Andre Cipriani Bandarra
@@ -269,60 +303,39 @@ use std::collections::HashMap;
 
 use crate::{Cost, ModelCostInfo, ModelKey, TokenCounts};
 
-/// One row of pricing data, as produced by the loader (PR #6) or built
-/// directly in tests.
-#[derive(Clone, Debug)]
-pub enum PricingEntry {
-    Exact {
-        provider: String,
-        model_id: String,
-        info:     ModelCostInfo,
-    },
-    ProviderDefault {
-        provider: String,
-        info:     ModelCostInfo,
-    },
+/// Pricing for one provider: a default that applies when no per-model
+/// entry matches, plus the per-model overrides.
+#[derive(Clone, Debug, Default)]
+pub struct ProviderPricing {
+    pub default: ModelCostInfo,
+    pub models:  HashMap&lt;String, ModelCostInfo&gt;,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct PricingRegistry {
-    exact:            HashMap&lt;(String, String), ModelCostInfo&gt;,
-    provider_default: HashMap&lt;String, ModelCostInfo&gt;,
+    providers: HashMap&lt;String, ProviderPricing&gt;,
 }
 
 impl PricingRegistry {
-    /// Build a registry from bundled and user-override entries.
-    /// User entries overwrite bundled entries for the same key.
-    pub fn from_entries(bundled: Vec&lt;PricingEntry&gt;, user: Vec&lt;PricingEntry&gt;) -&gt; Self {
-        let mut reg = PricingRegistry::default();
-        reg.insert_all(bundled);
-        reg.insert_all(user);   // user wins on conflict
-        reg
+    /// Build a registry from provider blocks. If the same provider name
+    /// appears twice, the later block replaces the earlier one entirely.
+    pub fn from_providers(
+        blocks: impl IntoIterator&lt;Item = (String, ProviderPricing)&gt;,
+    ) -&gt; Self {
+        PricingRegistry { providers: blocks.into_iter().collect() }
     }
 
-    fn insert_all(&amp;mut self, entries: Vec&lt;PricingEntry&gt;) {
-        for e in entries {
-            match e {
-                PricingEntry::Exact { provider, model_id, info } =&gt; {
-                    self.exact.insert((provider, model_id), info);
-                }
-                PricingEntry::ProviderDefault { provider, info } =&gt; {
-                    self.provider_default.insert(provider, info);
-                }
-            }
-        }
-    }
-
-    /// Look up the cost info for a `ModelKey`.
-    /// Exact match wins; provider default is the fallback; otherwise `Unknown`.
+    /// Look up the cost info for a `ModelKey`. A per-model entry wins;
+    /// the provider's default is the fallback; missing providers resolve
+    /// to `Unknown`.
     pub fn lookup(&amp;self, key: &amp;ModelKey) -&gt; ModelCostInfo {
-        if let Some(info) = self.exact.get(&amp;(key.provider.clone(), key.model_id.clone())) {
-            return info.clone();
-        }
-        if let Some(info) = self.provider_default.get(&amp;key.provider) {
-            return info.clone();
-        }
-        ModelCostInfo::Unknown
+        let Some(p) = self.providers.get(&amp;key.provider) else {
+            return ModelCostInfo::Unknown;
+        };
+        p.models
+            .get(&amp;key.model_id)
+            .cloned()
+            .unwrap_or_else(|| p.default.clone())
     }
 
     /// Compute the cost for a turn given the model and its raw token
@@ -340,19 +353,18 @@ impl PricingRegistry {
 
 <pre><code>mod pricing;
 
-pub use pricing::{PricingEntry, PricingRegistry};
+pub use pricing::{PricingRegistry, ProviderPricing};
 // Extend the existing `usage` re-export line to include TokenCounts:
 pub use usage::{Cost, CumulativeUsage, Micros, ModelCostInfo, ModelPricing, ModelUsage, TokenCounts, Usage};</code></pre>
 
 <h2 id="tests">Tests</h2>
 
 <ul>
-  <li><strong>Exact match</strong>: an <code>Exact</code> entry for <code>("gemini", "gemini-2.5-flash")</code> matches that exact key; doesn't match <code>("gemini", "gemini-2.5-pro")</code>.</li>
-  <li><strong>Provider default match</strong>: a <code>ProviderDefault</code> entry for <code>("ollama", Free)</code> matches every <code>ollama</code> model_id with no exact entry.</li>
-  <li><strong>Exact beats provider default</strong>: if both an <code>Exact</code> and a <code>ProviderDefault</code> entry exist for the same provider, the exact one wins.</li>
-  <li><strong>Unmatched returns Unknown</strong>: looking up a provider/model with no entries returns <code>ModelCostInfo::Unknown</code>.</li>
-  <li><strong>User overrides bundled (exact)</strong>: bundled exact entry says Free; user override for the same exact key says Priced; lookup returns Priced.</li>
-  <li><strong>User overrides bundled (provider default)</strong>: bundled <code>("ollama", Free)</code>; user override <code>("ollama", Unknown)</code>; lookup of any ollama model returns Unknown.</li>
+  <li><strong>Per-model match</strong>: a provider block with a model entry for <code>"gemini-2.5-flash"</code> matches that exact key; doesn't match <code>"gemini-2.5-pro"</code> on the same provider when the default is <code>Unknown</code>.</li>
+  <li><strong>Provider default match</strong>: a provider block with <code>default = Free</code> and empty <code>models</code> matches every model_id under that provider.</li>
+  <li><strong>Per-model beats provider default</strong>: a provider block with <code>default = Free</code> plus a model entry for <code>"billed-model"</code> with <code>Priced</code> resolves <code>"billed-model"</code> to <code>Priced</code> and anything else under that provider to <code>Free</code>.</li>
+  <li><strong>Unmatched provider returns Unknown</strong>: a registry built with no blocks for <code>"nobody"</code> resolves <code>(nobody, anything)</code> to <code>ModelCostInfo::Unknown</code>.</li>
+  <li><strong>Later provider block replaces earlier</strong>: passing two blocks for <code>"gemini"</code> in <code>from_providers</code> &mdash; the first with <code>default = Free</code> and one model, the second with <code>default = Unknown</code> and a different model &mdash; resolves only what the second block declared, not the first.</li>
   <li><strong><code>compute_cost</code> three-state</strong>: a model resolving to Priced returns <code>Some</code> with computed amounts; Free returns <code>Some(Cost::default())</code>; Unknown returns <code>None</code>.</li>
   <li><strong><code>compute_cost</code> optional fallback</strong>: a Priced entry with <code>cache_read_per_mtok = None</code> bills cache_read tokens at <code>input_per_mtok</code>.</li>
   <li><strong>Arithmetic</strong>: 75 micros/Mtok &times; 1,000,000 tokens = Micros(75) (a.k.a. $0.000075).</li>
@@ -372,9 +384,9 @@ pub use usage::{Cost, CumulativeUsage, Micros, ModelCostInfo, ModelPricing, Mode
     <span class="pager-label">&larr; Back</span>
     <span class="pager-title">feat/cumulative-usage</span>
   </a>
-  <a class="next" href="pricing-toml-loader.html">
+  <a class="next" href="pricing-json-loader.html">
     <span class="pager-label">Next &rarr;</span>
-    <span class="pager-title">feat/pricing-toml-loader</span>
+    <span class="pager-title">feat/pricing-json-loader</span>
   </a>
 </div>
 
