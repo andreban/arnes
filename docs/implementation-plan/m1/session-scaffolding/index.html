@@ -148,16 +148,19 @@
 </p>
 
 <p>
-  <strong>4. <code>agent-rig</code> consumed with the minimal feature set.</strong>
+  <strong>4. <code>agent-rig</code> consumed with no opt-in features.</strong>
   At M1 we only need the runtime core: the <code>LlmModel</code> trait,
   the <code>AgentRunner</code> driver, and the typed-delta stream
-  vocabulary. Provider features (<code>gemini</code>, etc.) are
-  deliberately not enabled here &mdash; the scripted LLM exercises the
-  same trait without any HTTP, and the real Gemini wire-up is phase 7's
-  job. This keeps phase 4's CI fast and dependency-light, and keeps
-  the build of <code>arnes-core</code> usable in unit tests on machines
-  without network access. Exact features and version-pin policy live in
-  <a href="agent-rig-dep.html">PR #1</a>.
+  vocabulary &mdash; all of which are unconditional in agent-rig (the
+  crate's <code>default = []</code> means providers are explicit
+  opt-ins, never defaults). Provider features
+  (<code>gemini</code>, <code>ollama</code>) are deliberately not
+  enabled here &mdash; the scripted LLM exercises the same trait
+  without any HTTP, and the real Gemini wire-up is phase 7's job.
+  This keeps phase 4's CI fast and dependency-light, and keeps
+  <code>arnes-core</code>'s unit tests runnable on machines without
+  network access. Source choice and the rationale for landing this as
+  its own chore PR live in <a href="agent-rig-dep.html">PR #1</a>.
 </p>
 
 <h2 id="discussion-pattern">Discussion sections in each PR doc</h2>
@@ -170,7 +173,7 @@
 </p>
 
 <ul>
-  <li><strong>agent-rig-dep</strong>: feature flags chosen; source (main-branch tracking vs pinned rev vs crates.io); workspace dep vs per-crate; the rationale for sequestering this in its own chore PR.</li>
+  <li><strong>agent-rig-dep</strong>: source (main-branch tracking vs pinned rev vs crates.io); features at M1 vs phase 7 (none vs provider opt-ins); workspace dep vs per-crate; the rationale for sequestering this in its own chore PR.</li>
   <li><strong>session-skeleton</strong>: type-parameter naming (<code>F, H</code> vs <code>F, E</code>); <code>Arc&lt;F&gt;</code> vs owned <code>F</code>; what <code>new()</code> takes; whether <code>cancel()</code> consumes or borrows; where <code>CumulativeUsage</code> lives (field vs computed); the <code>history: Vec&lt;Message&gt;</code> internal-vs-public question deferred to the snapshot API in M6/M8.</li>
   <li><strong>session-prompt</strong>: the translator pattern (single fork between event emission and content-block accumulation); how each agent-rig delta maps to an <code>EventKind</code>; when <code>TurnEnd</code> fires; <code>TurnUsage</code> construction (where pricing lookup happens &mdash; or doesn't, yet); error mapping to <code>EventKind::Error</code> vs the <code>Result</code> return.</li>
   <li><strong>recording-frontend</strong>: <code>Mutex&lt;Vec&lt;SessionEvent&gt;&gt;</code> vs <code>tokio::sync::Mutex</code>; whether the helper owns the events or hands them out as a snapshot; permission default for tests; the deny-by-default rationale.</li>
