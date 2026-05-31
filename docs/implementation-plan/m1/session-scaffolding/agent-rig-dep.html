@@ -113,14 +113,17 @@
 </ul>
 
 <p>
-  <strong>2. Features.</strong> Pin <code>default-features = false</code>
-  and explicitly opt into only what <code>arnes-core</code> needs at M1.
-  Concretely: whatever feature exposes <code>LlmModel</code>,
-  <code>AgentRunner</code>, and the typed-delta stream. <strong>No provider
-  features</strong> (<code>gemini</code>, <code>anthropic</code>,
-  <code>ollama</code>, &hellip;) &mdash; those are phase 7's call,
-  and adding them here would silently pull in <code>reqwest</code> /
-  <code>rustls</code> / TLS-backend bikeshedding into a chore PR.
+  <strong>2. Features: none at M1.</strong> agent-rig's feature layout
+  is the convenient case: the base API (<code>LlmModel</code>,
+  <code>AgentRunner</code>, typed deltas) is unconditional, and each
+  provider (<code>gemini</code>, <code>ollama</code>, &hellip;) is its
+  own opt-in feature with <code>default = []</code>. So
+  <code>arnes-core</code> takes the dep with <em>no</em> features list
+  and no <code>default-features = false</code> &mdash; nothing to enable,
+  nothing to disable. Providers are phase 7's call and will be enabled
+  on the per-crate dep in the adapter that needs them
+  (<code>arnes-tui</code> / <code>arnes-acp</code>), not on the
+  workspace entry.
 </p>
 
 <p>
@@ -129,12 +132,13 @@
   but the convention since has been "each PR adds the deps its own code
   introduces, in the workspace table." Continuing that pattern:
   <code>agent-rig</code> goes in <code>[workspace.dependencies]</code>
-  with its git URL + branch + features, and
-  <code>arnes-core/Cargo.toml</code> picks it up with
-  <code>{ workspace = true }</code>. Later adapter crates
-  (<code>arnes-tui</code>, <code>arnes-acp</code>) that need to construct
-  concrete provider <code>LlmModel</code>s in phase 7 will then pick up
-  the same workspace entry &mdash; without re-litigating the source choice.
+  with its git URL + branch, and <code>arnes-core/Cargo.toml</code>
+  picks it up with <code>{ workspace = true }</code>. Later adapter
+  crates (<code>arnes-tui</code>, <code>arnes-acp</code>) that need to
+  construct concrete provider <code>LlmModel</code>s in phase 7 will
+  pick up the same workspace entry and add
+  <code>features = ["gemini"]</code> (or similar) at the per-crate
+  level &mdash; without re-litigating the source choice.
 </p>
 
 <p>
@@ -163,7 +167,7 @@
 
 <pre><code>[workspace.dependencies]
 # &hellip; existing entries &hellip;
-agent-rig = { git = "https://github.com/andreban/agent-rig", branch = "main", default-features = false, features = ["&lt;core feature name&gt;"] }</code></pre>
+agent-rig = { git = "https://github.com/andreban/agent-rig", branch = "main" }</code></pre>
 
 <p><code>crates/arnes-core/Cargo.toml</code>:</p>
 
