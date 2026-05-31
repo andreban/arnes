@@ -74,7 +74,7 @@
     <tr><td><code>prompt</code></td><td><code>SystemPromptBuilder</code> &mdash; assembles the prompt from slots.</td><td>5</td></tr>
     <tr><td><code>persist</code></td><td><code>SessionWriter</code> + reader for JSONL session logs.</td><td>6</td></tr>
     <tr><td><code>compact</code></td><td>Token estimation, threshold trigger, summary prompt, history rewrite.</td><td>10</td></tr>
-    <tr><td><code>usage</code></td><td><code>Usage</code>, <code>TokenCounts</code>, <code>Cost</code>, <code>CumulativeUsage</code>, the <code>ModelCostInfo</code> pricing registry, and the <code>Micros</code> integer-money helper.</td><td>&mdash;</td></tr>
+    <tr><td><code>metering</code></td><td><code>TurnUsage</code>, <code>TokenCounts</code>, <code>Cost</code>, <code>CumulativeUsage</code>, <code>ModelPricing</code> + <code>ModelCostInfo</code>, and the <code>Micros</code> integer-money helper. Each type lives in its own file under <code>metering/</code>.</td><td>&mdash;</td></tr>
     <tr><td><code>extensions</code></td><td><code>ExtensionHost</code>, lifecycle events, host API surface. <em>Deferred</em> &mdash; design preserved, build is post-V1.</td><td>8</td></tr>
     <tr><td><code>skills</code></td><td>SKILL.md discovery + frontmatter parse + prompt-section emitter.</td><td>9</td></tr>
   </tbody>
@@ -412,10 +412,10 @@ impl Compactor {
   at the top of the loop.
 </p>
 
-<h2 id="usage-module">usage &mdash; tokens and costs</h2>
+<h2 id="usage-module">metering &mdash; tokens and costs</h2>
 
 <p>
-  Every turn produces a <code>Usage</code> snapshot from the provider.
+  Every turn produces a <code>TurnUsage</code> snapshot from the provider.
   The session aggregates them into a <code>CumulativeUsage</code> the
   frontends display. Three states matter: <em>priced</em> (we know the
   cost), <em>free</em> (explicitly free, e.g. local models), and
@@ -423,7 +423,9 @@ impl Compactor {
   unknown is never silently coerced to zero.
 </p>
 
-<pre><code>// arnes-core/src/usage.rs
+<pre><code>// arnes-core/src/metering/  (one type per file: turn_usage.rs, cost.rs,
+// micros.rs, model_cost_info.rs, model_pricing.rs, model_usage.rs,
+// token_counts.rs, cumulative_usage.rs)
 
 /// Identifies which model a turn ran against. The natural cost-accounting
 /// unit: pricing is keyed by this pair, and the UI reports usage broken
@@ -434,7 +436,7 @@ pub struct ModelKey {
     pub model_id: String,    // "gemini-2.5-pro", "llama3.2", ...
 }
 
-pub struct Usage {
+pub struct TurnUsage {
     pub agent_id: AgentId,        // who produced this turn (see frontend.rs)
     pub model:    ModelKey,       // which model billed for it
     pub tokens:   TokenCounts,
@@ -497,7 +499,7 @@ pub struct CumulativeUsage {
 }
 
 impl CumulativeUsage {
-    pub fn record(&amp;mut self, u: Usage);
+    pub fn record(&amp;mut self, u: TurnUsage);
 
     /// Flatten across agents: total per ModelKey.
     pub fn by_model(&amp;self) -&gt; HashMap&lt;&amp;ModelKey, ModelUsage&gt;;
@@ -518,26 +520,26 @@ impl CumulativeUsage {
   User-supplied JSON at <code>~/.arnes/pricing.json</code>. No bundled
   defaults &mdash; shipping pricing in the binary would commit us to
   keeping rates current, and the three-state <code>ModelCostInfo</code>
-  already handles "we don't know" honestly. The file is an array of
-  provider blocks; each block has the provider name, an optional
-  <code>default</code> (the unmatched-model-on-this-provider fallback,
-  used by self-hosted providers like Ollama where the user can't
-  enumerate model_ids ahead of time), and an optional <code>models</code>
-  array for exact <code>(provider, model_id)</code> pricing.
+  already handles "we don't know" honestly. The file is a list of
+  <code>ProviderPricing</code> values; each carries the provider name, an
+  optional <code>default</code> (the unmatched-model-on-this-provider
+  fallback, used by self-hosted providers like Ollama where the user
+  can't enumerate model_ids ahead of time), and an optional
+  <code>models</code> object keyed by <code>model_id</code> with inline
+  rates.
 </p>
 
 <pre><code>// ~/.arnes/pricing.json  (user-supplied; absent file is fine)
 [
   {
     "provider": "gemini",
-    "models": [
-      {
-        "id": "gemini-2.5-flash",
+    "models": {
+      "gemini-2.5-flash": {
         "input_per_mtok": 0.075,
         "output_per_mtok": 0.30,
         "cache_read_per_mtok": 0.01875
       }
-    ]
+    }
   },
   {
     "provider": "ollama",
@@ -547,21 +549,23 @@ impl CumulativeUsage {
 // Anything not listed defaults to Unknown.</code></pre>
 
 <p>
-  <code>parse_pricing(src: &amp;str) -&gt; Result&lt;PricingRegistry, _&gt;</code>
-  turns the file contents into the registry directly; the session reads
-  the file once at start and calls <code>registry.lookup(provider, model_id)</code>
-  to get the <code>ModelCostInfo</code>. That plus per-turn <code>Usage</code>
+  <code>parse_pricing(src: &amp;str) -&gt; Result&lt;Vec&lt;ProviderPricing&gt;, _&gt;</code>
+  is a one-line <code>serde_json::from_str</code> wrapper; the session
+  reads the file once at start, calls
+  <code>PricingRegistry::from_providers(parse_pricing(&amp;src)?)</code>, and
+  then <code>registry.lookup(provider, model_id)</code> returns the
+  <code>ModelCostInfo</code>. That plus per-turn <code>TurnUsage</code>
   token counts computes the turn's <code>cost</code> field.
 </p>
 
 <h3 id="usage-events">Where usage flows</h3>
 
 <p>
-  Every <code>EventKind::TurnEnd</code> carries the turn's <code>Usage</code>,
+  Every <code>EventKind::TurnEnd</code> carries the turn's <code>TurnUsage</code>,
   which itself carries <code>agent_id</code> and <code>model</code>.
   <code>Session</code> maintains <code>cumulative_usage()</code> as a
   running total accessible to frontends at any time. Persistence (M6)
-  writes a <code>Usage</code> row per turn into the JSONL alongside
+  writes a <code>TurnUsage</code> row per turn into the JSONL alongside
   messages; resume reconstructs the cumulative including the per-agent and
   per-model breakdowns.
 </p>
@@ -598,8 +602,8 @@ impl CumulativeUsage {
       <td>Carries typed <code>ProgressUpdate</code> (text or structured), not just <code>&amp;str</code>. A tool that wants to stream richer progress payloads can use the <code>Structured</code> variant later.</td>
     </tr>
     <tr>
-      <td><code>Usage</code> + <code>CumulativeUsage</code></td>
-      <td>Every <code>Usage</code> carries <code>agent_id</code> and <code>ModelKey</code>. <code>CumulativeUsage</code> indexes by (agent, model) so cost is reported per backend+model, with per-agent attribution available via <code>by_agent()</code>.</td>
+      <td><code>TurnUsage</code> + <code>CumulativeUsage</code></td>
+      <td>Every <code>TurnUsage</code> carries <code>agent_id</code> and <code>ModelKey</code>. <code>CumulativeUsage</code> indexes by (agent, model) so cost is reported per backend+model, with per-agent attribution available via <code>by_agent()</code>.</td>
     </tr>
     <tr>
       <td><code>PermissionAllowlist</code></td>
@@ -607,7 +611,7 @@ impl CumulativeUsage {
     </tr>
     <tr>
       <td>JSONL <code>SessionRow</code></td>
-      <td><code>Message</code> and <code>Usage</code> rows carry <code>agent_id</code>. Reader tolerates unknown variant tags (log + skip rather than fail) so a newer arnes writing rows V1 doesn't recognise can still be loaded.</td>
+      <td><code>Message</code> and <code>TurnUsage</code> rows carry <code>agent_id</code>. Reader tolerates unknown variant tags (log + skip rather than fail) so a newer arnes writing rows V1 doesn't recognise can still be loaded.</td>
     </tr>
     <tr>
       <td>ACP</td>

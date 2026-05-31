@@ -71,8 +71,9 @@
 <h2 id="files">Files touched</h2>
 
 <ul>
-  <li><strong>new</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; first file in the module that the rest of the phase extends.</li>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; declare <code>usage</code> module, re-export the new types.</li>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/metering/micros.rs</code> and <code>crates/arnes-core/src/metering/cost.rs</code> &mdash; first files in the <code>metering</code> module that the rest of the phase extends.</li>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/metering/mod.rs</code> &mdash; declares the submodules and re-exports the types.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; declare the <code>metering</code> module and re-export.</li>
 </ul>
 
 <p>No new deps.</p>
@@ -133,10 +134,9 @@
 
 <h2 id="code">Code skeleton</h2>
 
-<pre><code>// Copyright 2026 Andre Cipriani Bandarra
+<pre><code>// crates/arnes-core/src/metering/micros.rs
+// Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
-
-//! Money types: integer micros + per-token-kind cost breakdown.
 
 use std::ops::{Add, AddAssign};
 
@@ -156,6 +156,12 @@ impl Add for Micros {
 impl AddAssign for Micros {
     fn add_assign(&amp;mut self, rhs: Self) { self.0 += rhs.0; }
 }
+
+// crates/arnes-core/src/metering/cost.rs
+
+use std::ops::{Add, AddAssign};
+
+use crate::Micros;
 
 /// Cost breakdown for a single turn.
 #[derive(Clone, Copy, Debug, Default)]
@@ -188,13 +194,13 @@ impl AddAssign for Cost {
 
 <h2 id="lib-rs">lib.rs additions</h2>
 
-<pre><code>mod usage;
+<pre><code>mod metering;
 
-pub use usage::{Cost, Micros};</code></pre>
+pub use metering::{Cost, Micros};</code></pre>
 
 <h2 id="tests">Tests</h2>
 
-<p>Inline <code>#[cfg(test)]</code> in <code>usage.rs</code>:</p>
+<p>Inline <code>#[cfg(test)]</code> in each file (<code>micros.rs</code> and <code>cost.rs</code>):</p>
 
 <ul>
   <li><strong>Micros addition</strong>: <code>Micros(75) + Micros(25) == Micros(100)</code>.</li>

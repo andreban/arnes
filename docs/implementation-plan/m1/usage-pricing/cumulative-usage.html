@@ -55,7 +55,7 @@
   <h1><code>feat/cumulative-usage</code></h1>
   <p class="lead">
     The aggregation primitive: a <code>HashMap&lt;(AgentId, ModelKey), ModelUsage&gt;</code>
-    with a <code>record()</code> method that folds a <code>Usage</code>
+    with a <code>record()</code> method that folds a <code>TurnUsage</code>
     into the matching bucket.
   </p>
 </div>
@@ -72,8 +72,8 @@
 <h2 id="files">Files touched</h2>
 
 <ul>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; append <code>CumulativeUsage</code>.</li>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; re-export.</li>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/metering/cumulative_usage.rs</code>.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/metering/mod.rs</code> + <code>crates/arnes-core/src/lib.rs</code> &mdash; module + re-exports.</li>
 </ul>
 
 <p>No new deps. (<code>std::collections::HashMap</code> is in std.)</p>
@@ -93,7 +93,7 @@
 
 <p>
   <strong>2. <code>record()</code> semantics.</strong> Fold one
-  <code>Usage</code> into the bucket identified by
+  <code>TurnUsage</code> into the bucket identified by
   <code>(usage.agent_id, usage.model)</code>, creating the bucket if it
   doesn't yet exist. Field-by-field:
 </p>
@@ -148,15 +148,17 @@
 <div class="note">
   <strong>Updated in <a href="pricing-registry.html">PR #5</a>.</strong> The
   per-kind token additions shown here originally landed as five separate
-  <code>bucket.*_tokens += u.*_tokens</code> lines. PR #5 folded
-  <code>Usage</code>/<code>ModelUsage</code>'s token fields into a single
+  <code>bucket.*_tokens += u.*_tokens</code> lines. PR #5 folded the
+  per-turn record's and <code>ModelUsage</code>'s token fields into a single
   <code>tokens: TokenCounts</code> and added <code>AddAssign</code> to
   <code>TokenCounts</code>, so the aggregation collapses to one line.
 </div>
 
-<pre><code>// Appended to crates/arnes-core/src/usage.rs:
+<pre><code>// crates/arnes-core/src/metering/cumulative_usage.rs
 
 use std::collections::HashMap;
+
+use crate::{AgentId, Cost, ModelKey, ModelUsage, TokenCounts, TurnUsage};
 
 /// All token + cost totals for one session, bucketed by (agent, model).
 #[derive(Clone, Debug, Default)]
@@ -166,8 +168,8 @@ pub struct CumulativeUsage {
 }
 
 impl CumulativeUsage {
-    /// Fold one turn's `Usage` into the matching bucket.
-    pub fn record(&amp;mut self, u: Usage) {
+    /// Fold one turn's `TurnUsage` into the matching bucket.
+    pub fn record(&amp;mut self, u: TurnUsage) {
         let key = (u.agent_id.clone(), u.model.clone());
         let bucket = self
             .by_agent_and_model
@@ -211,15 +213,15 @@ impl CumulativeUsage {
 
 <h2 id="lib-rs">lib.rs additions</h2>
 
-<pre><code>pub use usage::{Cost, CumulativeUsage, Micros, ModelCostInfo, ModelPricing, ModelUsage, Usage};</code></pre>
+<pre><code>pub use metering::{Cost, CumulativeUsage, Micros, ModelCostInfo, ModelPricing, ModelUsage, TurnUsage};</code></pre>
 
 <h2 id="tests">Tests</h2>
 
 <ul>
   <li><strong>Empty default</strong>: <code>CumulativeUsage::default()</code> has zero <code>turns_total</code> and empty totals.</li>
-  <li><strong>One bucket</strong>: record one <code>Usage</code>; <code>turns_total == 1</code>; <code>total_known_cost</code> equals the input cost.</li>
-  <li><strong>Two buckets</strong> (per-(agent, model) bucketing): record two <code>Usage</code>s with different <code>ModelKey</code>s; the internal map has two entries; <code>total_known_cost</code> is the sum.</li>
-  <li><strong>Unknown-cost counting</strong>: record one <code>Usage</code> with <code>cost: Some(...)</code> and one with <code>cost: None</code>; <code>total_known_cost</code> only includes the priced one; <code>total_turns_with_unknown_cost == 1</code>.</li>
+  <li><strong>One bucket</strong>: record one <code>TurnUsage</code>; <code>turns_total == 1</code>; <code>total_known_cost</code> equals the input cost.</li>
+  <li><strong>Two buckets</strong> (per-(agent, model) bucketing): record two <code>TurnUsage</code>s with different <code>ModelKey</code>s; the internal map has two entries; <code>total_known_cost</code> is the sum.</li>
+  <li><strong>Unknown-cost counting</strong>: record one <code>TurnUsage</code> with <code>cost: Some(...)</code> and one with <code>cost: None</code>; <code>total_known_cost</code> only includes the priced one; <code>total_turns_with_unknown_cost == 1</code>.</li>
   <li><strong>Invariant</strong>: for every bucket, <code>turns == (turns_with_known_cost) + turns_with_unknown_cost</code> (derived in the test).</li>
 </ul>
 

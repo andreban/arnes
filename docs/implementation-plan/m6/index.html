@@ -97,7 +97,7 @@ pub enum SessionRow {
         message:   Message,
     },
     /// One row per turn carrying that turn's token counts + Option&lt;Cost&gt;.
-    /// agent_id and ModelKey live on the inner Usage struct.
+    /// agent_id and ModelKey live on the inner TurnUsage struct.
     Usage(UsageEntry),
     /// Recorded when compaction (M7) runs.
     Compaction(CompactionEntry),
@@ -111,7 +111,7 @@ pub enum SessionRow {
 pub struct UsageEntry {
     pub id:        Uuid,
     pub timestamp: u64,
-    pub usage:     Usage,         // from arnes-core::usage; carries agent_id + ModelKey
+    pub usage:     TurnUsage,     // from arnes-core::metering; carries agent_id + ModelKey
 }</code></pre>
 
 <p>
@@ -147,7 +147,7 @@ pub async fn load_session(path: &amp;Path) -&gt; io::Result&lt;LoadedSession&gt;
 pub struct LoadedSession {
     pub header:        SessionHeader,
     pub messages:      Vec&lt;Message&gt;,
-    pub usage:         CumulativeUsage,        // reconstructed from Usage rows
+    pub usage:         CumulativeUsage,        // reconstructed from TurnUsage rows
     pub compactions:   Vec&lt;CompactionEntry&gt;,
 }</code></pre>
 

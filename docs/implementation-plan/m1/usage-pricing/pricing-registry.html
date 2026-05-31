@@ -75,9 +75,10 @@
 <h2 id="files">Files touched</h2>
 
 <ul>
-  <li><strong>new</strong>: <code>crates/arnes-core/src/pricing.rs</code> &mdash; <code>ProviderPricing</code>, <code>PricingRegistry</code>, <code>lookup</code>, <code>compute_cost</code>.</li>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; add <code>TokenCounts</code> + <code>ModelPricing::cost_for</code> + private <code>scale_per_mtok</code>; add <code>#[derive(Default)]</code> to <code>ModelCostInfo</code> with <code>Unknown</code> as the default variant (lets <code>ProviderPricing</code> derive <code>Default</code>).</li>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; module + re-exports.</li>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/pricing/mod.rs</code> &mdash; <code>ProviderPricing</code>, <code>PricingRegistry</code>, <code>lookup</code>, <code>compute_cost</code>; plus <code>crates/arnes-core/src/pricing/tests.rs</code>.</li>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/metering/token_counts.rs</code> and <code>crates/arnes-core/src/metering/model_pricing.rs</code> (extracted from the original <code>usage.rs</code>; adds <code>ModelPricing::cost_for</code> + private <code>scale_per_mtok</code>).</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/metering/model_cost_info.rs</code> &mdash; add <code>#[derive(Default)]</code> with <code>Unknown</code> as the default variant (lets <code>ProviderPricing</code> derive <code>Default</code>).</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/metering/mod.rs</code> + <code>crates/arnes-core/src/lib.rs</code> &mdash; module + re-exports.</li>
 </ul>
 
 <p>No new deps.</p>
@@ -106,13 +107,28 @@
 </p>
 
 <pre><code>pub struct ProviderPricing {
-    pub default: ModelCostInfo,
-    pub models:  HashMap&lt;String, ModelCostInfo&gt;,
+    pub provider: String,
+    pub default:  ModelCostInfo,
+    pub models:   HashMap&lt;String, ModelPricing&gt;,
 }
 
 pub struct PricingRegistry {
     providers: HashMap&lt;String, ProviderPricing&gt;,
 }</code></pre>
+
+<p>
+  <code>ProviderPricing</code> carries its own <code>provider</code>
+  name (it's the same string used as the map key, redundantly stored on
+  the value) so the JSON loader (PR #6) can deserialize a
+  <code>Vec&lt;ProviderPricing&gt;</code> directly and hand it to
+  <code>from_providers</code>. The per-model map's value is
+  <code>ModelPricing</code> rather than <code>ModelCostInfo</code> because
+  a model entry only ever expresses a priced rate &mdash; a single
+  <em>free</em> model on a paid provider isn't representable, and that's
+  the deliberate trade for the simpler shape. Provider-level
+  <code>default</code> is still the full three-state
+  <code>ModelCostInfo</code> (so a provider can default to Free).
+</p>
 
 <p>
   An earlier draft used two independently-keyed maps
@@ -143,7 +159,7 @@ pub struct PricingRegistry {
 
 <ol>
   <li>If <code>providers[key.provider]</code> is absent: return <code>ModelCostInfo::Unknown</code>.</li>
-  <li>Else if <code>providers[key.provider].models[key.model_id]</code> exists: return it.</li>
+  <li>Else if <code>providers[key.provider].models[key.model_id]</code> exists: return <code>ModelCostInfo::Priced(pricing.clone())</code>.</li>
   <li>Else: return <code>providers[key.provider].default</code>.</li>
 </ol>
 
@@ -159,7 +175,7 @@ pub struct PricingRegistry {
 </p>
 
 <pre><code>pub fn from_providers(
-    blocks: impl IntoIterator&lt;Item = (String, ProviderPricing)&gt;,
+    blocks: impl IntoIterator&lt;Item = ProviderPricing&gt;,
 ) -&gt; Self;</code></pre>
 
 <p>
@@ -237,8 +253,9 @@ pub struct PricingRegistry {
 
 <h2 id="code">Code skeleton</h2>
 
-<p><strong>Appended to <code>crates/arnes-core/src/usage.rs</code></strong>
-(near <code>ModelPricing</code>):</p>
+<p><strong>In <code>crates/arnes-core/src/metering/token_counts.rs</code> and
+<code>crates/arnes-core/src/metering/model_pricing.rs</code></strong>
+(the metering types each live in their own file):</p>
 
 <pre><code>/// Per-token-kind counts a turn consumed.
 #[derive(Clone, Copy, Debug, Default)]
@@ -281,7 +298,7 @@ fn scale_per_mtok(tokens: u64, per_mtok: Micros) -&gt; Micros {
     Micros((product / 1_000_000) as i64)
 }</code></pre>
 
-<p><strong>Also in <code>crates/arnes-core/src/usage.rs</code></strong>
+<p><strong>Also in <code>crates/arnes-core/src/metering/model_cost_info.rs</code></strong>
 (small change to <code>ModelCostInfo</code>):</p>
 
 <pre><code>#[derive(Clone, Debug, Default)]
@@ -292,7 +309,7 @@ pub enum ModelCostInfo {
     Unknown,
 }</code></pre>
 
-<p><strong>New file <code>crates/arnes-core/src/pricing.rs</code></strong>:</p>
+<p><strong>New file <code>crates/arnes-core/src/pricing/mod.rs</code></strong>:</p>
 
 <pre><code>// Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
@@ -301,14 +318,15 @@ pub enum ModelCostInfo {
 
 use std::collections::HashMap;
 
-use crate::{Cost, ModelCostInfo, ModelKey, TokenCounts};
+use crate::{Cost, ModelCostInfo, ModelKey, ModelPricing, TokenCounts};
 
-/// Pricing for one provider: a default that applies when no per-model
-/// entry matches, plus the per-model overrides.
+/// Pricing for one provider: a default applied when no per-model entry
+/// matches, plus per-model overrides.
 #[derive(Clone, Debug, Default)]
 pub struct ProviderPricing {
-    pub default: ModelCostInfo,
-    pub models:  HashMap&lt;String, ModelCostInfo&gt;,
+    pub provider: String,
+    pub default:  ModelCostInfo,
+    pub models:   HashMap&lt;String, ModelPricing&gt;,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -319,10 +337,13 @@ pub struct PricingRegistry {
 impl PricingRegistry {
     /// Build a registry from provider blocks. If the same provider name
     /// appears twice, the later block replaces the earlier one entirely.
-    pub fn from_providers(
-        blocks: impl IntoIterator&lt;Item = (String, ProviderPricing)&gt;,
-    ) -&gt; Self {
-        PricingRegistry { providers: blocks.into_iter().collect() }
+    pub fn from_providers(blocks: impl IntoIterator&lt;Item = ProviderPricing&gt;) -&gt; Self {
+        PricingRegistry {
+            providers: blocks
+                .into_iter()
+                .map(|p| (p.provider.clone(), p))
+                .collect(),
+        }
     }
 
     /// Look up the cost info for a `ModelKey`. A per-model entry wins;
@@ -332,10 +353,10 @@ impl PricingRegistry {
         let Some(p) = self.providers.get(&amp;key.provider) else {
             return ModelCostInfo::Unknown;
         };
-        p.models
-            .get(&amp;key.model_id)
-            .cloned()
-            .unwrap_or_else(|| p.default.clone())
+        match p.models.get(&amp;key.model_id) {
+            Some(pricing) =&gt; ModelCostInfo::Priced(pricing.clone()),
+            None =&gt; p.default.clone(),
+        }
     }
 
     /// Compute the cost for a turn given the model and its raw token
@@ -347,15 +368,20 @@ impl PricingRegistry {
             ModelCostInfo::Priced(p) =&gt; Some(p.cost_for(tokens)),
         }
     }
-}</code></pre>
+}
+
+#[cfg(test)]
+mod tests;</code></pre>
 
 <h2 id="lib-rs">lib.rs additions</h2>
 
 <pre><code>mod pricing;
 
 pub use pricing::{PricingRegistry, ProviderPricing};
-// Extend the existing `usage` re-export line to include TokenCounts:
-pub use usage::{Cost, CumulativeUsage, Micros, ModelCostInfo, ModelPricing, ModelUsage, TokenCounts, Usage};</code></pre>
+// Extend the existing `metering` re-export line to include TokenCounts:
+pub use metering::{
+    Cost, CumulativeUsage, Micros, ModelCostInfo, ModelPricing, ModelUsage, TokenCounts, TurnUsage,
+};</code></pre>
 
 <h2 id="tests">Tests</h2>
 

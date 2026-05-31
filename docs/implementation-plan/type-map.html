@@ -223,19 +223,19 @@ graph TD
     Compactor["Compactor<br/>trigger_ratio, keep_recent"]:::planned
   end
 
-  subgraph usage[" usage "]
+  subgraph metering[" metering "]
     Micros["Micros<br/>(i64)"]
     Cost["Cost<br/>input, output, cache_read,<br/>cache_write, thinking, total"]
     TokenCounts["TokenCounts<br/>input, output, cache_read,<br/>cache_write, thinking"]
-    Usage["Usage<br/>per-turn snapshot"]:::planned
+    TurnUsage["TurnUsage<br/>per-turn snapshot"]:::planned
     ModelCostInfo["ModelCostInfo<br/>(Priced | Free | Unknown)"]:::planned
     ModelPricing["ModelPricing"]:::planned
     ModelUsage["ModelUsage<br/>aggregated row"]:::planned
     CumulativeUsage["CumulativeUsage"]:::planned
     PricingRegistry["PricingRegistry"]:::planned
     Cost --> Micros
-    Usage --> TokenCounts
-    Usage --> Cost
+    TurnUsage --> TokenCounts
+    TurnUsage --> Cost
     ModelCostInfo --> ModelPricing
     ModelPricing --> Micros
     ModelUsage --> TokenCounts
@@ -262,8 +262,8 @@ graph TD
   ToolContext --> Host
   ToolContext --> ProgressSink
   ToolContext --> AgentId
-  Usage --> AgentId
-  Usage --> ModelKey
+  TurnUsage --> AgentId
+  TurnUsage --> ModelKey
   ModelUsage --> ModelKey
 
   Session --> Frontend
