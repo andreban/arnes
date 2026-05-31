@@ -181,20 +181,14 @@ tokio = { version = "1", features = ["macros", "rt"] }</code></pre>
 // SPDX-License-Identifier: Apache-2.0
 
 //! OS-resource abstraction.
-//!
-//! Tools never touch `std::fs` / `tokio::process` directly; they route
-//! through a `&amp;dyn Host` from their `ToolContext`. Each adapter ships
-//! an implementation (`LocalHost` here for in-process; `AcpHost` in
-//! `arnes-acp` for editor-mediated I/O).
 
-use std::{io, path::Path, path::PathBuf};
+use std::{io, path::{Path, PathBuf}};
 
 use async_trait::async_trait;
 use uuid::Uuid;
 
 /// OS-resource trait. Every method defaults to
-/// `io::ErrorKind::Unsupported` so adding methods is non-breaking and
-/// minimal impls (like `LocalHost` at M1) need not list every method.
+/// `io::ErrorKind::Unsupported`; impls override what they support.
 #[async_trait]
 pub trait Host: Send + Sync {
     async fn read_text_file(&amp;self, _path: &amp;Path) -&gt; io::Result&lt;String&gt; {
@@ -229,11 +223,9 @@ pub trait Host: Send + Sync {
 fn unsupported&lt;T&gt;() -&gt; io::Result&lt;T&gt; {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "not implemented at this milestone",
+        "operation not implemented",
     ))
 }
-
-// --- Data types ---
 
 #[derive(Clone, Debug)]
 pub struct DirEntry {
@@ -259,11 +251,8 @@ pub struct TerminalSnapshot {
     pub exit_code: Option&lt;i32&gt;,
 }
 
-// --- The in-process default impl ---
-
-/// In-process host: real `tokio::fs` / PTY implementations land in M3.
-/// At M1 it relies on every default body, so every call returns
-/// `io::ErrorKind::Unsupported`.
+/// In-process host. All methods inherit the trait's default Unsupported
+/// behaviour until concrete implementations are added.
 pub struct LocalHost;
 
 #[async_trait]
