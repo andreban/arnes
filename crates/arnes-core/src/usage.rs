@@ -372,11 +372,7 @@ mod tests {
         cu.record(sample_usage("gemini", "flash", None));
         cu.record(sample_usage("gemini", "flash", Some(cost_of(10, 20))));
 
-        let bucket = cu
-            .by_agent_and_model
-            .values()
-            .next()
-            .expect("one bucket");
+        let bucket = cu.by_agent_and_model.values().next().expect("one bucket");
         let known = bucket.turns - bucket.turns_with_unknown_cost;
         assert_eq!(bucket.turns, known + bucket.turns_with_unknown_cost);
         assert_eq!(bucket.turns, 3);
