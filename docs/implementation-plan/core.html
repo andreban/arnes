@@ -111,12 +111,9 @@ impl&lt;F, H&gt; Session&lt;F, H&gt; {
     pub fn agent_id(&amp;self) -&gt; &amp;AgentId { &amp;self.agent_id }
     pub fn parent_id(&amp;self) -&gt; Option&lt;AgentId&gt; { /* V1: always None */ }
 
-    /// Spawn a sub-agent that shares this session's Frontend and Host.
-    /// V1: returns unimplemented!() &mdash; the signature is reserved so the
-    /// trait surface stays stable when sub-agents land post-V1.
-    pub async fn spawn_subagent(&amp;self, spec: SubAgentSpec) -&gt; Result&lt;SubAgentHandle&gt; {
-        unimplemented!("sub-agent spawning lands post-V1")
-    }
+    // No spawn_subagent method. Post-V1 sub-agents are registered as
+    // agent-rig AgentTools in the ToolRegistry, not spawned via a
+    // separate Session API. See "Future-compatibility: sub-agents".
 }</code></pre>
 
 <pre><code>impl&lt;F: Frontend, E: Host&gt; Session&lt;F, E&gt; {
@@ -196,20 +193,15 @@ impl&lt;F, H&gt; Session&lt;F, H&gt; {
 /// trait signature stable across future additions.
 pub struct ToolContext {
     pub host:          Arc&lt;dyn Host&gt;,
-    pub progress:      ProgressSink,
+    pub progress:      Arc&lt;dyn ProgressSink&gt;,
     pub cancellation:  CancellationToken,
     pub agent_id:      AgentId,           // which agent invoked this tool
-    /// Spawn a sub-agent. V1 returns `unimplemented!()` from the body;
-    /// the signature is in place so sub-agent-aware tools compile against
-    /// the M1 trait. See "Future-compatibility: sub-agents" below.
-    pub spawn_subagent: Arc&lt;dyn SubAgentSpawner&gt;,
 }
 
 pub enum ProgressUpdate {
-    /// Plain text update (V1 default).
+    /// Plain text update (the default).
     Text(String),
-    /// Structured payload &mdash; tool-defined. Reserved for sub-agent tools
-    /// emitting nested SessionEvents.
+    /// Structured payload &mdash; tool-defined. Reserved for future use.
     Structured(serde_json::Value),
 }
 
@@ -490,11 +482,11 @@ cost     = "free"
     </tr>
     <tr>
       <td><code>Tool::execute</code></td>
-      <td>Takes a single <code>ToolContext</code> parameter (bundling host, progress, cancellation, agent_id, and a <code>spawn_subagent</code> stub) so the trait stays stable across future capability additions.</td>
+      <td>Takes a single <code>ToolContext</code> parameter (bundling host, progress, cancellation, agent_id) so the trait stays stable across future capability additions. Sub-agents are <em>not</em> spawned through this context &mdash; they're registered as agent-rig <code>AgentTool</code>s in the same <code>ToolRegistry</code> tools use, and the parent model invokes them like any other tool.</td>
     </tr>
     <tr>
       <td><code>ProgressSink</code></td>
-      <td>Carries typed <code>ProgressUpdate</code> (text or structured), not just <code>&amp;str</code>. A sub-agent tool can later emit a <code>Structured</code> payload that the session translates into nested events.</td>
+      <td>Carries typed <code>ProgressUpdate</code> (text or structured), not just <code>&amp;str</code>. A tool that wants to stream richer progress payloads can use the <code>Structured</code> variant later.</td>
     </tr>
     <tr>
       <td><code>Usage</code> + <code>CumulativeUsage</code></td>

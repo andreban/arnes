@@ -122,25 +122,24 @@
 
 <p>
   <strong>Decision: no.</strong> <code>AgentId</code> is the
-  identifier &mdash; like a primary key. The kind belongs on
-  <code>SubAgentSpec</code> (the type that says "spawn a sub-agent of
-  this kind with these tools and constraints," already stubbed in
-  <code>tool_context.rs</code>). The spawned instance gets a UUID
-  that's threaded into its <code>AgentId</code>.
+  identifier &mdash; like a primary key. The kind/role lives at the
+  registration site for the sub-agent: in arnes' design, sub-agents
+  are registered as agent-rig
+  <a href="https://github.com/andreban/agent-rig/blob/main/src/tools/agent_tool/mod.rs"><code>AgentTool</code></a>s,
+  and whatever arnes-side config struct declares those sub-agents
+  carries their kind/role/system-prompt/tool-allowlist. The spawned
+  run gets a UUID at dispatch time that flows into the child's
+  <code>AgentId</code>; the kind is recoverable by looking up the
+  registration, not by inspecting the ID.
 </p>
 
 <p>Reasons to keep them separated:</p>
 
 <ul>
   <li><strong>Different concerns.</strong> Identifier vs description-of-what. Mixing them pushes every consumer that just wants identity to also handle "what kind was that?"</li>
-  <li><strong>We don't know the right shape for "kind."</strong> Fixed enum (<code>SubAgentKind::CodeReviewer | Summarizer | ...</code>), free-form <code>String</code> (user-defined sub-agents), capability bag (<code>Vec&lt;Capability&gt;</code>), or SKILL-style markdown card? Picking now is picking blind.</li>
+  <li><strong>We don't know the right shape for "kind."</strong> Fixed enum (<code>SubAgentKind::CodeReviewer | Summarizer | ...</code>), free-form <code>String</code> (user-defined sub-agents), capability bag (<code>Vec&lt;Capability&gt;</code>), or SKILL-style markdown card? Picking now is picking blind &mdash; and it'll be picked by whoever designs the arnes-side sub-agent registration, not by this PR.</li>
   <li><strong>Migration cost is symmetric.</strong> Changing <code>SubAgent(Uuid)</code> to <code>SubAgent { id, kind }</code> is a breaking change to the variant (tuple&rarr;struct). The minimal shape is the one we're least likely to need to revise.</li>
 </ul>
-
-<p>
-  When sub-agents land, kind lands on <code>SubAgentSpec</code>;
-  <code>AgentId</code> stays a quiet little file about identity.
-</p>
 
 <p>
   <strong>4. <code>ModelKey</code>: provider + model_id is enough?</strong>

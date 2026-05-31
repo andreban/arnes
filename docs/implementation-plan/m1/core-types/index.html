@@ -95,7 +95,7 @@
     <tr>
       <td>6</td>
       <td><a href="tool-context.html"><code>feat/tool-context</code></a></td>
-      <td><code>ToolContext</code>, <code>ProgressSink</code>, <code>SubAgentSpawner</code> stub.</td>
+      <td><code>ToolContext</code>, <code>ProgressSink</code>, <code>ProgressUpdate</code>.</td>
     </tr>
   </tbody>
 </table>
@@ -132,8 +132,7 @@
   Rust 1.75) does not produce dyn-compatible traits by default. We use
   <code>async-trait</code> &mdash; macro that boxes the returned future;
   small per-call alloc overhead, ecosystem-standard. Applied to
-  <code>Frontend</code>, <code>Host</code>, <code>SubAgentSpawner</code>,
-  and later <code>Tool</code> in M2. Alternatives considered and
+  <code>Frontend</code>, <code>Host</code>, and later <code>Tool</code> in M2. Alternatives considered and
   rejected: <code>trait_variant::make</code> (more macro magic),
   hand-rolled <code>Pin&lt;Box&lt;dyn Future&gt;&gt;</code> returns (same
   overhead, more verbose).
@@ -177,7 +176,7 @@
   <li><strong>message-types</strong>: <strong>thinking blocks</strong> (Claude extended thinking, Gemini 2.5 reasoning); ContentBlock variant set; serde tagging shape (load-bearing for M6 persistence); whether <code>Message::System</code> should be content-blocks too.</li>
   <li><strong>frontend-trait</strong>: <code>StopReason</code> variant set; <code>EventKind</code> exhaustiveness; whether <code>FrontendCapabilities</code> should be a struct or bitflags.</li>
   <li><strong>host-trait</strong>: the conservative ACP-aligned method set; whether to ship <code>list_directory</code> vs delay.</li>
-  <li><strong>tool-context</strong>: the early arrival of tokio in arnes-core; <code>SubAgentSpawner</code> stub shape.</li>
+  <li><strong>tool-context</strong>: the early arrival of tokio in arnes-core; why arnes has no <code>SubAgentSpawner</code> (sub-agents are tools via agent-rig's <code>AgentTool</code>).</li>
 </ul>
 
 <h2 id="tests">Test strategy for the phase</h2>
