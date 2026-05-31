@@ -58,6 +58,8 @@
     extension host, the compactor, and the trait definitions. Knows nothing
     about UIs, transports, or specific operating systems.
   </p>
+  <p>See the <a href="type-map.html">type map</a> for a visual reference of
+  what's currently in the crate and how the pieces relate.</p>
 </div>
 
 <h2 id="modules">Modules at a glance</h2>
@@ -77,6 +79,101 @@
     <tr><td><code>skills</code></td><td>SKILL.md discovery + frontmatter parse + prompt-section emitter.</td><td>9</td></tr>
   </tbody>
 </table>
+
+<h2 id="client-usage">How a client uses arnes-core</h2>
+
+<p>
+  The shape a client (a TUI, an editor adapter, an HTTP wrapper) sees
+  is small: <strong>one entry point</strong> (<code>Session</code>),
+  <strong>one trait to implement</strong> (<code>Frontend</code>), and
+  one method to call in a loop (<code>session.prompt()</code>).
+  Tools, prompt assembly, compaction, persistence, and usage tracking
+  all live behind <code>Session</code> and never appear in the client's
+  call graph.
+</p>
+
+<div class="note">
+  <strong>End-state sketch.</strong> <code>Session</code> doesn't exist
+  in the crate yet (it lands in <a href="m6/index.html">M6</a>). The
+  builder API below is the intended ergonomic shape, not a contract;
+  exact field names may shift once agent-rig's provider config is wired
+  in.
+</div>
+
+<pre><code>use arnes_core::{
+    EventKind, Frontend, LocalHost, Permission, PermissionRequest,
+    Session, SessionEvent, UserInput,
+};
+use async_trait::async_trait;
+use std::sync::Arc;
+
+// 1. Implement Frontend for whatever your UI / transport is.
+//    Three methods, two of them with sensible defaults.
+struct MyFrontend;
+
+#[async_trait]
+impl Frontend for MyFrontend {
+    async fn on_event(&amp;self, ev: SessionEvent) {
+        match ev.kind {
+            EventKind::TextDelta { text }   =&gt; print!("{text}"),
+            EventKind::ThinkingDelta { .. } =&gt; { /* maybe dim, maybe skip */ }
+            EventKind::TurnEnd { .. }       =&gt; println!(),
+            _ =&gt; {}
+        }
+    }
+
+    async fn request_permission(&amp;self, _req: PermissionRequest) -&gt; Permission {
+        // Real frontends prompt the user here. AllowOnce makes
+        // everything non-interactive.
+        Permission::AllowOnce
+    }
+}
+
+#[tokio::main]
+async fn main() -&gt; arnes_core::Result&lt;()&gt; {
+    // 2. Wire the session. One builder call assembles frontend + host
+    //    + model + tools + (optional) persistence.
+    let mut session = Session::builder()
+        .frontend(Arc::new(MyFrontend))
+        .host(Arc::new(LocalHost))                  // file/terminal I/O
+        .model("gemini", "gemini-2.5-flash")
+        .with_default_tools()                       // read/write/edit/bash
+        .persist_to("~/.arnes/sessions/demo.jsonl")
+        .build()
+        .await?;
+
+    // 3. Drive turns. Each prompt() call streams events into your
+    //    Frontend until the model stops. Compaction, persistence,
+    //    system-prompt rebuild, and tool dispatch all happen internally.
+    loop {
+        let line = read_one_line_from_somewhere();
+        if line == "/quit" { break; }
+        session.prompt(UserInput::text(line)).await?;
+    }
+
+    // 4. Cumulative usage is queryable at any time.
+    let usage = session.cumulative_usage();
+    println!("total: {:?}", usage.total_known_cost());
+    Ok(())
+}</code></pre>
+
+<p>Two things worth pinning down on this picture:</p>
+
+<ul>
+  <li><strong>The client only touches <code>Session</code> and
+      <code>Frontend</code>.</strong> <code>Host</code> has a default
+      (<code>LocalHost</code>) you only swap out when you need
+      sandboxing &mdash; e.g. running inside an editor that wants to
+      mediate filesystem access. Tools, the system-prompt builder, the
+      compactor, the persistence writer, and the cumulative usage table
+      are all internal to <code>Session</code>.</li>
+  <li><strong>Permission prompts come back through the same trait.</strong>
+      When a sensitive tool (<code>bash</code>, <code>write</code>,
+      <code>edit</code>) needs approval, <code>Session</code> calls
+      <code>frontend.request_permission(...)</code> on the same object
+      that receives events. No separate transport, no callback
+      registry.</li>
+</ul>
 
 <h2 id="session-module">session &mdash; the orchestrator</h2>
 
