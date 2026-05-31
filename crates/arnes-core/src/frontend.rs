@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 
-use crate::AgentId;
+use crate::{AgentId, TurnUsage};
 
 /// Implemented by every UI adapter.
 #[async_trait]
@@ -37,6 +37,7 @@ pub enum EventKind {
     },
     TurnEnd {
         stop_reason: StopReason,
+        usage: TurnUsage,
     },
     Error {
         message: String,
