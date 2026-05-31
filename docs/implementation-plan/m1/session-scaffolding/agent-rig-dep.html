@@ -87,21 +87,30 @@
 <h2 id="discussion">Discussion</h2>
 
 <p>
-  <strong>1. Source: git rev vs published crate.</strong> Two options:
+  <strong>1. Source: track agent-rig's <code>main</code> branch.</strong>
+</p>
+
+<pre><code>agent-rig = { git = "https://github.com/andreban/agent-rig", branch = "main", default-features = false, features = ["&lt;core feature name&gt;"] }</code></pre>
+
+<p>
+  arnes and agent-rig share a maintainer, so the usual reason to pin a
+  specific <code>rev</code> &mdash; insulate against an upstream we
+  don't control &mdash; doesn't apply here. We pull from <code>main</code>
+  and rely on the committed <code>Cargo.lock</code> to keep day-to-day
+  builds reproducible. A breakage that surfaces after a
+  <code>cargo update -p agent-rig</code> is something the maintainer
+  caused, sees, and fixes on the same loop &mdash; not an external
+  instability event to defend against.
+</p>
+
+<p>
+  Alternatives considered and rejected:
 </p>
 
 <ul>
-  <li><strong>Published crates.io version</strong>: <code>agent-rig = "X.Y"</code>. Pros: standard, cacheable, no submodule-style fragility. Cons: only available if agent-rig has actually published a version we want, and pinning floats inside the SemVer range unless we also commit a precise <code>Cargo.lock</code> (we already commit one).</li>
-  <li><strong>Git revision</strong>: <code>agent-rig = { git = "https://github.com/andreban/agent-rig", rev = "&lt;sha&gt;" }</code>. Pros: lets us live on a specific main-branch commit before agent-rig stabilises a release cadence. Cons: no docs.rs autoindex; <code>cargo doc</code> still works locally but link-checked rustdoc is weaker.</li>
+  <li><strong>Pinned <code>rev = "&lt;sha&gt;"</code></strong>: the right call when the upstream is external; not necessary here. Adds a manual bump step every time the agent-rig side moves, for no benefit we'd otherwise miss.</li>
+  <li><strong>Published crates.io version</strong>: not yet applicable &mdash; agent-rig hasn't picked a release cadence. When it does, the dep-source change is a one-line follow-up PR.</li>
 </ul>
-
-<p>
-  <strong>Recommendation:</strong> git revision with an explicit
-  <code>rev</code> (not <code>branch = "main"</code> &mdash; that would make
-  builds non-reproducible across <code>cargo update</code>). Switch to a
-  crates.io version when agent-rig publishes one we want; the dep-source
-  change is then itself a one-line PR.
-</p>
 
 <p>
   <strong>2. Features.</strong> Pin <code>default-features = false</code>
@@ -120,11 +129,12 @@
   but the convention since has been "each PR adds the deps its own code
   introduces, in the workspace table." Continuing that pattern:
   <code>agent-rig</code> goes in <code>[workspace.dependencies]</code>
-  with its version + rev + features, and <code>arnes-core/Cargo.toml</code>
-  picks it up with <code>{ workspace = true }</code>. Later adapter crates
+  with its git URL + branch + features, and
+  <code>arnes-core/Cargo.toml</code> picks it up with
+  <code>{ workspace = true }</code>. Later adapter crates
   (<code>arnes-tui</code>, <code>arnes-acp</code>) that need to construct
   concrete provider <code>LlmModel</code>s in phase 7 will then pick up
-  the same workspace entry &mdash; without re-litigating the rev/version.
+  the same workspace entry &mdash; without re-litigating the source choice.
 </p>
 
 <p>
@@ -133,7 +143,7 @@
 </p>
 
 <ul>
-  <li><strong>Dependency choices are architectural.</strong> Source (git vs crates.io), rev pin, feature set, workspace vs per-crate &mdash; each has tradeoffs worth a Discussion section, and bundling them into a behavioural PR buries them.</li>
+  <li><strong>Dependency choices are architectural.</strong> Source (git branch vs pinned rev vs crates.io), feature set, workspace vs per-crate &mdash; each has tradeoffs worth a Discussion section, and bundling them into a behavioural PR buries them.</li>
   <li><strong>The blast radius is the whole workspace.</strong> A bad pin breaks every downstream PR; isolating it lets a revert be one-commit-clean.</li>
   <li><strong>Reviewability.</strong> The diff is small, the build log is the meaningful artifact (no warnings? <code>cargo check --workspace</code> still clean? <code>Cargo.lock</code> changes look sane?). A reviewer can confirm those in seconds without context-switching into Rust source.</li>
 </ul>
@@ -153,7 +163,7 @@
 
 <pre><code>[workspace.dependencies]
 # &hellip; existing entries &hellip;
-agent-rig = { git = "https://github.com/andreban/agent-rig", rev = "&lt;sha&gt;", default-features = false, features = ["&lt;core feature name&gt;"] }</code></pre>
+agent-rig = { git = "https://github.com/andreban/agent-rig", branch = "main", default-features = false, features = ["&lt;core feature name&gt;"] }</code></pre>
 
 <p><code>crates/arnes-core/Cargo.toml</code>:</p>
 
