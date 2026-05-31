@@ -71,7 +71,7 @@
 <h2 id="files">Files touched</h2>
 
 <ul>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; append projection methods on <code>CumulativeUsage</code>.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/metering/cumulative_usage.rs</code> &mdash; append projection methods on <code>CumulativeUsage</code>.</li>
 </ul>
 
 <p>No new deps. No new exports (the methods are on an already-exported type).</p>
@@ -149,7 +149,7 @@
 
 <h2 id="code">Code skeleton</h2>
 
-<pre><code>// Appended to crates/arnes-core/src/usage.rs:
+<pre><code>// Appended to crates/arnes-core/src/metering/cumulative_usage.rs:
 
 impl CumulativeUsage {
     /// Flatten across agents: total per `ModelKey`.
@@ -209,8 +209,8 @@ fn merge_into(into: &amp;mut ModelUsage, from: &amp;ModelUsage) {
 
 <ul>
   <li><strong>Empty</strong>: both projections return empty maps for an empty <code>CumulativeUsage</code>.</li>
-  <li><strong>Single bucket</strong>: one recorded <code>Usage</code> shows up as one entry in both projections, with totals matching the original.</li>
-  <li><strong>Two models, one agent</strong>: two <code>Usage</code>s with same <code>AgentId</code> but different <code>ModelKey</code>s &mdash; <code>by_model</code> returns 2 entries; <code>by_agent</code> returns 1 entry with summed totals.</li>
+  <li><strong>Single bucket</strong>: one recorded <code>TurnUsage</code> shows up as one entry in both projections, with totals matching the original.</li>
+  <li><strong>Two models, one agent</strong>: two <code>TurnUsage</code>s with same <code>AgentId</code> but different <code>ModelKey</code>s &mdash; <code>by_model</code> returns 2 entries; <code>by_agent</code> returns 1 entry with summed totals.</li>
   <li><strong>One model, two agents</strong>: mirror of above (only meaningful post-V1, but exercises the bucketing code).</li>
   <li><strong>Projection consistency</strong>: with a fixture of 3+ distinct (agent, model) buckets, assert sums match: sum of <code>by_model()</code> values' <code>known_cost</code> equals sum of <code>by_agent()</code> values' <code>known_cost</code> equals <code>total_known_cost()</code>. Same for <code>turns_with_unknown_cost</code>.</li>
 </ul>

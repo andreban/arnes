@@ -168,7 +168,7 @@
   in a <code>HashMap</code> (phase 3). <code>Eq</code> +
   <code>PartialEq</code> are pure-equality types &mdash; trivial here.
   <code>Clone</code> because these are passed by value through
-  <code>SessionEvent</code> and <code>Usage</code> records.
+  <code>SessionEvent</code> and <code>TurnUsage</code> records.
   No <code>Serialize</code>/<code>Deserialize</code> yet &mdash; persistence
   (M6) and ACP (phase 6) need them and will add the derive then. The
   uuid crate's <code>serde</code> feature is opt-in via crate features

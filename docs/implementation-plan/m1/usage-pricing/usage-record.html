@@ -54,7 +54,7 @@
   <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 3 of 8</span>
   <h1><code>feat/usage-record</code></h1>
   <p class="lead">
-    <code>Usage</code> (the per-turn record) and <code>ModelUsage</code>
+    <code>TurnUsage</code> (the per-turn record) and <code>ModelUsage</code>
     (the aggregated-row shape that <code>CumulativeUsage</code> stores
     per bucket in PR #4).
   </p>
@@ -70,8 +70,8 @@
 <h2 id="files">Files touched</h2>
 
 <ul>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; append <code>Usage</code> + <code>ModelUsage</code>.</li>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; re-export.</li>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/metering/turn_usage.rs</code> and <code>crates/arnes-core/src/metering/model_usage.rs</code>.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/metering/mod.rs</code> + <code>crates/arnes-core/src/lib.rs</code> &mdash; module + re-exports.</li>
 </ul>
 
 <p>No new deps.</p>
@@ -83,12 +83,12 @@
 </p>
 
 <ul>
-  <li><strong>Eager (at <code>Usage</code> construction)</strong>: caller (<code>Session</code>, phase 4) looks up the <code>PricingRegistry</code> when the turn ends, computes <code>Cost</code>, and builds the <code>Usage</code> with <code>cost: Some(cost)</code> (or <code>None</code> for Unknown). <strong>Chosen.</strong></li>
-  <li><strong>Lazy (<code>Usage</code> holds raw tokens only; cost computed on demand)</strong>: <code>Usage</code> doesn't carry a <code>cost</code> field at all. Anyone wanting cost calls <code>registry.compute(usage)</code>. Cleaner separation, but: every consumer (frontend display, persistence rows in M6, ACP usage frames) would need access to the registry. The registry would have to be threadable through every consumer. Heavy.</li>
+  <li><strong>Eager (at <code>TurnUsage</code> construction)</strong>: caller (<code>Session</code>, phase 4) looks up the <code>PricingRegistry</code> when the turn ends, computes <code>Cost</code>, and builds the <code>TurnUsage</code> with <code>cost: Some(cost)</code> (or <code>None</code> for Unknown). <strong>Chosen.</strong></li>
+  <li><strong>Lazy (<code>TurnUsage</code> holds raw tokens only; cost computed on demand)</strong>: <code>TurnUsage</code> doesn't carry a <code>cost</code> field at all. Anyone wanting cost calls <code>registry.compute(turn)</code>. Cleaner separation, but: every consumer (frontend display, persistence rows in M6, ACP usage frames) would need access to the registry. The registry would have to be threadable through every consumer. Heavy.</li>
 </ul>
 
 <p>
-  Eager wins because <code>Usage</code> ends up flowing to many
+  Eager wins because <code>TurnUsage</code> ends up flowing to many
   consumers (events, history, persistence) and we'd rather compute the
   cost once at the boundary with the registry than thread the registry
   everywhere.
@@ -115,9 +115,9 @@
 </ul>
 
 <p>
-  <strong>3. <code>Usage</code> carries <code>agent_id</code> and
+  <strong>3. <code>TurnUsage</code> carries <code>agent_id</code> and
   <code>ModelKey</code>.</strong> Already established in
-  <code>core.html</code>'s future-compat table: every <code>Usage</code>
+  <code>core.html</code>'s future-compat table: every <code>TurnUsage</code>
   is tagged with which agent produced it and which model it was billed
   to. Phase 4's <code>Session</code> sets these at the boundary;
   <code>CumulativeUsage</code> (PR #4) uses the
@@ -133,8 +133,8 @@
 <ul>
   <li>Sum of every token-kind across all turns in this bucket.</li>
   <li>Turn count.</li>
-  <li>Sum of known cost (across turns where <code>Usage.cost</code> was <code>Some(...)</code>).</li>
-  <li>Count of turns where <code>Usage.cost</code> was <code>None</code> &mdash; tracked separately so the consumer can show "5 turns with unknown pricing" rather than coercing them into the cost sum.</li>
+  <li>Sum of known cost (across turns where <code>TurnUsage.cost</code> was <code>Some(...)</code>).</li>
+  <li>Count of turns where <code>TurnUsage.cost</code> was <code>None</code> &mdash; tracked separately so the consumer can show "5 turns with unknown pricing" rather than coercing them into the cost sum.</li>
 </ul>
 
 <p>
@@ -149,7 +149,7 @@
 
 <div class="note">
   <strong>Updated in <a href="pricing-registry.html">PR #5</a>.</strong> This
-  PR originally shipped <code>Usage</code> and <code>ModelUsage</code> with
+  PR originally shipped <code>TurnUsage</code> and <code>ModelUsage</code> with
   five flat <code>*_tokens: u64</code> fields. PR #5 introduced
   <code>TokenCounts</code> for use by <code>ModelPricing::cost_for</code>;
   in the same PR the per-kind fields here were folded into a nested
@@ -158,19 +158,23 @@
   post-refactor shape.
 </div>
 
-<pre><code>// Appended to crates/arnes-core/src/usage.rs:
+<pre><code>// crates/arnes-core/src/metering/turn_usage.rs
 
-use crate::{AgentId, ModelKey};
+use crate::{AgentId, Cost, ModelKey, TokenCounts};
 
 /// What a single turn cost.
 #[derive(Clone, Debug)]
-pub struct Usage {
+pub struct TurnUsage {
     pub agent_id: AgentId,
     pub model:    ModelKey,
     pub tokens:   TokenCounts,
     /// `None` when the model's pricing is `ModelCostInfo::Unknown`.
     pub cost:     Option&lt;Cost&gt;,
 }
+
+// crates/arnes-core/src/metering/model_usage.rs
+
+use crate::{Cost, ModelKey, TokenCounts};
 
 /// One bucket's aggregated state in `CumulativeUsage`.
 #[derive(Clone, Debug)]
@@ -184,18 +188,18 @@ pub struct ModelUsage {
 
 <h2 id="lib-rs">lib.rs additions</h2>
 
-<pre><code>pub use usage::{Cost, Micros, ModelCostInfo, ModelPricing, ModelUsage, Usage};</code></pre>
+<pre><code>pub use metering::{Cost, Micros, ModelCostInfo, ModelPricing, ModelUsage, TurnUsage};</code></pre>
 
 <h2 id="tests">Tests</h2>
 
 <ul>
-  <li><strong>Round-trip construction</strong>: build a <code>Usage</code> with all token kinds non-zero and <code>cost: Some(...)</code>; pattern-match back.</li>
-  <li><strong>Unknown-cost shape</strong>: build a <code>Usage</code> with <code>cost: None</code>; <code>usage.cost.is_none()</code> holds.</li>
+  <li><strong>Round-trip construction</strong>: build a <code>TurnUsage</code> with all token kinds non-zero and <code>cost: Some(...)</code>; pattern-match back.</li>
+  <li><strong>Unknown-cost shape</strong>: build a <code>TurnUsage</code> with <code>cost: None</code>; <code>usage.cost.is_none()</code> holds.</li>
 </ul>
 
 <p>
   Aggregation behaviour (constructing a <code>ModelUsage</code> from a
-  series of <code>Usage</code>s) is tested in PR #4 where the
+  series of <code>TurnUsage</code>s) is tested in PR #4 where the
   <code>record()</code> method lands.
 </p>
 

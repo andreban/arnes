@@ -6,9 +6,9 @@ mod frontend;
 mod host;
 mod identity;
 mod message;
+mod metering;
 mod pricing;
 mod tool_context;
-mod usage;
 
 pub use error::{CoreError, Result};
 pub use frontend::{
@@ -18,8 +18,8 @@ pub use frontend::{
 pub use host::{DirEntry, Host, LocalHost, TerminalHandle, TerminalSnapshot, TerminalSpec};
 pub use identity::{AgentId, ModelKey};
 pub use message::{ContentBlock, Message};
-pub use pricing::{PricingEntry, PricingRegistry};
-pub use tool_context::{ProgressSink, ProgressUpdate, ToolContext};
-pub use usage::{
-    Cost, CumulativeUsage, Micros, ModelCostInfo, ModelPricing, ModelUsage, TokenCounts, Usage,
+pub use metering::{
+    Cost, CumulativeUsage, Micros, ModelCostInfo, ModelPricing, ModelUsage, TokenCounts, TurnUsage,
 };
+pub use pricing::{PricingRegistry, ProviderPricing, parse_pricing};
+pub use tool_context::{ProgressSink, ProgressUpdate, ToolContext};

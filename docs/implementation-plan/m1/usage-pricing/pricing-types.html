@@ -70,8 +70,8 @@
 <h2 id="files">Files touched</h2>
 
 <ul>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; append <code>ModelPricing</code> + <code>ModelCostInfo</code>.</li>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; re-export the new types.</li>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/metering/model_pricing.rs</code> and <code>crates/arnes-core/src/metering/model_cost_info.rs</code>.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/metering/mod.rs</code> + <code>crates/arnes-core/src/lib.rs</code> &mdash; module + re-exports.</li>
 </ul>
 
 <p>No new deps.</p>
@@ -113,9 +113,9 @@
 </p>
 
 <ul>
-  <li>$0.075/Mtok = 75 micros/Mtok &mdash; clean integer.</li>
+  <li>$0.075/Mtok = 75,000 micros/Mtok &mdash; clean integer (dollars &times; 1_000_000).</li>
   <li>Cost computation is <code>tokens * micros_per_mtok / 1_000_000</code>, all integer math.</li>
-  <li>If a provider ever publishes a rate that doesn't fit in micros at Mtok scale (unlikely &mdash; that'd be 9 trillion dollars per token), the load-time TOML parse catches it; we'd revisit.</li>
+  <li>If a provider ever publishes a rate that doesn't fit in micros at Mtok scale (unlikely &mdash; that'd be 9 trillion dollars per token), the load-time JSON parse catches it; we'd revisit.</li>
 </ul>
 
 <p>
@@ -131,7 +131,7 @@
 </ul>
 
 <p>
-  <code>Option</code> wins because the TOML stays honest about what the
+  <code>Option</code> wins because the JSON stays honest about what the
   provider documents.
 </p>
 
@@ -147,7 +147,9 @@
 
 <h2 id="code">Code skeleton</h2>
 
-<pre><code>// Appended to crates/arnes-core/src/usage.rs:
+<pre><code>// crates/arnes-core/src/metering/model_pricing.rs
+
+use crate::Micros;
 
 /// Per-million-token rates for a model.
 #[derive(Clone, Debug)]
@@ -159,6 +161,10 @@ pub struct ModelPricing {
     pub thinking_per_mtok:    Option&lt;Micros&gt;,
 }
 
+// crates/arnes-core/src/metering/model_cost_info.rs
+
+use crate::ModelPricing;
+
 /// What we know about a model's cost.
 #[derive(Clone, Debug)]
 pub enum ModelCostInfo {
@@ -169,7 +175,7 @@ pub enum ModelCostInfo {
 
 <h2 id="lib-rs">lib.rs additions</h2>
 
-<pre><code>pub use usage::{Cost, Micros, ModelCostInfo, ModelPricing};</code></pre>
+<pre><code>pub use metering::{Cost, Micros, ModelCostInfo, ModelPricing};</code></pre>
 
 <h2 id="tests">Tests</h2>
 

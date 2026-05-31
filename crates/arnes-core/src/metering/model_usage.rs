@@ -1,0 +1,14 @@
+// Copyright 2026 Andre Cipriani Bandarra
+// SPDX-License-Identifier: Apache-2.0
+
+use crate::{Cost, ModelKey, TokenCounts};
+
+/// One bucket's aggregated state in `CumulativeUsage`.
+#[derive(Clone, Debug)]
+pub struct ModelUsage {
+    pub model: ModelKey,
+    pub tokens: TokenCounts,
+    pub turns: u32,
+    pub known_cost: Cost,
+    pub turns_with_unknown_cost: u32,
+}

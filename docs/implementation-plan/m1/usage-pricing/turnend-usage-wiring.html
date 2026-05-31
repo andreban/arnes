@@ -54,7 +54,7 @@
   <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 8 of 8</span>
   <h1><code>feat/turnend-usage-wiring</code></h1>
   <p class="lead">
-    Adds the <code>usage: Usage</code> field to
+    Adds the <code>usage: TurnUsage</code> field to
     <code>EventKind::TurnEnd</code>. Closes phase 3 by giving the
     runtime layer (phase 4) a place to emit per-turn usage on every
     turn end. Emission itself lands in phase 4 with <code>Session</code>.
@@ -87,7 +87,7 @@
 TurnEnd { stop_reason: StopReason },
 
 // After:
-TurnEnd { stop_reason: StopReason, usage: Usage },</code></pre>
+TurnEnd { stop_reason: StopReason, usage: TurnUsage },</code></pre>
 
 <p>
   This is a breaking variant-shape change. Per the phase-2 cross-cutting
@@ -118,7 +118,7 @@ TurnEnd { stop_reason: StopReason, usage: Usage },</code></pre>
 
 <ul>
   <li><strong>Phase boundary cleanliness.</strong> Phase 3's job is to land the usage vocabulary. Wiring it into the event type is part of that vocabulary commitment, even if no producer yet exists.</li>
-  <li><strong>Plan integrity.</strong> Anyone reading <code>EventKind</code> after phase 3 sees the field, immediately understands "TurnEnd carries Usage" without having to find where it gets added later. Splitting type-vocabulary work from runtime work matches how phase 2 worked.</li>
+  <li><strong>Plan integrity.</strong> Anyone reading <code>EventKind</code> after phase 3 sees the field, immediately understands "TurnEnd carries TurnUsage" without having to find where it gets added later. Splitting type-vocabulary work from runtime work matches how phase 2 worked.</li>
 </ul>
 
 <p>
@@ -133,12 +133,12 @@ TurnEnd { stop_reason: StopReason, usage: Usage },</code></pre>
 
 <pre><code>// In crates/arnes-core/src/frontend.rs:
 
-use crate::Usage;   // new import
+use crate::TurnUsage;   // new import
 
 // In the EventKind enum:
 TurnEnd {
     stop_reason: StopReason,
-    usage: Usage,
+    usage: TurnUsage,
 },</code></pre>
 
 <h2 id="tests">Tests</h2>
