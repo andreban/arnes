@@ -74,7 +74,7 @@
     <tr><td><code>prompt</code></td><td><code>SystemPromptBuilder</code> &mdash; assembles the prompt from slots.</td><td>5</td></tr>
     <tr><td><code>persist</code></td><td><code>SessionWriter</code> + reader for JSONL session logs.</td><td>6</td></tr>
     <tr><td><code>compact</code></td><td>Token estimation, threshold trigger, summary prompt, history rewrite.</td><td>10</td></tr>
-    <tr><td><code>usage</code></td><td><code>Usage</code>, <code>Cost</code>, <code>CumulativeUsage</code>, the <code>ModelCostInfo</code> pricing registry, and the <code>Micros</code> integer-money helper.</td><td>&mdash;</td></tr>
+    <tr><td><code>usage</code></td><td><code>Usage</code>, <code>TokenCounts</code>, <code>Cost</code>, <code>CumulativeUsage</code>, the <code>ModelCostInfo</code> pricing registry, and the <code>Micros</code> integer-money helper.</td><td>&mdash;</td></tr>
     <tr><td><code>extensions</code></td><td><code>ExtensionHost</code>, lifecycle events, host API surface. <em>Deferred</em> &mdash; design preserved, build is post-V1.</td><td>8</td></tr>
     <tr><td><code>skills</code></td><td>SKILL.md discovery + frontmatter parse + prompt-section emitter.</td><td>9</td></tr>
   </tbody>
@@ -435,15 +435,21 @@ pub struct ModelKey {
 }
 
 pub struct Usage {
-    pub agent_id:           AgentId,    // who produced this turn (see frontend.rs)
-    pub model:              ModelKey,   // which model billed for it
-    pub input_tokens:       u64,
-    pub output_tokens:      u64,
-    pub cache_read_tokens:  u64,
-    pub cache_write_tokens: u64,
-    pub thinking_tokens:    u64,
+    pub agent_id: AgentId,        // who produced this turn (see frontend.rs)
+    pub model:    ModelKey,       // which model billed for it
+    pub tokens:   TokenCounts,
     /// None: pricing not available for this model.
-    pub cost: Option&lt;Cost&gt;,
+    pub cost:     Option&lt;Cost&gt;,
+}
+
+/// Per-token-kind counts a turn consumed. Carries `Add` / `AddAssign`
+/// for aggregation; also the input to `ModelPricing::cost_for`.
+pub struct TokenCounts {
+    pub input:       u64,
+    pub output:      u64,
+    pub cache_read:  u64,
+    pub cache_write: u64,
+    pub thinking:    u64,
 }
 
 pub struct Cost {
@@ -475,11 +481,7 @@ pub struct ModelPricing {
 /// One row of aggregated usage for a single (agent, model) bucket.
 pub struct ModelUsage {
     pub model:                   ModelKey,
-    pub input_tokens:            u64,
-    pub output_tokens:           u64,
-    pub cache_read_tokens:       u64,
-    pub cache_write_tokens:      u64,
-    pub thinking_tokens:         u64,
+    pub tokens:                  TokenCounts,
     pub turns:                   u32,
     /// Sum of priced turns for this (agent, model) bucket.
     pub known_cost:              Cost,

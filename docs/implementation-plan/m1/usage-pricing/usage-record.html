@@ -147,6 +147,17 @@
 
 <h2 id="code">Code skeleton</h2>
 
+<div class="note">
+  <strong>Updated in <a href="pricing-registry.html">PR #5</a>.</strong> This
+  PR originally shipped <code>Usage</code> and <code>ModelUsage</code> with
+  five flat <code>*_tokens: u64</code> fields. PR #5 introduced
+  <code>TokenCounts</code> for use by <code>ModelPricing::cost_for</code>;
+  in the same PR the per-kind fields here were folded into a nested
+  <code>tokens: TokenCounts</code> so the same type carries token-kind
+  data everywhere it appears. The skeleton below reflects the
+  post-refactor shape.
+</div>
+
 <pre><code>// Appended to crates/arnes-core/src/usage.rs:
 
 use crate::{AgentId, ModelKey};
@@ -154,26 +165,18 @@ use crate::{AgentId, ModelKey};
 /// What a single turn cost.
 #[derive(Clone, Debug)]
 pub struct Usage {
-    pub agent_id:           AgentId,
-    pub model:              ModelKey,
-    pub input_tokens:       u64,
-    pub output_tokens:      u64,
-    pub cache_read_tokens:  u64,
-    pub cache_write_tokens: u64,
-    pub thinking_tokens:    u64,
+    pub agent_id: AgentId,
+    pub model:    ModelKey,
+    pub tokens:   TokenCounts,
     /// `None` when the model's pricing is `ModelCostInfo::Unknown`.
-    pub cost: Option&lt;Cost&gt;,
+    pub cost:     Option&lt;Cost&gt;,
 }
 
 /// One bucket's aggregated state in `CumulativeUsage`.
 #[derive(Clone, Debug)]
 pub struct ModelUsage {
     pub model:                   ModelKey,
-    pub input_tokens:            u64,
-    pub output_tokens:           u64,
-    pub cache_read_tokens:       u64,
-    pub cache_write_tokens:      u64,
-    pub thinking_tokens:         u64,
+    pub tokens:                  TokenCounts,
     pub turns:                   u32,
     pub known_cost:              Cost,
     pub turns_with_unknown_cost: u32,

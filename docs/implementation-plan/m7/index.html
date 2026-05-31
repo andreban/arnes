@@ -135,10 +135,11 @@ impl TokenCounter for CharsHeuristicCounter {
 
 <p>
   In practice the trigger combines both: prior turns' actual input tokens
-  from <code>cumulative_usage.input_tokens</code> + heuristic estimate of
-  the pending user message + a small constant for tool declarations and
-  the system prompt. The heuristic-only fallback applies when no prior
-  turn has run yet.
+  summed across the session's <code>CumulativeUsage</code> buckets
+  (each bucket's <code>tokens.input</code>) + heuristic estimate of the
+  pending user message + a small constant for tool declarations and the
+  system prompt. The heuristic-only fallback applies when no prior turn
+  has run yet.
 </p>
 
 <h2 id="trigger">When to trigger</h2>

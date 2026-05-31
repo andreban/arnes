@@ -158,11 +158,7 @@ impl CumulativeUsage {
         for ((_, model), bucket) in &amp;self.by_agent_and_model {
             let entry = out.entry(model).or_insert_with(|| ModelUsage {
                 model: model.clone(),
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cache_write_tokens: 0,
-                thinking_tokens: 0,
+                tokens: TokenCounts::default(),
                 turns: 0,
                 known_cost: Cost::default(),
                 turns_with_unknown_cost: 0,
@@ -180,11 +176,7 @@ impl CumulativeUsage {
         for ((agent, model), bucket) in &amp;self.by_agent_and_model {
             let entry = out.entry(agent).or_insert_with(|| ModelUsage {
                 model: model.clone(),
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cache_write_tokens: 0,
-                thinking_tokens: 0,
+                tokens: TokenCounts::default(),
                 turns: 0,
                 known_cost: Cost::default(),
                 turns_with_unknown_cost: 0,
@@ -196,11 +188,7 @@ impl CumulativeUsage {
 }
 
 fn merge_into(into: &amp;mut ModelUsage, from: &amp;ModelUsage) {
-    into.input_tokens            += from.input_tokens;
-    into.output_tokens           += from.output_tokens;
-    into.cache_read_tokens       += from.cache_read_tokens;
-    into.cache_write_tokens      += from.cache_write_tokens;
-    into.thinking_tokens         += from.thinking_tokens;
+    into.tokens                  += from.tokens;
     into.turns                   += from.turns;
     into.known_cost              += from.known_cost;
     into.turns_with_unknown_cost += from.turns_with_unknown_cost;
