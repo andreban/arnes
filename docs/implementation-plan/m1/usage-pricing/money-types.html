@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/money-types</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 1 of 8</span>
+  <h1><code>feat/money-types</code></h1>
+  <p class="lead">
+    <code>Micros</code> (integer money, sixth-decimal precision) and
+    <code>Cost</code> (per-token-kind breakdown for one turn). The
+    arithmetic foundation the rest of the phase builds on.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Ship <code>Micros</code> with the arithmetic ops the phase needs
+  (<code>Add</code>, <code>AddAssign</code>) and <code>Cost</code> as the
+  per-token-kind cost breakdown for a single turn.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; first file in the module that the rest of the phase extends.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; declare <code>usage</code> module, re-export the new types.</li>
+</ul>
+
+<p>No new deps.</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. Integer micros (<code>i64</code>) for money.</strong> See
+  the <a href="index.html#cross-cutting">phase cross-cutting decision</a>.
+  Recapping: no float drift, vast range, lighter than
+  <code>rust_decimal</code>, and six decimals match the precision
+  provider pricing is published at.
+</p>
+
+<p>
+  <strong>2. Per-token-kind <code>Cost</code> breakdown.</strong> A single
+  <code>total</code> field would be enough for "what did this turn cost."
+  Breaking it apart by token kind (<code>input</code>, <code>output</code>,
+  <code>cache_read</code>, <code>cache_write</code>, <code>thinking</code>)
+  earns its place because:
+</p>
+
+<ul>
+  <li><strong>Cache savings visibility.</strong> The whole point of provider caching is to make <code>cache_read</code> &lt;&lt; <code>input</code>; users want to <em>see</em> the win, not just feel it.</li>
+  <li><strong>Thinking cost is often surprising.</strong> Extended-thinking models can spend more on reasoning than on the visible response. Breaking it out makes that legible.</li>
+  <li><strong>Debugging.</strong> If a turn cost more than expected, the breakdown shows which kind. With a single <code>total</code> you'd have to recompute from raw tokens + pricing.</li>
+</ul>
+
+<p>
+  <strong>3. Store <code>total</code> or compute it?</strong> Storing it.
+  Reasons:
+</p>
+
+<ul>
+  <li>Avoids recomputing the sum every time a display or aggregator needs it.</li>
+  <li>The PR that constructs <code>Cost</code> (the pricing path in phase 3 PR #5 / its caller in PR #3) already has all the parts; setting <code>total = input + output + ...</code> at construction time is one line.</li>
+  <li><code>Cost + Cost</code> sums all fields including <code>total</code>, so aggregation stays trivial.</li>
+</ul>
+
+<p>
+  The minor risk is that <code>total</code> can drift from the sum of the
+  other fields if a future caller constructs <code>Cost</code> manually
+  and forgets it. We accept that risk because there's only one
+  construction site planned (the pricing computation) and we can revisit
+  with a constructor function if the risk materializes.
+</p>
+
+<p>
+  <strong>4. Arithmetic on <code>Micros</code> and <code>Cost</code>.</strong>
+  <code>Add</code> + <code>AddAssign</code> for both, so the aggregation
+  code in PR #4 can write <code>row.known_cost += usage.cost</code>
+  without ceremony. No <code>Sub</code> / <code>Mul</code> / <code>Div</code>
+  at this PR &mdash; nothing needs them yet. (Multiplication by token
+  counts happens in the pricing PR via an explicit helper that does
+  <code>tokens * micros_per_mtok / 1_000_000</code>, not via operator
+  overloading.)
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// Copyright 2026 Andre Cipriani Bandarra
+// SPDX-License-Identifier: Apache-2.0
+
+//! Money types: integer micros + per-token-kind cost breakdown.
+
+use std::ops::{Add, AddAssign};
+
+/// A money amount in millionths of a dollar.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, PartialOrd, Ord, Hash)]
+pub struct Micros(pub i64);
+
+impl Micros {
+    pub const ZERO: Micros = Micros(0);
+}
+
+impl Add for Micros {
+    type Output = Self;
+    fn add(self, rhs: Self) -&gt; Self { Micros(self.0 + rhs.0) }
+}
+
+impl AddAssign for Micros {
+    fn add_assign(&amp;mut self, rhs: Self) { self.0 += rhs.0; }
+}
+
+/// Cost breakdown for a single turn.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Cost {
+    pub input: Micros,
+    pub output: Micros,
+    pub cache_read: Micros,
+    pub cache_write: Micros,
+    pub thinking: Micros,
+    pub total: Micros,
+}
+
+impl Add for Cost {
+    type Output = Self;
+    fn add(self, rhs: Self) -&gt; Self {
+        Cost {
+            input:       self.input       + rhs.input,
+            output:      self.output      + rhs.output,
+            cache_read:  self.cache_read  + rhs.cache_read,
+            cache_write: self.cache_write + rhs.cache_write,
+            thinking:    self.thinking    + rhs.thinking,
+            total:       self.total       + rhs.total,
+        }
+    }
+}
+
+impl AddAssign for Cost {
+    fn add_assign(&amp;mut self, rhs: Self) { *self = *self + rhs; }
+}</code></pre>
+
+<h2 id="lib-rs">lib.rs additions</h2>
+
+<pre><code>mod usage;
+
+pub use usage::{Cost, Micros};</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>Inline <code>#[cfg(test)]</code> in <code>usage.rs</code>:</p>
+
+<ul>
+  <li><strong>Micros addition</strong>: <code>Micros(75) + Micros(25) == Micros(100)</code>.</li>
+  <li><strong>Micros AddAssign</strong>: accumulator pattern works.</li>
+  <li><strong>Cost default is all zero</strong>: every field is <code>Micros::ZERO</code>.</li>
+  <li><strong>Cost addition is field-wise</strong>: two non-trivial <code>Cost</code>s sum on every field, including <code>total</code>.</li>
+</ul>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green; the 4 new arithmetic tests pass.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="index.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">Phase 3: Usage + pricing</span>
+  </a>
+  <a class="next" href="pricing-types.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/pricing-types</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

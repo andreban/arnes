@@ -76,8 +76,8 @@
   <tbody>
     <tr><td>0</td><td><a href="#repo-bootstrap">Repo bootstrap</a></td><td>done</td><td>direct-to-main</td></tr>
     <tr><td>1</td><td><a href="#workspace-ci">Workspace + CI</a></td><td>done</td><td>1 (merged)</td></tr>
-    <tr><td>2</td><td><a href="core-types/index.html">Core types</a></td><td>planned in detail</td><td>6</td></tr>
-    <tr><td>3</td><td><a href="#usage-pricing">Usage + pricing</a></td><td>scope only, to be detailed</td><td>~4</td></tr>
+    <tr><td>2</td><td><a href="core-types/index.html">Core types</a></td><td>done</td><td>6 (merged)</td></tr>
+    <tr><td>3</td><td><a href="usage-pricing/index.html">Usage + pricing</a></td><td>planned in detail</td><td>8</td></tr>
     <tr><td>4</td><td><a href="#session-scaffolding">Session + test scaffolding</a></td><td>scope only, to be detailed</td><td>~5</td></tr>
     <tr><td>5</td><td><a href="#acp-transport">ACP transport spike</a></td><td>scope only</td><td>1</td></tr>
     <tr><td>6</td><td><a href="#acp-protocol">ACP minimal protocol</a></td><td>scope only, to be detailed</td><td>~4</td></tr>
@@ -149,25 +149,22 @@
   implementation.
 </p>
 
-<h2 id="usage-pricing">Phase 3 &mdash; Usage + pricing <small>(scope only)</small></h2>
+<h2 id="usage-pricing">Phase 3 &mdash; Usage + pricing <small>(planned in detail)</small></h2>
 
 <p>
   <strong>Goal.</strong> Token/cost types with three-state pricing
   (Priced / Free / Unknown), per-<code>(agent, model)</code> aggregation,
   and a tested registry loaded from bundled TOML with user overrides.
+  First phase that ships runtime arithmetic; previous phases shipped
+  type vocabularies only.
 </p>
 
 <p>
-  <strong>Anticipated PRs</strong> (to be detailed before phase starts):
+  <strong>See <a href="usage-pricing/index.html">the Usage + pricing phase plan</a></strong>
+  for the eight per-PR docs, the cross-cutting decisions (integer-micros
+  for money; Unknown is never silently zero), and the discussion items
+  each PR must surface before implementation.
 </p>
-
-<ul>
-  <li><code>feat/usage-types</code> &mdash; <code>Usage</code>, <code>Cost</code>, <code>Micros</code>, <code>ModelUsage</code>, <code>CumulativeUsage</code>, <code>ModelCostInfo</code>, <code>ModelPricing</code>.</li>
-  <li><code>feat/pricing-registry</code> &mdash; <code>PricingRegistry</code> struct + lookup; TOML schema; bundled-vs-user merge rules.</li>
-  <li><code>feat/pricing-toml-loader</code> &mdash; reads the bundled <code>arnes-core/data/pricing.toml</code>; merges in <code>~/.arnes/pricing.toml</code> if present.</li>
-  <li><code>feat/cumulative-usage-projections</code> &mdash; <code>by_model()</code> / <code>by_agent()</code> derived views; record-keeping for unknown-cost turns.</li>
-  <li><code>feat/turnend-usage-wiring</code> &mdash; add the <code>usage: Usage</code> field to <code>EventKind::TurnEnd</code>; emission still lands in phase 4.</li>
-</ul>
 
 <h2 id="session-scaffolding">Phase 4 &mdash; Session + test scaffolding <small>(scope only)</small></h2>
 

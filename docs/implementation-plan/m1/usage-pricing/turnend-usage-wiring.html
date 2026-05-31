@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/turnend-usage-wiring</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 8 of 8</span>
+  <h1><code>feat/turnend-usage-wiring</code></h1>
+  <p class="lead">
+    Adds the <code>usage: Usage</code> field to
+    <code>EventKind::TurnEnd</code>. Closes phase 3 by giving the
+    runtime layer (phase 4) a place to emit per-turn usage on every
+    turn end. Emission itself lands in phase 4 with <code>Session</code>.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  One-field addition to <code>EventKind::TurnEnd</code>, plus the
+  in-tree consumer sweep. No new construction sites (nothing in M1
+  constructs <code>TurnEnd</code> yet).
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/frontend.rs</code> &mdash; the variant change.</li>
+</ul>
+
+<p>No new deps, no new modules, no new tests for this PR (the type change is data-only; phase 4's <code>session_roundtrip</code> test will exercise the new field).</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. The one-line change.</strong>
+</p>
+
+<pre><code>// Before:
+TurnEnd { stop_reason: StopReason },
+
+// After:
+TurnEnd { stop_reason: StopReason, usage: Usage },</code></pre>
+
+<p>
+  This is a breaking variant-shape change. Per the phase-2 cross-cutting
+  decision, <code>EventKind</code> is not <code>#[non_exhaustive]</code>
+  on purpose &mdash; the compiler surfaces every match site that needs
+  updating.
+</p>
+
+<p>
+  <strong>2. Consumer sweep.</strong> At this PR, the only in-tree
+  consumers of <code>EventKind::TurnEnd</code> are: nothing. Phase 4's
+  <code>recording_frontend</code> (test helper), <code>scripted_llm</code>
+  (test helper), and <code>Session::prompt</code> all construct
+  <code>TurnEnd</code> &mdash; but those don't exist yet. So this PR
+  is, mechanically, just the variant edit.
+</p>
+
+<p>
+  If a future PR adds a consumer before this one lands, the order would
+  flip (the consumer PR builds against the not-yet-extended variant);
+  this PR's order in phase 3 reflects the no-consumers-yet reality.
+</p>
+
+<p>
+  <strong>3. Why ship this as its own PR rather than fold it into a
+  future phase 4 PR?</strong> Two reasons:
+</p>
+
+<ul>
+  <li><strong>Phase boundary cleanliness.</strong> Phase 3's job is to land the usage vocabulary. Wiring it into the event type is part of that vocabulary commitment, even if no producer yet exists.</li>
+  <li><strong>Plan integrity.</strong> Anyone reading <code>EventKind</code> after phase 3 sees the field, immediately understands "TurnEnd carries Usage" without having to find where it gets added later. Splitting type-vocabulary work from runtime work matches how phase 2 worked.</li>
+</ul>
+
+<p>
+  <strong>4. Field order.</strong> <code>stop_reason</code> first (the
+  existing field), <code>usage</code> appended. Cosmetic; either order
+  works.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<p>The only meaningful change:</p>
+
+<pre><code>// In crates/arnes-core/src/frontend.rs:
+
+use crate::Usage;   // new import
+
+// In the EventKind enum:
+TurnEnd {
+    stop_reason: StopReason,
+    usage: Usage,
+},</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<p>
+  None new in this PR. The type change has no behaviour to test on its
+  own; <code>EventKind</code> is a pure-data enum. Phase 4's
+  <code>session_roundtrip</code> test exercises <code>TurnEnd</code>
+  construction and consumption with real (scripted-LLM) usage values.
+</p>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green (the existing 10 tests still pass).</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+  <li><strong>End of phase 3.</strong> <code>arnes-core</code> exports the full usage / pricing vocabulary; <code>EventKind::TurnEnd</code> is shaped to carry it; phase 4 (<code>Session</code> + scaffolding) can wire it up.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="cumulative-usage-projections.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/cumulative-usage-projections</span>
+  </a>
+  <a class="next" href="../plan.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">Back to M1 work plan</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

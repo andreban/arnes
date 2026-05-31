@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phase 3 &mdash; Usage + pricing</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 3</span>
+  <h1>Usage + pricing</h1>
+  <p class="lead">
+    Token / cost types with three-state pricing (Priced / Free / Unknown),
+    per-<code>(agent, model)</code> aggregation, and a registry loaded
+    from bundled TOML + user override. The first phase that ships
+    runtime-relevant arithmetic; previous phases shipped type
+    vocabularies only.
+  </p>
+</div>
+
+<h2 id="prs">PRs in this phase</h2>
+
+<table>
+  <thead><tr><th>Order</th><th>PR</th><th>One-line goal</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><a href="money-types.html"><code>feat/money-types</code></a></td><td><code>Micros</code> + <code>Cost</code> &mdash; integer-money representation + per-token-kind breakdown.</td></tr>
+    <tr><td>2</td><td><a href="pricing-types.html"><code>feat/pricing-types</code></a></td><td><code>ModelPricing</code> + <code>ModelCostInfo</code> &mdash; three-state Priced / Free / Unknown.</td></tr>
+    <tr><td>3</td><td><a href="usage-record.html"><code>feat/usage-record</code></a></td><td><code>Usage</code> (per-turn) + <code>ModelUsage</code> (aggregated row shape).</td></tr>
+    <tr><td>4</td><td><a href="cumulative-usage.html"><code>feat/cumulative-usage</code></a></td><td><code>CumulativeUsage</code> + <code>record()</code> + <code>total_known_cost()</code>.</td></tr>
+    <tr><td>5</td><td><a href="pricing-registry.html"><code>feat/pricing-registry</code></a></td><td><code>PricingRegistry</code> &mdash; lookup, wildcard patterns, override-wins merge.</td></tr>
+    <tr><td>6</td><td><a href="pricing-toml-loader.html"><code>feat/pricing-toml-loader</code></a></td><td>TOML schema; bundled + <code>~/.arnes/pricing.toml</code> loader.</td></tr>
+    <tr><td>7</td><td><a href="cumulative-usage-projections.html"><code>feat/cumulative-usage-projections</code></a></td><td><code>by_model()</code> / <code>by_agent()</code> derived views.</td></tr>
+    <tr><td>8</td><td><a href="turnend-usage-wiring.html"><code>feat/turnend-usage-wiring</code></a></td><td>Add the <code>usage: Usage</code> field to <code>EventKind::TurnEnd</code>.</td></tr>
+  </tbody>
+</table>
+
+<p>
+  Order matters: PRs 1&ndash;4 build the type stack bottom-up
+  (<code>Micros</code> &rarr; <code>Cost</code> &rarr; <code>ModelPricing</code> /
+  <code>ModelCostInfo</code> &rarr; <code>Usage</code> &rarr;
+  <code>CumulativeUsage</code>). PR #7 (<code>by_model</code> / <code>by_agent</code>)
+  needs <code>CumulativeUsage</code>, so it lands after #4.
+  PR #5 / #6 (registry + loader) can land in parallel with the type stack
+  &mdash; they only depend on <code>ModelKey</code> + <code>ModelPricing</code>
+  (#2). PR #8 (wire into <code>EventKind::TurnEnd</code>) needs
+  <code>Usage</code> (#3) and is independent of the registry path.
+</p>
+
+<h2 id="cross-cutting">Cross-cutting decisions (settled)</h2>
+
+<p>
+  Two choices apply to multiple PRs in this phase. Captured here so each
+  PR doc can reference them rather than re-litigate.
+</p>
+
+<p>
+  <strong>1. Integer micros for money.</strong> All amounts in
+  <code>arnes-core</code> are <code>Micros(i64)</code> &mdash; millionths
+  of a dollar (six decimal places). Reasons:
+</p>
+
+<ul>
+  <li><strong>No float drift.</strong> Summing thousands of small per-token costs in <code>f64</code> accumulates rounding error; integer math is exact.</li>
+  <li><strong>Range is enormous.</strong> <code>i64</code> max ~ 9.2&times;10<sup>18</sup> micros ~ 9.2&times;10<sup>12</sup> dollars. Saturates well above any plausible session cost.</li>
+  <li><strong>Lighter than <code>Decimal</code>.</strong> The <code>rust_decimal</code> crate is the alternative, but its 128-bit reps and per-op machinery are overkill for "track costs in dollars with six decimal places."</li>
+  <li><strong>Six decimals is enough.</strong> Provider pricing is published to that precision (e.g. $0.075 per 1M tokens = 75 micros/Mtok). Truncating below that loses fractions of a fraction of a cent.</li>
+</ul>
+
+<p>
+  Display formatting (turning <code>Micros</code> into <code>$0.0001</code>
+  or <code>$1,234.56</code>) is a frontend concern; <code>arnes-core</code>
+  never produces formatted strings for end users.
+</p>
+
+<p>
+  <strong>2. Unknown pricing is never silently zero.</strong> The
+  three-state pricing enum (<code>Priced</code> / <code>Free</code> /
+  <code>Unknown</code>) is load-bearing: it lets us report "we don't know
+  what this turn cost" honestly rather than aggregating it into a fake
+  $0.00. <code>CumulativeUsage</code> tracks
+  <code>turns_with_unknown_cost</code> as a separate count from
+  <code>known_cost</code>; flatten-style projections preserve the same
+  distinction.
+</p>
+
+<h2 id="discussion-pattern">Discussion sections in each PR doc</h2>
+
+<p>
+  Same pattern as phase 2: every per-PR doc has a Discussion section
+  surfacing the architectural choices, even when they look obvious.
+  Examples of what gets discussed:
+</p>
+
+<ul>
+  <li><strong>money-types</strong>: why integer micros (vs <code>Decimal</code>, vs <code>f64</code>); per-token-kind <code>Cost</code> breakdown rationale; whether to store or compute <code>total</code>.</li>
+  <li><strong>pricing-types</strong>: three-state vs <code>Option&lt;ModelPricing&gt;</code>; whether optional cache/thinking pricing fields belong on every <code>ModelPricing</code>.</li>
+  <li><strong>usage-record</strong>: when <code>Cost</code> is computed (eager at <code>Usage</code> construction); why <code>Option&lt;Cost&gt;</code> on <code>Usage</code>; shape of <code>ModelUsage</code> as the aggregated row.</li>
+  <li><strong>cumulative-usage</strong>: indexing by <code>(AgentId, ModelKey)</code>; <code>record()</code> semantics; separating <code>known_cost</code> from <code>turns_with_unknown_cost</code>.</li>
+  <li><strong>pricing-registry</strong>: wildcard matching shape; override precedence; the Unknown fallback.</li>
+  <li><strong>pricing-toml-loader</strong>: TOML schema shape; bundling via <code>include_str!</code> vs runtime file; where the user-override file lives.</li>
+  <li><strong>cumulative-usage-projections</strong>: borrowed vs owned view returns; projection consistency invariant; whether to expose iterators instead.</li>
+  <li><strong>turnend-usage-wiring</strong>: minimal &mdash; one-field addition; consumer sweep.</li>
+</ul>
+
+<h2 id="tests">Test strategy for the phase</h2>
+
+<p>
+  Each PR ships tests for its own surface. The phase as a whole
+  earns these integration-style assertions (across the relevant PRs):
+</p>
+
+<ul>
+  <li><strong>Three-state pricing behaves correctly</strong> (PRs #2, #5): Priced / Free / Unknown each produce the expected <code>Option&lt;Cost&gt;</code> from <code>compute_cost</code>.</li>
+  <li><strong>User override wins over bundled</strong> (PR #5): override entry for a model is used instead of the bundled entry.</li>
+  <li><strong>Wildcard pattern matches</strong> (PR #5): the Ollama <code>provider = "ollama", pattern = "*"</code> rule matches any <code>model_id</code>.</li>
+  <li><strong>Cumulative sums are consistent</strong> (PR #4 + #7): the sum of <code>by_model()</code> totals equals the sum of <code>by_agent()</code> totals equals the registry's <code>total_known_cost()</code>; unknown-cost turns count consistently.</li>
+  <li><strong>Per-(agent, model) bucketing</strong> (PR #4): two synthetic <code>Usage</code> values with different <code>ModelKey</code>s produce two entries in <code>CumulativeUsage</code>.</li>
+</ul>
+
+<h2 id="acceptance">Phase acceptance</h2>
+
+<ul>
+  <li>All 8 PRs merged.</li>
+  <li><code>cargo check --workspace</code> clean (CI green throughout).</li>
+  <li><code>cargo test -p arnes-core</code> green; the integration assertions above all pass.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+  <li>End state: <code>arnes-core</code> exports the full usage/pricing vocabulary, has a working <code>PricingRegistry</code> loaded from <code>data/pricing.toml</code>, and <code>EventKind::TurnEnd</code> carries a <code>Usage</code> (emission lands in phase 4 with <code>Session</code>).</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="../plan.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">M1 work plan</span>
+  </a>
+  <a class="next" href="money-types.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/money-types</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

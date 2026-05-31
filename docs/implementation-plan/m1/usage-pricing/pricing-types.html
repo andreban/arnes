@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/pricing-types</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 2 of 8</span>
+  <h1><code>feat/pricing-types</code></h1>
+  <p class="lead">
+    <code>ModelPricing</code> (per-token-kind rates) and
+    <code>ModelCostInfo</code> (the three-state <code>Priced</code> /
+    <code>Free</code> / <code>Unknown</code> tag that wraps it).
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Define the pricing data shapes the registry (PR #5) and cost computation
+  (PR #3's caller) consume.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; append <code>ModelPricing</code> + <code>ModelCostInfo</code>.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; re-export the new types.</li>
+</ul>
+
+<p>No new deps.</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. Three-state <code>ModelCostInfo</code> vs
+  <code>Option&lt;ModelPricing&gt;</code>.</strong> The natural Rust idiom
+  would be <code>Option&lt;ModelPricing&gt;</code>: <code>Some(pricing)</code>
+  means we have pricing, <code>None</code> means we don't. But we have
+  <em>three</em> distinct meanings, not two:
+</p>
+
+<ul>
+  <li><strong>Priced</strong>: we know the price (use the rates).</li>
+  <li><strong>Free</strong>: the model is explicitly free (e.g. local Ollama). Cost is genuinely <code>$0.00</code>, not "unknown."</li>
+  <li><strong>Unknown</strong>: we don't have pricing data. Cost is <em>unknown</em>, not zero.</li>
+</ul>
+
+<p>
+  Collapsing Free and Unknown both into <code>None</code> would lose the
+  distinction between "we know this is free" and "we don't know what it
+  costs." Frontends rendering usage want to display these differently:
+  Free can show "$0.00" with confidence; Unknown should show
+  "&mdash;" or "unknown" rather than misleading the user.
+</p>
+
+<p>
+  The phase cross-cutting decision &mdash; "Unknown is never silently
+  zero" &mdash; rests on this enum staying three-state.
+</p>
+
+<p>
+  <strong>2. Per-mtok rates in <code>Micros</code>.</strong> Provider
+  pricing is published in dollars-per-million-tokens (e.g. Gemini 2.5
+  Flash: $0.075 input / $0.30 output per Mtok). Storing those as
+  <code>Micros</code> gives:
+</p>
+
+<ul>
+  <li>$0.075/Mtok = 75 micros/Mtok &mdash; clean integer.</li>
+  <li>Cost computation is <code>tokens * micros_per_mtok / 1_000_000</code>, all integer math.</li>
+  <li>If a provider ever publishes a rate that doesn't fit in micros at Mtok scale (unlikely &mdash; that'd be 9 trillion dollars per token), the load-time TOML parse catches it; we'd revisit.</li>
+</ul>
+
+<p>
+  <strong>3. Optional cache / thinking pricing fields.</strong> Not every
+  model has cache pricing (only providers that expose prompt caching) or
+  thinking-token pricing (only models with extended thinking). Two ways
+  to model the absence:
+</p>
+
+<ul>
+  <li><strong><code>Option&lt;Micros&gt;</code></strong> per optional rate (chosen). <code>None</code> means "no separate rate." For cache, that typically means <code>cache_read</code> bills at the regular <code>input</code> rate (no discount); for thinking, it means thinking tokens bill at the regular <code>output</code> rate. The pricing computation does the fallback.</li>
+  <li><strong><code>Micros</code> defaulting to the regular rate</strong>. Simpler arithmetic, but loses the "this provider doesn't have a cache discount" information from the TOML &mdash; you can't tell apart "cache_read is the same as input" (no discount) from "cache_read happens to equal input at this rate" (with discount).</li>
+</ul>
+
+<p>
+  <code>Option</code> wins because the TOML stays honest about what the
+  provider documents.
+</p>
+
+<p>
+  <strong>4. Free vs <code>Priced(all_zeros)</code>.</strong> An
+  alternative to a <code>Free</code> variant would be
+  <code>Priced(ModelPricing { input_per_mtok: Micros::ZERO, output_per_mtok: Micros::ZERO, ... })</code>.
+  Functionally equivalent for computation, but semantically lossy: a
+  display layer can show "Free" with a confident label rather than
+  "$0.000000 / 1M tokens" four times. Keeping <code>Free</code> as a
+  distinct variant makes the user-facing rendering trivial.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// Appended to crates/arnes-core/src/usage.rs:
+
+/// Per-million-token rates for a model.
+#[derive(Clone, Debug)]
+pub struct ModelPricing {
+    pub input_per_mtok:       Micros,
+    pub output_per_mtok:      Micros,
+    pub cache_read_per_mtok:  Option&lt;Micros&gt;,
+    pub cache_write_per_mtok: Option&lt;Micros&gt;,
+    pub thinking_per_mtok:    Option&lt;Micros&gt;,
+}
+
+/// What we know about a model's cost.
+#[derive(Clone, Debug)]
+pub enum ModelCostInfo {
+    Priced(ModelPricing),
+    Free,
+    Unknown,
+}</code></pre>
+
+<h2 id="lib-rs">lib.rs additions</h2>
+
+<pre><code>pub use usage::{Cost, Micros, ModelCostInfo, ModelPricing};</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<ul>
+  <li><strong>Round-trip construction</strong>: build a <code>Priced(ModelPricing { ... })</code> with all the optional fields set and unset; pattern-match it back.</li>
+  <li>No behavioural tests in this PR &mdash; the types are pure data. The compute-cost helper that exercises them lands in PR #5 (registry) with its own tests.</li>
+</ul>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="money-types.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">feat/money-types</span>
+  </a>
+  <a class="next" href="usage-record.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/usage-record</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>
