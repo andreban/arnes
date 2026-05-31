@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>arnes-core &mdash; type map</title>
+<link rel="stylesheet" href="../build-your-own-harness/assets/styles.css" />
+<style>
+  .diagram-wrap {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0;
+    margin: 1.25rem 0 0.5rem;
+    height: 80vh;
+    min-height: 560px;
+    position: relative;
+    overflow: hidden;
+  }
+  .diagram-wrap .mermaid {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+  }
+  .diagram-wrap .mermaid svg {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    display: block;
+  }
+  .diagram-hint {
+    font-size: 0.85em;
+    color: var(--text-dim);
+    margin: 0 0 1.5rem;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    font-size: 0.9em;
+    margin: 0.5rem 0 1rem;
+    color: var(--text-muted);
+  }
+  .legend .swatch {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-right: 0.4em;
+    vertical-align: -3px;
+    border-radius: 3px;
+  }
+  .swatch.built   { background: var(--bg-elev); border: 1px solid var(--text-muted); }
+  .swatch.planned { background: var(--bg-elev); border: 1px dashed var(--text-muted); }
+  .swatch.trait_  { background: #1f2937;       border: 2px solid var(--pi-coding); }
+  .swatch.shared  { background: #1e3a5f;       border: 1.5px solid var(--link); }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="architecture.html">Modular design</a></li>
+    <li><a href="core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="type-map.html" data-accent="coding">Type map</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="m1/index.html">M1: Foundation</a></li>
+    <li><a href="m1/plan.html">M1 work plan</a></li>
+    <li><a href="m2/index.html">M2: First tool</a></li>
+    <li><a href="m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="m4/index.html">M4: System prompt</a></li>
+    <li><a href="m5/index.html">M5: Skills</a></li>
+    <li><a href="m6/index.html">M6: Sessions</a></li>
+    <li><a href="m7/index.html">M7: Compaction</a></li>
+    <li><a href="m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">Architecture</span>
+  <h1>Type map</h1>
+  <p class="lead">
+    Visual reference for the public types in <code>arnes-core</code> at
+    its V1 end state. Each subgraph is one source file. Solid arrows mean
+    "uses / contains"; dotted arrows mean "implements" or "returns".
+    Solid borders are types that exist today; dashed borders are
+    planned for later phases (see the right-hand column of the table
+    below to find the milestone).
+  </p>
+</div>
+
+<div class="legend">
+  <span><span class="swatch built"></span>built today</span>
+  <span><span class="swatch planned"></span>planned</span>
+  <span><span class="swatch trait_"></span>trait</span>
+  <span><span class="swatch shared"></span>cross-module shared type</span>
+</div>
+
+<div class="diagram-wrap">
+<div class="mermaid">
+graph TD
+  classDef trait fill:#1f2937,stroke:#fbbf24,stroke-width:2px,color:#e4e8ef
+  classDef shared fill:#1e3a5f,stroke:#7aa2ff,stroke-width:1.5px,color:#e4e8ef
+  classDef planned stroke-dasharray: 5 4,opacity:0.85
+  classDef planTrait fill:#1f2937,stroke:#fbbf24,stroke-width:2px,color:#e4e8ef,stroke-dasharray: 5 4,opacity:0.9
+
+  subgraph identity[" identity "]
+    AgentId["AgentId<br/>(Root | SubAgent)"]
+    ModelKey["ModelKey<br/>provider, model_id"]
+  end
+
+  subgraph error[" error "]
+    CoreError["CoreError"]
+    ResultAlias["Result&lt;T&gt;<br/>(alias)"]
+    ResultAlias --> CoreError
+  end
+
+  subgraph message[" message "]
+    Message["Message<br/>(User | Assistant | System)"]
+    ContentBlock["ContentBlock<br/>(Text | Thinking |<br/>ToolUse | ToolResult)"]
+    Message -->|Vec| ContentBlock
+  end
+
+  subgraph frontend[" frontend "]
+    Frontend[["Frontend"]]:::trait
+    SessionEvent["SessionEvent<br/>agent_id, depth, kind"]
+    EventKind["EventKind<br/>(TurnStart | TextDelta |<br/>ThinkingDelta | TurnEnd | Error)"]
+    StopReason["StopReason"]
+    PermissionRequest["PermissionRequest"]
+    Permission["Permission<br/>(AllowOnce | Deny)"]
+    FrontendCapabilities["FrontendCapabilities"]
+    SessionEvent --> EventKind
+    EventKind --> StopReason
+    Frontend -- on_event --> SessionEvent
+    Frontend -- request_permission --> PermissionRequest
+    Frontend -. returns .-> Permission
+    Frontend -. capabilities .-> FrontendCapabilities
+  end
+
+  subgraph host[" host "]
+    Host[["Host"]]:::trait
+    LocalHost["LocalHost"]
+    DirEntry["DirEntry"]
+    TerminalSpec["TerminalSpec"]
+    TerminalHandle["TerminalHandle"]
+    TerminalSnapshot["TerminalSnapshot"]
+    LocalHost -. impl .-> Host
+    Host -- list_directory --> DirEntry
+    Host -- terminal_create --> TerminalSpec
+    Host -- terminal_create --> TerminalHandle
+    Host -- terminal_snapshot --> TerminalSnapshot
+  end
+
+  subgraph tool_context[" tool_context "]
+    ToolContext["ToolContext<br/>host, progress,<br/>cancellation, agent_id"]
+    ProgressSink[["ProgressSink"]]:::trait
+    ProgressUpdate["ProgressUpdate<br/>(Text | Structured)"]
+    ProgressSink -- send --> ProgressUpdate
+  end
+
+  subgraph session[" session (planned) "]
+    Session["Session&lt;F, H&gt;"]:::planned
+    UserInput["UserInput"]:::planned
+    Session -- prompt --> UserInput
+  end
+
+  subgraph tools[" tools (planned) "]
+    Tool[["Tool"]]:::planTrait
+    ToolRegistry["ToolRegistry"]:::planned
+    ToolResult["ToolResult<br/>(content + is_error)"]:::planned
+    Scope["Scope"]:::planned
+    PermissionAllowlist["PermissionAllowlist"]:::planned
+    ToolRegistry --> Tool
+    Tool -. returns .-> ToolResult
+    Tool -. uses .-> ToolContext
+    Tool -. matches_scope .-> Scope
+    PermissionAllowlist --> Scope
+  end
+
+  subgraph prompt[" prompt (planned) "]
+    SystemPromptBuilder["SystemPromptBuilder"]:::planned
+    ContextFile["ContextFile"]:::planned
+    SystemPromptBuilder --> ContextFile
+  end
+
+  subgraph persist[" persist (planned) "]
+    SessionWriter["SessionWriter"]:::planned
+    SessionRow["SessionRow<br/>(Header | Message | Compaction)"]:::planned
+    SessionHeader["SessionHeader"]:::planned
+    CompactionEntry["CompactionEntry"]:::planned
+    LoadedSession["LoadedSession"]:::planned
+    SessionWriter -- append --> SessionRow
+    SessionRow --> SessionHeader
+    SessionRow -. wraps .-> Message
+    SessionRow --> CompactionEntry
+    LoadedSession -.-> SessionRow
+  end
+
+  subgraph compact[" compact (planned) "]
+    Compactor["Compactor<br/>trigger_ratio, keep_recent"]:::planned
+  end
+
+  subgraph usage[" usage "]
+    Micros["Micros<br/>(i64)"]
+    Cost["Cost<br/>input, output, cache_read,<br/>cache_write, thinking, total"]
+    Usage["Usage<br/>per-turn snapshot"]:::planned
+    ModelCostInfo["ModelCostInfo<br/>(Priced | Free | Unknown)"]:::planned
+    ModelPricing["ModelPricing"]:::planned
+    ModelUsage["ModelUsage<br/>aggregated row"]:::planned
+    CumulativeUsage["CumulativeUsage"]:::planned
+    PricingRegistry["PricingRegistry"]:::planned
+    Cost --> Micros
+    Usage --> Cost
+    ModelCostInfo --> ModelPricing
+    ModelPricing --> Micros
+    ModelUsage --> Cost
+    CumulativeUsage -. "by (AgentId, ModelKey)" .-> ModelUsage
+    PricingRegistry -. lookup .-> ModelCostInfo
+  end
+
+  subgraph skills[" skills (planned) "]
+    SkillsCatalog["SkillsCatalog"]:::planned
+    Skill["Skill"]:::planned
+    SkillsCatalog --> Skill
+  end
+
+  subgraph extensions[" extensions (deferred) "]
+    ExtensionHost["ExtensionHost"]:::planned
+    Extension[["Extension"]]:::planTrait
+    ExtensionContext["ExtensionContext"]:::planned
+    ExtensionHost --> Extension
+    Extension -. register .-> ExtensionContext
+  end
+
+  SessionEvent --> AgentId
+  ToolContext --> Host
+  ToolContext --> ProgressSink
+  ToolContext --> AgentId
+  Usage --> AgentId
+  Usage --> ModelKey
+  ModelUsage --> ModelKey
+
+  Session --> Frontend
+  Session --> Host
+  Session --> SystemPromptBuilder
+  Session --> ToolRegistry
+  Session --> SessionWriter
+  Session --> Compactor
+  Session --> CumulativeUsage
+  Session --> PermissionAllowlist
+  Session --> AgentId
+
+  SystemPromptBuilder --> Tool
+  SystemPromptBuilder --> Skill
+
+  class AgentId,ModelKey shared
+</div>
+</div>
+
+<p class="diagram-hint">
+  Scroll inside the diagram to zoom; drag to pan. Use the controls in the
+  bottom-left for fixed steps and reset.
+</p>
+
+<h2 id="where-to-start">Where to start reading</h2>
+
+<ul>
+  <li><strong><code>Frontend</code></strong> &mdash; what every UI adapter implements; it receives <code>SessionEvent</code>s and answers permission prompts. <code>Session</code> drives it.</li>
+  <li><strong><code>Host</code></strong> &mdash; what tools call instead of touching the OS; <code>LocalHost</code> is the default in-process impl.</li>
+  <li><strong><code>Session&lt;F, H&gt;</code></strong> &mdash; the orchestrator. Owns the system prompt, the tool registry, the persistence writer, the compactor, and the cumulative usage; its <code>prompt()</code> method is the single hot path.</li>
+  <li><strong><code>Tool</code> + <code>ToolContext</code></strong> &mdash; every tool runs against the bundled context so adding a future capability (e.g. timing budget) doesn't break the trait signature.</li>
+  <li><strong><code>AgentId</code></strong> &mdash; threaded through events, tool contexts, usage, and JSONL rows. V1 only ever creates <code>Root</code>; the field is there so sub-agents can land post-V1 without a breaking change.</li>
+</ul>
+
+<h2 id="phasing">Where the planned types land</h2>
+
+<table>
+  <thead><tr><th>Module</th><th>Built</th><th>Planned (milestone)</th></tr></thead>
+  <tbody>
+    <tr><td><code>identity</code></td><td>all</td><td>&mdash;</td></tr>
+    <tr><td><code>error</code></td><td>all</td><td>&mdash;</td></tr>
+    <tr><td><code>message</code></td><td>all</td><td>&mdash;</td></tr>
+    <tr><td><code>frontend</code></td><td>all</td><td>&mdash;</td></tr>
+    <tr><td><code>host</code></td><td>all (default impls)</td><td>&mdash;</td></tr>
+    <tr><td><code>tool_context</code></td><td>all</td><td>&mdash;</td></tr>
+    <tr><td><code>usage</code></td><td><code>Micros</code>, <code>Cost</code></td><td>rest of <a href="m1/usage-pricing/index.html">M1 phase 3</a></td></tr>
+    <tr><td><code>tools</code></td><td>&mdash;</td><td><a href="m2/index.html">M2</a> (<code>Tool</code> + first tool), <a href="m3/index.html">M3</a> (permission allowlist + scopes)</td></tr>
+    <tr><td><code>prompt</code></td><td>&mdash;</td><td><a href="m4/index.html">M4</a></td></tr>
+    <tr><td><code>skills</code></td><td>&mdash;</td><td><a href="m5/index.html">M5</a></td></tr>
+    <tr><td><code>session</code> + <code>persist</code></td><td>&mdash;</td><td><a href="m6/index.html">M6</a></td></tr>
+    <tr><td><code>compact</code></td><td>&mdash;</td><td><a href="m7/index.html">M7</a></td></tr>
+    <tr><td><code>extensions</code></td><td>&mdash;</td><td>deferred post-V1 (design only)</td></tr>
+  </tbody>
+</table>
+
+<div class="pager">
+  <a class="prev" href="core.html">
+    <span class="pager-label">&larr; Previous</span>
+    <span class="pager-title">arnes-core</span>
+  </a>
+  <a class="next" href="roadmap.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">Roadmap</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../build-your-own-harness/assets/nav.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'dark',
+    securityLevel: 'loose',
+    flowchart: { useMaxWidth: false, htmlLabels: true, padding: 12 },
+  });
+
+  await mermaid.run({ querySelector: '.mermaid' });
+
+  const svgEl = document.querySelector('.mermaid svg');
+  if (svgEl && window.svgPanZoom) {
+    svgEl.removeAttribute('style');
+    svgEl.setAttribute('width', '100%');
+    svgEl.setAttribute('height', '100%');
+    window.svgPanZoom(svgEl, {
+      zoomEnabled: true,
+      controlIconsEnabled: true,
+      fit: true,
+      center: true,
+      minZoom: 0.3,
+      maxZoom: 10,
+      contain: false,
+    });
+  }
+</script>
+</body>
+</html>
