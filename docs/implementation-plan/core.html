@@ -514,8 +514,12 @@ impl CumulativeUsage {
 
 <p>
   Bundled TOML asset at <code>arnes-core/data/pricing.toml</code>, merged
-  with user overrides at <code>~/.arnes/pricing.toml</code>. Patterns
-  let providers register whole families at once.
+  with user overrides at <code>~/.arnes/pricing.toml</code>. Two tables:
+  <code>[[model]]</code> for exact <code>(provider, model_id)</code>
+  entries and <code>[[provider_default]]</code> for the
+  unmatched-model-on-this-provider fallback (used by self-hosted
+  providers like Ollama where the harness can't enumerate model_ids
+  ahead of time).
 </p>
 
 <pre><code># arnes-core/data/pricing.toml  (bundled; user overrides win)
@@ -527,9 +531,8 @@ input_per_mtok       = 0.075
 output_per_mtok      = 0.30
 cache_read_per_mtok  = 0.01875
 
-[[model]]
+[[provider_default]]
 provider = "ollama"
-pattern  = "*"           # all ollama models
 cost     = "free"
 
 # Anything not listed defaults to Unknown.</code></pre>

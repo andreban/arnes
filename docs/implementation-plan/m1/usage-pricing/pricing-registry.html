@@ -56,9 +56,9 @@
   <p class="lead">
     <code>PricingRegistry</code> &mdash; in-memory lookup of
     <code>ModelCostInfo</code> by <code>(provider, model_id)</code>,
-    with wildcard patterns and a user-override-wins merge rule. The
+    with per-provider defaults and a user-override-wins merge rule. The
     actual TOML file loading lands in PR #6; this PR ships the registry
-    structure + lookup + the <code>compute_cost</code> helper.
+    structure, lookup, and <code>compute_cost</code> method.
   </p>
 </div>
 
@@ -74,7 +74,8 @@
 <h2 id="files">Files touched</h2>
 
 <ul>
-  <li><strong>new</strong>: <code>crates/arnes-core/src/pricing.rs</code> &mdash; <code>PricingRegistry</code>, lookup, <code>compute_cost</code> helper.</li>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/pricing.rs</code> &mdash; <code>PricingRegistry</code> with <code>lookup</code> and <code>compute_cost</code> methods.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/usage.rs</code> &mdash; add <code>TokenCounts</code> + <code>ModelPricing::cost_for</code> + private <code>scale_per_mtok</code> helper.</li>
   <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; module + re-exports.</li>
 </ul>
 
@@ -83,89 +84,125 @@
 <h2 id="discussion">Discussion</h2>
 
 <p>
-  <strong>1. Internal rule shape.</strong> Each pricing entry has a
-  provider, either an exact <code>model_id</code> or a wildcard pattern,
-  and a <code>ModelCostInfo</code>. The natural internal representation:
+  <strong>1. Why per-provider defaults instead of wildcards.</strong>
+  An earlier sketch of this PR had a <code>Matcher::Pattern("*")</code>
+  rule alongside <code>Matcher::Exact(model_id)</code> &mdash; the idea
+  being that the bundled Ollama rule could match any <code>model_id</code>
+  via <code>provider = "ollama", pattern = "*"</code>. We replaced that
+  with an explicit per-provider default for two reasons:
 </p>
 
-<pre><code>struct Rule {
-    provider: String,
-    matcher:  Matcher,
-    info:     ModelCostInfo,
-}
+<ul>
+  <li><strong>Wildcards have one safe use case and many dangerous ones.</strong> The only practical wildcard in this domain is "this whole provider is free" (Ollama, llama.cpp, LocalAI &mdash; the harness can't enumerate model_ids ahead of time). Wildcards on paid providers are actively harmful: a <code>("gemini", "2.5-*")</code> rule would mask the wide pricing spread between <code>flash</code> / <code>pro</code> / <code>nano</code> and silently produce wrong totals.</li>
+  <li><strong>Per-provider defaults say what they mean.</strong> "Ollama defaults to Free" is what we actually want to express. <code>pattern = "*"</code> invites the reader (or a future contributor) to imagine glob support exists when it doesn't, and to write rules that look reasonable but mis-price.</li>
+</ul>
 
-enum Matcher {
-    Exact(String),  // matches a single model_id
-    Pattern(String), // glob-style: only "*" for full wildcard at M1
+<p>
+  <strong>2. Internal structure.</strong> Two independently-keyed maps,
+  one for exact <code>(provider, model_id)</code> matches and one for
+  per-provider fallbacks:
+</p>
+
+<pre><code>struct PricingRegistry {
+    exact:            HashMap&lt;(String, String), ModelCostInfo&gt;,
+    provider_default: HashMap&lt;String, ModelCostInfo&gt;,
 }</code></pre>
 
 <p>
-  M1 only needs the trivial wildcard case (the bundled Ollama rule:
-  <code>provider = "ollama", pattern = "*"</code>, info = Free). We
-  ship a minimal <code>Matcher</code> that handles exact matches and
-  <code>"*"</code>; more sophisticated patterns (prefix wildcards like
-  <code>"gemini-2.5-*"</code>) can be added when a provider needs them.
+  The loader (PR #6) produces a single <code>Vec&lt;PricingEntry&gt;</code>
+  per source &mdash; an enum that distinguishes the two kinds of entry
+  at the schema boundary:
 </p>
 
+<pre><code>pub enum PricingEntry {
+    Exact { provider: String, model_id: String, info: ModelCostInfo },
+    ProviderDefault { provider: String, info: ModelCostInfo },
+}</code></pre>
+
 <p>
-  <strong>2. Lookup precedence.</strong> Exact matches always beat
-  patterns. Within those tiers, the order rules were inserted matters
-  only for the merge step (user overrides bundled), not for matching
-  semantics. Concretely:
+  <strong>3. Lookup precedence.</strong> Exact match wins; provider
+  default is the fallback; <code>Unknown</code> is the floor.
 </p>
 
 <ol>
-  <li>If any rule has <code>provider == key.provider</code> and <code>Matcher::Exact(model_id) == key.model_id</code>: return that rule's info.</li>
-  <li>Else if any rule has <code>provider == key.provider</code> and <code>Matcher::Pattern("*")</code>: return that rule's info.</li>
+  <li>If <code>exact[(key.provider, key.model_id)]</code> exists: return it.</li>
+  <li>Else if <code>provider_default[key.provider]</code> exists: return it.</li>
   <li>Else: return <code>ModelCostInfo::Unknown</code>.</li>
 </ol>
 
 <p>
-  <strong>3. Bundled-vs-user merge.</strong> User overrides win. The
-  construction API takes two rule sets:
-</p>
-
-<pre><code>pub fn from_rules(bundled: Vec&lt;Rule&gt;, user: Vec&lt;Rule&gt;) -&gt; Self;</code></pre>
-
-<p>
-  Internal merge: walk <code>user</code> first, then <code>bundled</code>.
-  Inserting a rule for <code>(provider, exact-id)</code> displaces any
-  prior rule for the same <code>(provider, exact-id)</code>. Same for
-  <code>(provider, "*")</code> patterns. User entries written first
-  means bundled entries can't displace them.
+  This drops the <code>Matcher</code> enum, the matcher comparison
+  helper, and the two-pass scan from the earlier design. "Exact beats
+  wildcard" is no longer a contract to enforce in code &mdash; it's a
+  natural property of looking in <code>exact</code> before
+  <code>provider_default</code>.
 </p>
 
 <p>
-  PR #6's loader produces the two <code>Vec&lt;Rule&gt;</code>s; this PR
-  ships the registry that consumes them and accepts test-only construction
-  with rules built directly.
+  <strong>4. Bundled-vs-user merge.</strong> User overrides win. The
+  construction API takes two entry sets:
+</p>
+
+<pre><code>pub fn from_entries(bundled: Vec&lt;PricingEntry&gt;, user: Vec&lt;PricingEntry&gt;) -&gt; Self;</code></pre>
+
+<p>
+  Internal merge: insert <code>bundled</code> entries into the two maps,
+  then insert <code>user</code> entries on top &mdash; <code>HashMap::insert</code>
+  naturally overwrites prior values for the same key. No order-sensitive
+  scan, no "did I already see this rule" check.
 </p>
 
 <p>
-  <strong>4. <code>compute_cost</code> helper.</strong> Lives next to
-  the registry because it's the bridge from raw tokens + pricing to
-  <code>Option&lt;Cost&gt;</code>. The math is straightforward integer
-  arithmetic: per token kind, <code>(tokens * micros_per_mtok) / 1_000_000</code>.
-  For optional rates (<code>cache_read_per_mtok</code> etc.), fall back
-  to the matching base rate (<code>input_per_mtok</code> for cache,
-  <code>output_per_mtok</code> for thinking). Mapping the three-state
-  <code>ModelCostInfo</code>:
+  PR #6's loader produces the two <code>Vec&lt;PricingEntry&gt;</code>s;
+  this PR ships the registry that consumes them and accepts test-only
+  construction with entries built directly.
+</p>
+
+<p>
+  <strong>5. <code>compute_cost</code> on the registry; <code>cost_for</code>
+  on <code>ModelPricing</code>.</strong> The work splits in two, each
+  method living on the type that owns its data:
 </p>
 
 <ul>
-  <li><code>Priced(p)</code> &rarr; <code>Some(cost)</code> with values computed from <code>p</code>.</li>
-  <li><code>Free</code>     &rarr; <code>Some(Cost::default())</code>.</li>
-  <li><code>Unknown</code>  &rarr; <code>None</code>.</li>
+  <li><code>PricingRegistry::compute_cost(&amp;self, key, tokens) -&gt; Option&lt;Cost&gt;</code> does lookup + three-state dispatch.</li>
+  <li><code>ModelPricing::cost_for(&amp;self, tokens) -&gt; Cost</code> does the per-token-kind integer arithmetic.</li>
 </ul>
 
 <p>
-  Callers (phase 4's <code>Session</code> at turn end) do
-  <code>let cost = compute_cost(&amp;registry.lookup(&amp;model), tokens);</code>
-  &mdash; one call.
+  <code>compute_cost</code> is a thin wrapper: <code>None</code> for
+  Unknown, <code>Some(Cost::default())</code> for Free,
+  <code>Some(pricing.cost_for(tokens))</code> for Priced. Caller shape
+  is one call: <code>let cost = registry.compute_cost(&amp;model, tokens);</code>.
 </p>
 
 <p>
-  <strong>5. Where is the registry constructed?</strong> Not in M1's
+  The arithmetic is straightforward integer math: per token kind,
+  <code>(tokens * micros_per_mtok) / 1_000_000</code>, with an
+  <code>i128</code> intermediate to avoid overflow. For optional rates
+  (<code>cache_read_per_mtok</code> etc.), fall back to the matching
+  base rate (<code>input_per_mtok</code> for cache,
+  <code>output_per_mtok</code> for thinking).
+</p>
+
+<p>
+  <strong>Why not <code>impl Mul&lt;u64&gt; for Micros</code>?</strong>
+  Because the operation isn't multiplication &mdash; it's "rate &times;
+  quantity &divide; 1,000,000" (rates are per-million-tokens).
+  <code>Micros(75) * 1_000_000</code> could reasonably mean either "75
+  micros, a million times &rarr; $75" or "75&nbsp;&micro;/Mtok &times;
+  1M tokens &rarr; $0.000075." Hiding that gap behind <code>*</code> is
+  the operator-overloading anti-pattern. <code>Micros</code> also
+  already implements <code>Add</code> for cost aggregation; layering
+  <code>Mul</code> on top would conflate two different concepts (cost
+  vs. rate) on the same type. A method on the rate-owning type
+  (<code>ModelPricing::cost_for</code>) names the operation, keeps the
+  <code>/ 1_000_000</code> in one place, and avoids needing a separate
+  wrapper type (<code>MicrosPerMtok</code>) just to disambiguate.
+</p>
+
+<p>
+  <strong>6. Where is the registry constructed?</strong> Not in M1's
   ToolContext or per-tool scope; it lives session-wide. Phase 4 builds
   one <code>PricingRegistry</code> at <code>Session::new</code> and
   shares it for the session's lifetime. M1's registry struct doesn't
@@ -177,133 +214,147 @@ enum Matcher {
 
 <h2 id="code">Code skeleton</h2>
 
-<pre><code>// Copyright 2026 Andre Cipriani Bandarra
-// SPDX-License-Identifier: Apache-2.0
+<p><strong>Appended to <code>crates/arnes-core/src/usage.rs</code></strong>
+(near <code>ModelPricing</code>):</p>
 
-//! Pricing registry: lookup of `ModelCostInfo` by `(provider, model_id)`.
-
-use crate::{Cost, Micros, ModelCostInfo, ModelKey, ModelPricing};
-
-#[derive(Clone, Debug)]
-pub struct Rule {
-    pub provider: String,
-    pub matcher:  Matcher,
-    pub info:     ModelCostInfo,
-}
-
-#[derive(Clone, Debug)]
-pub enum Matcher {
-    Exact(String),
-    Pattern(String),  // "*" only at M1
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct PricingRegistry {
-    rules: Vec&lt;Rule&gt;,
-}
-
-impl PricingRegistry {
-    /// Build a registry from bundled and user-override rule sets.
-    /// User entries take precedence over bundled entries for the same
-    /// `(provider, matcher)`.
-    pub fn from_rules(bundled: Vec&lt;Rule&gt;, user: Vec&lt;Rule&gt;) -&gt; Self {
-        let mut rules = Vec::with_capacity(user.len() + bundled.len());
-        rules.extend(user);
-        for b in bundled {
-            let already_present = rules.iter().any(|r| {
-                r.provider == b.provider &amp;&amp; same_matcher(&amp;r.matcher, &amp;b.matcher)
-            });
-            if !already_present {
-                rules.push(b);
-            }
-        }
-        PricingRegistry { rules }
-    }
-
-    /// Look up the cost info for a `ModelKey`.
-    /// Exact matches beat patterns; unmatched models return `Unknown`.
-    pub fn lookup(&amp;self, key: &amp;ModelKey) -&gt; ModelCostInfo {
-        for r in &amp;self.rules {
-            if r.provider == key.provider {
-                if let Matcher::Exact(id) = &amp;r.matcher {
-                    if id == &amp;key.model_id {
-                        return r.info.clone();
-                    }
-                }
-            }
-        }
-        for r in &amp;self.rules {
-            if r.provider == key.provider {
-                if let Matcher::Pattern(p) = &amp;r.matcher {
-                    if p == "*" {
-                        return r.info.clone();
-                    }
-                }
-            }
-        }
-        ModelCostInfo::Unknown
-    }
-}
-
-fn same_matcher(a: &amp;Matcher, b: &amp;Matcher) -&gt; bool {
-    match (a, b) {
-        (Matcher::Exact(x), Matcher::Exact(y))     =&gt; x == y,
-        (Matcher::Pattern(x), Matcher::Pattern(y)) =&gt; x == y,
-        _ =&gt; false,
-    }
-}
-
-/// Compute the cost for a turn given the model's `ModelCostInfo` and raw
-/// token counts. Returns `None` for `Unknown`.
-pub fn compute_cost(info: &amp;ModelCostInfo, tokens: &amp;TokenCounts) -&gt; Option&lt;Cost&gt; {
-    match info {
-        ModelCostInfo::Unknown =&gt; None,
-        ModelCostInfo::Free    =&gt; Some(Cost::default()),
-        ModelCostInfo::Priced(p) =&gt; Some(price(p, tokens)),
-    }
-}
-
-fn price(p: &amp;ModelPricing, t: &amp;TokenCounts) -&gt; Cost {
-    let input       = mul(t.input,       p.input_per_mtok);
-    let output      = mul(t.output,      p.output_per_mtok);
-    let cache_read  = mul(t.cache_read,  p.cache_read_per_mtok.unwrap_or(p.input_per_mtok));
-    let cache_write = mul(t.cache_write, p.cache_write_per_mtok.unwrap_or(p.input_per_mtok));
-    let thinking    = mul(t.thinking,    p.thinking_per_mtok.unwrap_or(p.output_per_mtok));
-    let total       = input + output + cache_read + cache_write + thinking;
-    Cost { input, output, cache_read, cache_write, thinking, total }
-}
-
-fn mul(tokens: u64, per_mtok: Micros) -&gt; Micros {
-    // Integer math: (tokens * micros_per_mtok) / 1_000_000.
-    // Use i128 intermediate to avoid overflow at large token counts.
-    let product = (tokens as i128) * (per_mtok.0 as i128);
-    Micros((product / 1_000_000) as i64)
-}
-
+<pre><code>/// Per-token-kind counts a turn consumed.
+#[derive(Clone, Copy, Debug, Default)]
 pub struct TokenCounts {
     pub input:       u64,
     pub output:      u64,
     pub cache_read:  u64,
     pub cache_write: u64,
     pub thinking:    u64,
+}
+
+impl ModelPricing {
+    /// Compute the cost of a turn's token counts under this pricing.
+    /// Optional cache / thinking rates fall back to the matching base
+    /// rate (`input_per_mtok` for cache, `output_per_mtok` for thinking).
+    pub fn cost_for(&amp;self, tokens: &amp;TokenCounts) -&gt; Cost {
+        let input       = scale_per_mtok(tokens.input,       self.input_per_mtok);
+        let output      = scale_per_mtok(tokens.output,      self.output_per_mtok);
+        let cache_read  = scale_per_mtok(
+            tokens.cache_read,
+            self.cache_read_per_mtok.unwrap_or(self.input_per_mtok),
+        );
+        let cache_write = scale_per_mtok(
+            tokens.cache_write,
+            self.cache_write_per_mtok.unwrap_or(self.input_per_mtok),
+        );
+        let thinking    = scale_per_mtok(
+            tokens.thinking,
+            self.thinking_per_mtok.unwrap_or(self.output_per_mtok),
+        );
+        let total = input + output + cache_read + cache_write + thinking;
+        Cost { input, output, cache_read, cache_write, thinking, total }
+    }
+}
+
+// (tokens * micros_per_mtok) / 1_000_000, with i128 intermediate to
+// avoid overflow at large token counts.
+fn scale_per_mtok(tokens: u64, per_mtok: Micros) -&gt; Micros {
+    let product = (tokens as i128) * (per_mtok.0 as i128);
+    Micros((product / 1_000_000) as i64)
+}</code></pre>
+
+<p><strong>New file <code>crates/arnes-core/src/pricing.rs</code></strong>:</p>
+
+<pre><code>// Copyright 2026 Andre Cipriani Bandarra
+// SPDX-License-Identifier: Apache-2.0
+
+//! Pricing registry: lookup of `ModelCostInfo` by `(provider, model_id)`.
+
+use std::collections::HashMap;
+
+use crate::{Cost, ModelCostInfo, ModelKey, TokenCounts};
+
+/// One row of pricing data, as produced by the loader (PR #6) or built
+/// directly in tests.
+#[derive(Clone, Debug)]
+pub enum PricingEntry {
+    Exact {
+        provider: String,
+        model_id: String,
+        info:     ModelCostInfo,
+    },
+    ProviderDefault {
+        provider: String,
+        info:     ModelCostInfo,
+    },
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PricingRegistry {
+    exact:            HashMap&lt;(String, String), ModelCostInfo&gt;,
+    provider_default: HashMap&lt;String, ModelCostInfo&gt;,
+}
+
+impl PricingRegistry {
+    /// Build a registry from bundled and user-override entries.
+    /// User entries overwrite bundled entries for the same key.
+    pub fn from_entries(bundled: Vec&lt;PricingEntry&gt;, user: Vec&lt;PricingEntry&gt;) -&gt; Self {
+        let mut reg = PricingRegistry::default();
+        reg.insert_all(bundled);
+        reg.insert_all(user);   // user wins on conflict
+        reg
+    }
+
+    fn insert_all(&amp;mut self, entries: Vec&lt;PricingEntry&gt;) {
+        for e in entries {
+            match e {
+                PricingEntry::Exact { provider, model_id, info } =&gt; {
+                    self.exact.insert((provider, model_id), info);
+                }
+                PricingEntry::ProviderDefault { provider, info } =&gt; {
+                    self.provider_default.insert(provider, info);
+                }
+            }
+        }
+    }
+
+    /// Look up the cost info for a `ModelKey`.
+    /// Exact match wins; provider default is the fallback; otherwise `Unknown`.
+    pub fn lookup(&amp;self, key: &amp;ModelKey) -&gt; ModelCostInfo {
+        if let Some(info) = self.exact.get(&amp;(key.provider.clone(), key.model_id.clone())) {
+            return info.clone();
+        }
+        if let Some(info) = self.provider_default.get(&amp;key.provider) {
+            return info.clone();
+        }
+        ModelCostInfo::Unknown
+    }
+
+    /// Compute the cost for a turn given the model and its raw token
+    /// counts. Returns `None` when the model's pricing is `Unknown`.
+    pub fn compute_cost(&amp;self, key: &amp;ModelKey, tokens: &amp;TokenCounts) -&gt; Option&lt;Cost&gt; {
+        match self.lookup(key) {
+            ModelCostInfo::Unknown   =&gt; None,
+            ModelCostInfo::Free      =&gt; Some(Cost::default()),
+            ModelCostInfo::Priced(p) =&gt; Some(p.cost_for(tokens)),
+        }
+    }
 }</code></pre>
 
 <h2 id="lib-rs">lib.rs additions</h2>
 
 <pre><code>mod pricing;
 
-pub use pricing::{Matcher, PricingRegistry, Rule, TokenCounts, compute_cost};</code></pre>
+pub use pricing::{PricingEntry, PricingRegistry};
+// Extend the existing `usage` re-export line to include TokenCounts:
+pub use usage::{Cost, CumulativeUsage, Micros, ModelCostInfo, ModelPricing, ModelUsage, TokenCounts, Usage};</code></pre>
 
 <h2 id="tests">Tests</h2>
 
 <ul>
-  <li><strong>Exact match</strong>: rule for <code>("gemini", "gemini-2.5-flash")</code> matches that exact key; doesn't match <code>("gemini", "gemini-2.5-pro")</code>.</li>
-  <li><strong>Wildcard match</strong>: rule for <code>("ollama", "*", Free)</code> matches every <code>ollama</code> model_id.</li>
-  <li><strong>Exact beats wildcard</strong>: if both a <code>("provider", "exact-id")</code> and a <code>("provider", "*")</code> rule exist, the exact one wins.</li>
-  <li><strong>Unmatched returns Unknown</strong>: looking up a provider/model with no rules returns <code>ModelCostInfo::Unknown</code>.</li>
-  <li><strong>User overrides bundled</strong>: bundled rule says Free; user override for the same exact key says Priced; lookup returns Priced.</li>
-  <li><strong><code>compute_cost</code> three-state</strong>: Priced returns <code>Some</code> with computed amounts; Free returns <code>Some(Cost::default())</code>; Unknown returns <code>None</code>.</li>
-  <li><strong><code>compute_cost</code> optional fallback</strong>: a <code>ModelPricing</code> with <code>cache_read_per_mtok = None</code> falls back to <code>input_per_mtok</code>.</li>
+  <li><strong>Exact match</strong>: an <code>Exact</code> entry for <code>("gemini", "gemini-2.5-flash")</code> matches that exact key; doesn't match <code>("gemini", "gemini-2.5-pro")</code>.</li>
+  <li><strong>Provider default match</strong>: a <code>ProviderDefault</code> entry for <code>("ollama", Free)</code> matches every <code>ollama</code> model_id with no exact entry.</li>
+  <li><strong>Exact beats provider default</strong>: if both an <code>Exact</code> and a <code>ProviderDefault</code> entry exist for the same provider, the exact one wins.</li>
+  <li><strong>Unmatched returns Unknown</strong>: looking up a provider/model with no entries returns <code>ModelCostInfo::Unknown</code>.</li>
+  <li><strong>User overrides bundled (exact)</strong>: bundled exact entry says Free; user override for the same exact key says Priced; lookup returns Priced.</li>
+  <li><strong>User overrides bundled (provider default)</strong>: bundled <code>("ollama", Free)</code>; user override <code>("ollama", Unknown)</code>; lookup of any ollama model returns Unknown.</li>
+  <li><strong><code>compute_cost</code> three-state</strong>: a model resolving to Priced returns <code>Some</code> with computed amounts; Free returns <code>Some(Cost::default())</code>; Unknown returns <code>None</code>.</li>
+  <li><strong><code>compute_cost</code> optional fallback</strong>: a Priced entry with <code>cache_read_per_mtok = None</code> bills cache_read tokens at <code>input_per_mtok</code>.</li>
   <li><strong>Arithmetic</strong>: 75 micros/Mtok &times; 1,000,000 tokens = Micros(75) (a.k.a. $0.000075).</li>
 </ul>
 
