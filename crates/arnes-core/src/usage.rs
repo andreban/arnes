@@ -3,6 +3,7 @@
 
 //! Money types: integer micros + per-token-kind cost breakdown.
 
+use std::collections::HashMap;
 use std::ops::{Add, AddAssign};
 
 use crate::{AgentId, ModelKey};
@@ -103,6 +104,65 @@ pub struct ModelUsage {
     pub turns: u32,
     pub known_cost: Cost,
     pub turns_with_unknown_cost: u32,
+}
+
+/// All token + cost totals for one session, bucketed by (agent, model).
+#[derive(Clone, Debug, Default)]
+pub struct CumulativeUsage {
+    by_agent_and_model: HashMap<(AgentId, ModelKey), ModelUsage>,
+    pub turns_total: u32,
+}
+
+impl CumulativeUsage {
+    /// Fold one turn's `Usage` into the matching bucket.
+    pub fn record(&mut self, u: Usage) {
+        let key = (u.agent_id.clone(), u.model.clone());
+        let bucket = self
+            .by_agent_and_model
+            .entry(key)
+            .or_insert_with(|| ModelUsage {
+                model: u.model.clone(),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                thinking_tokens: 0,
+                turns: 0,
+                known_cost: Cost::default(),
+                turns_with_unknown_cost: 0,
+            });
+
+        bucket.input_tokens += u.input_tokens;
+        bucket.output_tokens += u.output_tokens;
+        bucket.cache_read_tokens += u.cache_read_tokens;
+        bucket.cache_write_tokens += u.cache_write_tokens;
+        bucket.thinking_tokens += u.thinking_tokens;
+        bucket.turns += 1;
+
+        match u.cost {
+            Some(c) => bucket.known_cost += c,
+            None => bucket.turns_with_unknown_cost += 1,
+        }
+
+        self.turns_total += 1;
+    }
+
+    /// Sum of `known_cost` across every bucket.
+    pub fn total_known_cost(&self) -> Cost {
+        let mut total = Cost::default();
+        for bucket in self.by_agent_and_model.values() {
+            total += bucket.known_cost;
+        }
+        total
+    }
+
+    /// Total count of turns whose cost was `None`.
+    pub fn total_turns_with_unknown_cost(&self) -> u32 {
+        self.by_agent_and_model
+            .values()
+            .map(|b| b.turns_with_unknown_cost)
+            .sum()
+    }
 }
 
 #[cfg(test)]
@@ -239,5 +299,83 @@ mod tests {
             cost: None,
         };
         assert!(u.cost.is_none());
+    }
+
+    fn sample_usage(provider: &str, model_id: &str, cost: Option<Cost>) -> Usage {
+        Usage {
+            agent_id: AgentId::Root,
+            model: ModelKey {
+                provider: provider.into(),
+                model_id: model_id.into(),
+            },
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_tokens: 20,
+            cache_write_tokens: 10,
+            thinking_tokens: 5,
+            cost,
+        }
+    }
+
+    fn cost_of(input: i64, output: i64) -> Cost {
+        Cost {
+            input: Micros(input),
+            output: Micros(output),
+            cache_read: Micros::ZERO,
+            cache_write: Micros::ZERO,
+            thinking: Micros::ZERO,
+            total: Micros(input + output),
+        }
+    }
+
+    #[test]
+    fn cumulative_usage_default_is_empty() {
+        let cu = CumulativeUsage::default();
+        assert_eq!(cu.turns_total, 0);
+        assert_eq!(cu.total_known_cost().total, Micros::ZERO);
+        assert_eq!(cu.total_turns_with_unknown_cost(), 0);
+    }
+
+    #[test]
+    fn cumulative_usage_records_one_bucket() {
+        let mut cu = CumulativeUsage::default();
+        cu.record(sample_usage("gemini", "flash", Some(cost_of(75, 150))));
+        assert_eq!(cu.turns_total, 1);
+        assert_eq!(cu.total_known_cost().total, Micros(225));
+        assert_eq!(cu.total_turns_with_unknown_cost(), 0);
+    }
+
+    #[test]
+    fn cumulative_usage_buckets_by_agent_and_model() {
+        let mut cu = CumulativeUsage::default();
+        cu.record(sample_usage("gemini", "flash", Some(cost_of(75, 150))));
+        cu.record(sample_usage("gemini", "pro", Some(cost_of(300, 600))));
+        assert_eq!(cu.by_agent_and_model.len(), 2);
+        assert_eq!(cu.turns_total, 2);
+        assert_eq!(cu.total_known_cost().total, Micros(75 + 150 + 300 + 600));
+    }
+
+    #[test]
+    fn cumulative_usage_separates_unknown_from_known() {
+        let mut cu = CumulativeUsage::default();
+        cu.record(sample_usage("gemini", "flash", Some(cost_of(75, 150))));
+        cu.record(sample_usage("mystery", "model", None));
+        assert_eq!(cu.turns_total, 2);
+        assert_eq!(cu.total_known_cost().total, Micros(225));
+        assert_eq!(cu.total_turns_with_unknown_cost(), 1);
+    }
+
+    #[test]
+    fn bucket_turn_count_invariant() {
+        let mut cu = CumulativeUsage::default();
+        cu.record(sample_usage("gemini", "flash", Some(cost_of(75, 150))));
+        cu.record(sample_usage("gemini", "flash", None));
+        cu.record(sample_usage("gemini", "flash", Some(cost_of(10, 20))));
+
+        let bucket = cu.by_agent_and_model.values().next().expect("one bucket");
+        let known = bucket.turns - bucket.turns_with_unknown_cost;
+        assert_eq!(bucket.turns, known + bucket.turns_with_unknown_cost);
+        assert_eq!(bucket.turns, 3);
+        assert_eq!(bucket.turns_with_unknown_cost, 1);
     }
 }

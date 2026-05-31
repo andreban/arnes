@@ -18,4 +18,4 @@ pub use host::{DirEntry, Host, LocalHost, TerminalHandle, TerminalSnapshot, Term
 pub use identity::{AgentId, ModelKey};
 pub use message::{ContentBlock, Message};
 pub use tool_context::{ProgressSink, ProgressUpdate, ToolContext};
-pub use usage::{Cost, Micros, ModelCostInfo, ModelPricing, ModelUsage, Usage};
+pub use usage::{Cost, CumulativeUsage, Micros, ModelCostInfo, ModelPricing, ModelUsage, Usage};
