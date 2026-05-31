@@ -99,7 +99,7 @@
 </p>
 
 <ul>
-  <li>Add each <code>*_tokens</code> count to the bucket's matching field.</li>
+  <li><code>bucket.tokens += usage.tokens</code> (via <code>TokenCounts</code>'s <code>AddAssign</code>, added in <a href="pricing-registry.html">PR #5</a>).</li>
   <li>Increment <code>turns</code> by 1.</li>
   <li>Increment <code>turns_total</code> on the outer struct by 1.</li>
   <li>If <code>usage.cost</code> is <code>Some(c)</code>: <code>bucket.known_cost += c</code>.</li>
@@ -145,6 +145,15 @@
 
 <h2 id="code">Code skeleton</h2>
 
+<div class="note">
+  <strong>Updated in <a href="pricing-registry.html">PR #5</a>.</strong> The
+  per-kind token additions shown here originally landed as five separate
+  <code>bucket.*_tokens += u.*_tokens</code> lines. PR #5 folded
+  <code>Usage</code>/<code>ModelUsage</code>'s token fields into a single
+  <code>tokens: TokenCounts</code> and added <code>AddAssign</code> to
+  <code>TokenCounts</code>, so the aggregation collapses to one line.
+</div>
+
 <pre><code>// Appended to crates/arnes-core/src/usage.rs:
 
 use std::collections::HashMap;
@@ -165,22 +174,14 @@ impl CumulativeUsage {
             .entry(key)
             .or_insert_with(|| ModelUsage {
                 model: u.model.clone(),
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cache_write_tokens: 0,
-                thinking_tokens: 0,
+                tokens: TokenCounts::default(),
                 turns: 0,
                 known_cost: Cost::default(),
                 turns_with_unknown_cost: 0,
             });
 
-        bucket.input_tokens       += u.input_tokens;
-        bucket.output_tokens      += u.output_tokens;
-        bucket.cache_read_tokens  += u.cache_read_tokens;
-        bucket.cache_write_tokens += u.cache_write_tokens;
-        bucket.thinking_tokens    += u.thinking_tokens;
-        bucket.turns              += 1;
+        bucket.tokens += u.tokens;
+        bucket.turns += 1;
 
         match u.cost {
             Some(c) =&gt; bucket.known_cost += c,

@@ -226,6 +226,7 @@ graph TD
   subgraph usage[" usage "]
     Micros["Micros<br/>(i64)"]
     Cost["Cost<br/>input, output, cache_read,<br/>cache_write, thinking, total"]
+    TokenCounts["TokenCounts<br/>input, output, cache_read,<br/>cache_write, thinking"]
     Usage["Usage<br/>per-turn snapshot"]:::planned
     ModelCostInfo["ModelCostInfo<br/>(Priced | Free | Unknown)"]:::planned
     ModelPricing["ModelPricing"]:::planned
@@ -233,9 +234,11 @@ graph TD
     CumulativeUsage["CumulativeUsage"]:::planned
     PricingRegistry["PricingRegistry"]:::planned
     Cost --> Micros
+    Usage --> TokenCounts
     Usage --> Cost
     ModelCostInfo --> ModelPricing
     ModelPricing --> Micros
+    ModelUsage --> TokenCounts
     ModelUsage --> Cost
     CumulativeUsage -. "by (AgentId, ModelKey)" .-> ModelUsage
     PricingRegistry -. lookup .-> ModelCostInfo
