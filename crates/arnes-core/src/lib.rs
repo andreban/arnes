@@ -7,6 +7,7 @@ mod host;
 mod identity;
 mod message;
 mod tool_context;
+mod usage;
 
 pub use error::{CoreError, Result};
 pub use frontend::{
@@ -17,3 +18,4 @@ pub use host::{DirEntry, Host, LocalHost, TerminalHandle, TerminalSnapshot, Term
 pub use identity::{AgentId, ModelKey};
 pub use message::{ContentBlock, Message};
 pub use tool_context::{ProgressSink, ProgressUpdate, ToolContext};
+pub use usage::{Cost, Micros};
