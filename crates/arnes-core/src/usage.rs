@@ -5,6 +5,8 @@
 
 use std::ops::{Add, AddAssign};
 
+use crate::{AgentId, ModelKey};
+
 /// A money amount in millionths of a dollar.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct Micros(pub i64);
@@ -73,6 +75,34 @@ pub enum ModelCostInfo {
     Priced(ModelPricing),
     Free,
     Unknown,
+}
+
+/// What a single turn cost.
+#[derive(Clone, Debug)]
+pub struct Usage {
+    pub agent_id: AgentId,
+    pub model: ModelKey,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub thinking_tokens: u64,
+    /// `None` when the model's pricing is `ModelCostInfo::Unknown`.
+    pub cost: Option<Cost>,
+}
+
+/// One bucket's aggregated state in `CumulativeUsage`.
+#[derive(Clone, Debug)]
+pub struct ModelUsage {
+    pub model: ModelKey,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub thinking_tokens: u64,
+    pub turns: u32,
+    pub known_cost: Cost,
+    pub turns_with_unknown_cost: u32,
 }
 
 #[cfg(test)]
@@ -160,5 +190,54 @@ mod tests {
         assert_eq!(sum.cache_write, Micros(44));
         assert_eq!(sum.thinking, Micros(55));
         assert_eq!(sum.total, Micros(165));
+    }
+
+    #[test]
+    fn usage_with_priced_cost_round_trip() {
+        let u = Usage {
+            agent_id: AgentId::Root,
+            model: ModelKey {
+                provider: "gemini".into(),
+                model_id: "gemini-2.5-flash".into(),
+            },
+            input_tokens: 1_000,
+            output_tokens: 500,
+            cache_read_tokens: 200,
+            cache_write_tokens: 100,
+            thinking_tokens: 50,
+            cost: Some(Cost {
+                input: Micros(75),
+                output: Micros(150),
+                cache_read: Micros(4),
+                cache_write: Micros(9),
+                thinking: Micros(22),
+                total: Micros(260),
+            }),
+        };
+        assert_eq!(u.agent_id, AgentId::Root);
+        assert_eq!(u.model.model_id, "gemini-2.5-flash");
+        assert_eq!(u.input_tokens, 1_000);
+        let Some(cost) = u.cost else {
+            panic!("expected Some(cost)");
+        };
+        assert_eq!(cost.total, Micros(260));
+    }
+
+    #[test]
+    fn usage_with_unknown_cost_is_none() {
+        let u = Usage {
+            agent_id: AgentId::Root,
+            model: ModelKey {
+                provider: "unknown-provider".into(),
+                model_id: "mystery-model".into(),
+            },
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            thinking_tokens: 0,
+            cost: None,
+        };
+        assert!(u.cost.is_none());
     }
 }
