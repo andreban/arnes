@@ -477,7 +477,7 @@
   <thead><tr><th>Workstream</th><th>Notes</th></tr></thead>
   <tbody>
     <tr><td><strong>Additional providers</strong></td><td>Contribute Anthropic and OpenAI adapters to agent-rig (or maintain local wrappers if upstream cannot accept them yet). Any time after M1.</td></tr>
-    <tr><td><strong>Token usage &amp; cost tracking</strong></td><td>Lands incrementally: types &amp; pricing registry at M1, TUI status line at M3, JSONL row at M6, compaction-trigger upgrade at M7, HTTP endpoint at M8, GUI panel at M9. Pricing data is the ongoing maintenance concern &mdash; bundled defaults will go stale; user overrides via <code>~/.arnes/pricing.toml</code>; for unrecognized models the system surfaces <em>"unknown"</em> rather than zero.</td></tr>
+    <tr><td><strong>Token usage &amp; cost tracking</strong></td><td>Lands incrementally: types &amp; pricing registry at M1, TUI status line at M3, JSONL row at M6, compaction-trigger upgrade at M7, HTTP endpoint at M8, GUI panel at M9. Pricing data is purely user-supplied via <code>~/.arnes/pricing.json</code> &mdash; we don't bundle defaults that would go stale. For unrecognized or unconfigured models the system surfaces <em>"unknown"</em> rather than zero.</td></tr>
     <tr><td><strong>Documentation</strong></td><td>User-facing docs &mdash; man pages for the CLI, READMEs per crate. The book and this plan are reference; users want usage docs.</td></tr>
     <tr><td><strong>Telemetry hooks</strong></td><td>Internal event taps the operator can opt into. Matters most after M8 when arnes runs as a long-lived server.</td></tr>
   </tbody>
