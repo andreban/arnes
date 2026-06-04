@@ -102,6 +102,8 @@
     ToolCallFinished { name: String, result: ToolCallResult },
     ThinkingDelta(String),
     TextDelta(String),
+    Usage(TokenUsage),     // per model call (N per turn if tools fire N times)
+    Cancelled,             // terminal; best-effort on cancellation
     Error(crate::error::Error),
 }
 
@@ -122,8 +124,8 @@ pub struct RunEvent {
 <p>Two things agent-rig does <em>not</em> provide that <code>Session</code> has to inject:</p>
 
 <ul>
-  <li><strong><code>TurnStart</code> / <code>TurnEnd</code> boundaries.</strong> agent-rig's stream represents one turn (one <code>runner.run()</code> call); stream completion is turn completion, with no explicit boundary event. <code>Session</code> emits <code>TurnStart</code> before consuming the stream and <code>TurnEnd</code> when it ends.</li>
-  <li><strong><code>StopReason</code>.</strong> agent-rig's stream ends without an explicit stop reason. <code>Session</code> derives it: clean completion &rarr; <code>EndTurn</code>; cancellation token fired &rarr; <code>Cancelled</code>. <code>MaxTokens</code> would need an agent-rig upstream contribution and lands when that's possible &mdash; not M1.</li>
+  <li><strong><code>TurnStart</code> / <code>TurnEnd</code> boundaries.</strong> agent-rig's stream represents one turn (one <code>runner.run()</code> call); stream completion is turn completion, with no explicit boundary event. <code>Session</code> emits <code>TurnStart</code> before consuming the stream and <code>TurnEnd</code> when it ends. (Per-call <code>AgentEvent::Usage(TokenUsage)</code> events arrive mid-stream and are buffered into the turn's <code>TurnUsage</code>; phase 4's session-prompt PR is where that fork lives.)</li>
+  <li><strong><code>StopReason</code>.</strong> agent-rig emits a terminal <code>AgentEvent::Cancelled</code> when a run is cancelled (via token fire or stream-drop); <code>Session</code> maps that directly to <code>Cancelled</code>, and clean stream completion stays at <code>EndTurn</code>. <code>MaxTokens</code> would need an agent-rig upstream contribution and lands when that's possible &mdash; not M1.</li>
 </ul>
 
 <p>
