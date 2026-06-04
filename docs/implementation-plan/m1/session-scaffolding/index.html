@@ -137,14 +137,21 @@
   <strong>3. Cancellation via <code>tokio_util::CancellationToken</code>.</strong>
   Already in tree from phase 2 (in <code>ToolContext</code>).
   <code>Session</code> owns a <code>CancellationToken</code> field;
-  <code>Session::cancel()</code> calls <code>token.cancel()</code>;
-  agent-rig's <code>AgentRunner</code> accepts the same token and stops
-  pulling from the provider when it fires. At M1 the cancel surface is
+  the translator passes a clone into agent-rig via
+  <code>AgentRunner::run_with_cancellation(agent, thread, token)</code>;
+  agent-rig internally takes <code>token.child_token()</code>, so its
+  own drop-the-stream cleanup cancels the run without firing arnes'
+  outer token. When arnes' token fires (via the
+  <code>cancel_handle()</code> path), the cancellation propagates to
+  the child and agent-rig emits a terminal
+  <code>AgentEvent::Cancelled</code> &mdash; the translator maps that
+  to <code>StopReason::Cancelled</code>. At M1 the cancel surface is
   cooperative &mdash; we do not race a select! against the token in
-  the translator yet, because the translator's awaits are on agent-rig's
-  stream, and agent-rig is what reads the token. M2+ may add a direct
-  select! when tools (which run inside the translator's await tree) need
-  to be interruptible mid-execution.
+  the translator, because agent-rig is what reads the token and emits
+  the terminal event. M2+ may add a direct select! when tools (which
+  run inside the translator's await tree) need to be interruptible
+  mid-execution; agent-rig's <code>Tool::call(args, cancel)</code>
+  signature is already shaped for that.
 </p>
 
 <p>

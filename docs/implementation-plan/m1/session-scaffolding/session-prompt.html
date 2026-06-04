@@ -78,8 +78,8 @@
 
 <ul>
   <li><strong>new</strong>: <code>crates/arnes-core/src/session/prompt.rs</code> &mdash; the translator. (Submodule of <code>session</code>; <code>impl&lt;F, H&gt; Session&lt;F, H&gt;</code> block with the <code>prompt</code> method.)</li>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/session/mod.rs</code> &mdash; <code>mod prompt;</code>, add <code>pricing: PricingRegistry</code> field, extend <code>Session::new()</code> with the new arg.</li>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/session/tests.rs</code> &mdash; extend PR #2's tests to thread the new <code>PricingRegistry</code> arg; add the translator tests below.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/session/mod.rs</code> &mdash; <code>mod prompt;</code>, add <code>model: ModelKey</code> and <code>pricing: PricingRegistry</code> fields, extend <code>Session::new()</code> with the two new args.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/session/tests.rs</code> &mdash; extend PR #2's tests to thread the new args; add the translator tests below.</li>
 </ul>
 
 <p>
@@ -115,60 +115,86 @@
 </p>
 
 <p>
-  <strong>2. The translator: one loop, one fork.</strong> The architecture
-  doc is emphatic on this: the translator is the <em>single</em> seam
-  between streaming events and durable history. Two output channels, but
-  exactly one place that writes to both. Schematically:
+  <strong>2. The translator: one loop, one fork, plus a turn-end synthesis.</strong>
+  The architecture doc is emphatic on the loop: the translator is the
+  <em>single</em> seam between streaming events and durable history.
+  Two output channels, but exactly one place that writes to both.
+  Stream completion is the turn-end signal &mdash; agent-rig does not
+  emit a turn-end event of its own &mdash; so <code>TurnEnd</code> is
+  synthesised after the loop exits cleanly. Per-call
+  <code>AgentEvent::Usage(TokenUsage)</code> events are buffered into a
+  running <code>TokenCounts</code>; the buffered total is what feeds
+  <code>TurnUsage</code> construction at synthesis time. Schematically:
 </p>
 
-<pre><code>// Pseudocode &mdash; the actual agent-rig API will shape the calls.
-let mut stream = self.llm.run(messages, self.cancel_token.clone());
+<pre><code>// Pseudocode &mdash; agent-rig's actual variant names shape the match arms.
+let mut stream = self.runner.run_with_cancellation(
+    &amp;self.agent, self.history.clone(), self.cancel_token.clone(),
+);
 let mut blocks: Vec&lt;ContentBlock&gt; = Vec::new();
+let mut tokens = TokenCounts::default();
+let mut stop_reason = StopReason::EndTurn;
 
-self.frontend.on_event(SessionEvent {
-    agent_id: AgentId::Root, depth: 0, kind: EventKind::TurnStart,
-}).await;
+emit_event(EventKind::TurnStart);
 
-while let Some(delta) = stream.next().await {
-    match delta {
-        Ok(Delta::Text(t))     =&gt; { emit_event(TextDelta { text: t.clone() }); append_text(&amp;mut blocks, t); }
-        Ok(Delta::Thinking(t)) =&gt; { emit_event(ThinkingDelta { text: t.clone() }); append_thinking(&amp;mut blocks, t); }
-        Ok(Delta::Stop { reason, tokens, model }) =&gt; {
-            let cost  = self.pricing.compute_cost(&amp;model, &amp;tokens);
-            let usage = TurnUsage { agent_id: AgentId::Root, model, tokens, cost };
-            self.cumulative_usage.record(usage.clone());
-            self.history.push(Message::Assistant { content: blocks });
-            emit_event(TurnEnd { stop_reason: reason, usage });
-            return Ok(());
+while let Some(ev) = stream.next().await {
+    match ev {
+        AgentEvent::TextDelta(t)     =&gt; { emit_event(TextDelta { text: t.clone() }); append_text(&amp;mut blocks, t); }
+        AgentEvent::ThinkingDelta(t) =&gt; { emit_event(ThinkingDelta { text: t.clone() }); append_thinking(&amp;mut blocks, t); }
+        AgentEvent::Usage(u)         =&gt; { tokens += to_counts(u); /* buffer, no event */ }
+        AgentEvent::Cancelled        =&gt; { stop_reason = StopReason::Cancelled; break; }
+        AgentEvent::Error(e)         =&gt; {
+            emit_event(Error { message: e.to_string() });
+            return Err(CoreError::Session(e.to_string()));
         }
-        Err(e) =&gt; { emit_event(Error { message: e.to_string() }); return Err(...); }
+        // ToolCallStarted / ToolCallFinished &mdash; M2.
     }
-}</code></pre>
+}
+
+let cost  = self.pricing.compute_cost(&amp;self.model, &amp;tokens);
+let usage = TurnUsage { agent_id: AgentId::Root, model: self.model.clone(), tokens, cost };
+self.cumulative_usage.record(usage.clone());
+self.history.push(Message::Assistant { content: blocks });
+emit_event(EventKind::TurnEnd { stop_reason, usage });
+Ok(())</code></pre>
 
 <p>
   Two output channels (event + block-accumulator) but the
-  <em>one</em> match arm per delta variant is where both happen. No
-  other code in the crate fans this fork; M2's tool-call handling will
-  extend the match arms in the same translator.
+  <em>one</em> match arm per delta variant is where both happen.
+  <code>AgentEvent::Usage</code> writes only to a third internal
+  accumulator (no live event, no block); <code>TurnEnd</code> is the
+  one place that reads it. M2's tool-call handling will extend the
+  match arms in the same translator.
 </p>
 
 <p>
-  <strong>3. Mapping agent-rig deltas to <code>EventKind</code>s.</strong>
-  agent-rig's typed-delta vocabulary is the source-of-truth shape we
-  consume; the translator is the only place that needs to know about
-  it. The mapping at M1 is one-to-one for the variants currently in
-  <code>EventKind</code>:
+  <strong>3. Mapping agent-rig events to <code>EventKind</code>s.</strong>
+  agent-rig's <code>AgentEvent</code> vocabulary is the source-of-truth
+  shape we consume; the translator is the only place that needs to know
+  about it. The mapping at M1:
 </p>
 
 <table>
-  <thead><tr><th>agent-rig delta</th><th><code>EventKind</code> emitted</th><th>Block accumulator action</th></tr></thead>
+  <thead><tr><th>agent-rig event</th><th><code>EventKind</code> emitted</th><th>Block / accumulator action</th></tr></thead>
   <tbody>
-    <tr><td>text delta</td><td><code>TextDelta { text }</code></td><td>append to current <code>ContentBlock::Text</code>, or start a new one</td></tr>
-    <tr><td>thinking delta</td><td><code>ThinkingDelta { text }</code></td><td>append to current <code>ContentBlock::Thinking</code>, or start a new one</td></tr>
-    <tr><td>stop / turn-end</td><td><code>TurnEnd { stop_reason, usage }</code></td><td>finalize blocks; push <code>Message::Assistant { content: blocks }</code></td></tr>
-    <tr><td>error from stream</td><td><code>Error { message }</code> + return <code>Err</code></td><td>do not push partial blocks (see point 6)</td></tr>
+    <tr><td><code>AgentEvent::TextDelta</code></td><td><code>TextDelta { text }</code></td><td>append to current <code>ContentBlock::Text</code>, or start a new one</td></tr>
+    <tr><td><code>AgentEvent::ThinkingDelta</code></td><td><code>ThinkingDelta { text }</code></td><td>append to current <code>ContentBlock::Thinking</code>, or start a new one</td></tr>
+    <tr><td><code>AgentEvent::Usage(TokenUsage)</code></td><td>(none)</td><td>add to running <code>TokenCounts</code> accumulator; see point 5</td></tr>
+    <tr><td><code>AgentEvent::Cancelled</code></td><td>(none directly)</td><td>set <code>stop_reason = Cancelled</code> and break the loop; <code>TurnEnd</code> fires from the synthesis path below</td></tr>
+    <tr><td><code>AgentEvent::Error</code></td><td><code>Error { message }</code> + return <code>Err</code></td><td>do not push partial blocks (see point 6)</td></tr>
+    <tr><td>stream ends (no more events)</td><td><code>TurnEnd { stop_reason, usage }</code></td><td>finalize blocks; push <code>Message::Assistant { content: blocks }</code></td></tr>
   </tbody>
 </table>
+
+<p>
+  Three notes on shape:
+</p>
+
+<ul>
+  <li><strong><code>Usage</code> is per <em>model call</em>, not per turn.</strong> A multi-turn tool-using run yields multiple <code>Usage</code> events (one per <code>generate_stream</code> invocation inside agent-rig's loop). The translator sums them into one <code>TokenCounts</code>, which becomes the turn's <code>TurnUsage.tokens</code>. M2's tool-call work will exercise this multi-event path; M1's text-only turns happen to see exactly one <code>Usage</code> event per turn.</li>
+  <li><strong><code>Cancelled</code> is terminal.</strong> agent-rig emits <code>AgentEvent::Cancelled</code> as a best-effort terminal event when the run is cancelled (via the token or via stream-drop), then the stream ends. The translator sets the local <code>stop_reason</code> and breaks; the synthesis path still fires <code>TurnEnd</code> with whatever blocks accumulated, so the partial assistant message lands in history. (If the consumer drops the stream we never see <code>Cancelled</code> &mdash; the receiver is gone &mdash; but the synthesis path also never runs, which is the correct outcome.)</li>
+  <li><strong>Stream ends without <code>Cancelled</code> or <code>Error</code></strong>: that's the clean-completion case &mdash; <code>stop_reason</code> stays at the loop-initial <code>EndTurn</code>.</li>
+</ul>
 
 <p>
   <strong>4. Block accumulation: same-kind extends, different-kind opens.</strong>
@@ -184,21 +210,70 @@ while let Some(delta) = stream.next().await {
 </p>
 
 <p>
-  <strong>5. <code>TurnUsage</code> construction: pricing lookup happens here.</strong>
-  agent-rig's stop delta carries token counts and the model identity (a
-  <code>ModelKey</code>-shaped pair); <code>PricingRegistry::compute_cost(&amp;key, &amp;tokens)</code>
-  returns <code>Option&lt;Cost&gt;</code>. That feeds straight into
-  <code>TurnUsage</code>'s <code>cost</code> field, preserving the
-  cross-cutting "Unknown is never silently zero" invariant from phase 3.
-  No fallback to <code>Cost::default()</code> &mdash; if pricing is
-  unknown, the cost is <code>None</code> and
-  <code>CumulativeUsage::record</code> counts it as an unknown-cost turn.
+  <strong>5. <code>TurnUsage</code> construction: pricing lookup happens here; model identity comes from the session.</strong>
+  agent-rig's <code>AgentEvent::Usage</code> carries only the token
+  counts &mdash; not the model identity. That's deliberate upstream:
+  the consumer already knows which model it built the runner with, so
+  bundling it on every event would be redundant. arnes' answer is a
+  <code>model: ModelKey</code> field on <code>Session</code>, set at
+  construction time (point 9 below). At <code>TurnEnd</code> synthesis,
+  the translator passes <code>(&amp;self.model, &amp;tokens)</code> to
+  <code>PricingRegistry::compute_cost</code>; the
+  <code>Option&lt;Cost&gt;</code> result feeds <code>TurnUsage.cost</code>
+  directly, preserving the cross-cutting "Unknown is never silently
+  zero" invariant from phase 3. No fallback to <code>Cost::default()</code>
+  &mdash; if pricing is unknown, the cost is <code>None</code> and
+  <code>CumulativeUsage::record</code> counts it as an unknown-cost
+  turn.
 </p>
 
 <p>
   The agent identity in <code>TurnUsage.agent_id</code> is
   <code>AgentId::Root</code> at M1. Sub-agent attribution is a post-V1
   concern.
+</p>
+
+<p>
+  <strong>5b. <code>TokenUsage</code> &rarr; <code>TokenCounts</code> shape mismatch (decide here).</strong>
+  agent-rig's <code>TokenUsage</code> and arnes' <code>TokenCounts</code>
+  ship with different shapes today:
+</p>
+
+<table>
+  <thead><tr><th>Field</th><th>agent-rig <code>TokenUsage</code></th><th>arnes <code>TokenCounts</code></th></tr></thead>
+  <tbody>
+    <tr><td>billable input total</td><td><code>input_tokens</code> (<em>includes</em> cache hits)</td><td><code>input</code> (does <em>not</em> include cache)</td></tr>
+    <tr><td>output</td><td><code>output_tokens</code></td><td><code>output</code></td></tr>
+    <tr><td>cache hit</td><td><code>cached_input_tokens</code> (subset of <code>input_tokens</code>)</td><td><code>cache_read</code> (additive &mdash; separate from <code>input</code>)</td></tr>
+    <tr><td>cache write</td><td>&mdash; (not reported)</td><td><code>cache_write</code></td></tr>
+    <tr><td>thinking</td><td><code>thinking_tokens</code></td><td><code>thinking</code></td></tr>
+    <tr><td>tool-use prompt</td><td><code>tool_use_prompt_tokens</code></td><td>&mdash; (no field)</td></tr>
+    <tr><td>none-vs-zero distinction</td><td>each field <code>Option&lt;u32&gt;</code></td><td>each field <code>u64</code></td></tr>
+  </tbody>
+</table>
+
+<p>
+  The translator has to pick a shape contract. Two options, each with
+  consequences worth surfacing rather than burying in the
+  <code>to_counts</code> helper:
+</p>
+
+<ul>
+  <li><strong>(a) Reshape <code>TokenCounts</code> to match agent-rig (subset semantics; rename fields; add <code>tool_use_prompt</code>; drop <code>cache_write</code> until needed).</strong> Honest about what providers actually report at M1 (Gemini-shaped subset, no cache write); reopens phase 3's <code>TokenCounts</code> + <code>Cost</code> + <code>ModelPricing</code> shapes for a coordinated rename. The translator becomes a near-direct field copy with <code>unwrap_or(0)</code> per field. When Anthropic-style additive providers land in agent-rig, the normalisation happens at the agent-rig adapter layer (upstream's plan, per PR #31's note).</li>
+  <li><strong>(b) Keep <code>TokenCounts</code> as-is; translator does the mapping.</strong> Map <code>cached_input_tokens</code> &rarr; <code>cache_read</code>; map <code>input_tokens - cached_input_tokens</code> &rarr; <code>input</code> (subtract so the additive invariant holds); leave <code>cache_write = 0</code> and drop <code>tool_use_prompt_tokens</code> on the floor. Phase 3's shipped types stay stable; the mismatch is paid each turn at the seam, and the dropped dimension is invisible to the user.</li>
+</ul>
+
+<p>
+  The two options aren't drop-in equivalents for downstream consumers
+  &mdash; pricing tables and any per-token-kind frontend rendering
+  depend on which one we pick. Recommend (a): the reshape is contained
+  (phase 3 hasn't shipped to any external caller yet), the M1 cost
+  computation gains a real <code>tool_use_prompt</code> dimension when
+  pricing tables list it, and the translator stops doing arithmetic
+  that could drift later. If we pick (a), the reshape is its own
+  follow-up PR (revising phase 3) and this PR builds against the
+  reshaped <code>TokenCounts</code>; if we pick (b), the
+  <code>to_counts</code> helper is a few lines inside this PR.
 </p>
 
 <p>
@@ -219,22 +294,42 @@ while let Some(delta) = stream.next().await {
   Partial blocks are <em>not</em> pushed to history on error &mdash; the
   half-message would corrupt the next turn's prompt. The user-visible
   partial text was already streamed live, so nothing is lost; the
-  frontend chooses how to mark the failure.
+  frontend chooses how to mark the failure. This is the deliberate
+  asymmetry with the cancellation path (point 3): a cancelled message
+  is intentional partial output and lands in history; an errored
+  message has no clean boundary and is discarded.
 </p>
 
 <p>
   <strong>7. Cancellation: pass the token to agent-rig, do not <code>select!</code> here.</strong>
   Per the phase index's cross-cutting decision: cooperative cancellation
-  via agent-rig. We clone <code>self.cancel_token</code> into the runner;
-  when the token fires, agent-rig stops pulling from the provider and
-  the stream ends with a "cancelled" stop variant which we map to
-  <code>StopReason::Cancelled</code>. We do <em>not</em> wrap each
+  via agent-rig. We clone <code>self.cancel_token</code> into
+  <code>AgentRunner::run_with_cancellation</code>; agent-rig takes a
+  <code>child_token()</code> of it internally, so its own stream-drop
+  cleanup never fires arnes' outer token, but the outer token firing
+  still propagates to the child. On cancellation, agent-rig stops
+  pulling from the provider, aborts in-flight tool futures at their
+  next await point, and emits a terminal
+  <code>AgentEvent::Cancelled</code> &mdash; the translator maps that
+  to <code>StopReason::Cancelled</code> in the local stop-reason and
+  breaks the loop. We do <em>not</em> wrap each
   <code>stream.next().await</code> in a
-  <code>select! { token.cancelled() =&gt; ..., delta = stream.next() =&gt; ... }</code>
-  &mdash; that would terminate the stream mid-frame and could leak
-  agent-rig resources. M2+ may add a direct <code>select!</code> when a
-  tool body itself needs to be interrupted; M1's translator stays
+  <code>select! { token.cancelled() =&gt; ..., ev = stream.next() =&gt; ... }</code>
+  &mdash; that would terminate the stream mid-frame and skip
+  agent-rig's <code>Cancelled</code> emission, which is the
+  authoritative signal. M2+ may add a direct <code>select!</code> when
+  a tool body itself needs to be interrupted; M1's translator stays
   one-loop-one-fork.
+</p>
+
+<p>
+  Drop-the-stream is also a valid cancel trigger &mdash; agent-rig's
+  internal <code>DropGuard</code> fires the child token if the consumer
+  drops the returned stream. arnes' translator owns the stream, so this
+  path only fires if the translator's future itself is dropped (e.g.
+  the surrounding task is cancelled by the binary). In that case
+  <code>TurnEnd</code> is never synthesised; that's the correct
+  outcome &mdash; the session no longer has a consumer for the event.
 </p>
 
 <p>
@@ -248,17 +343,21 @@ while let Some(delta) = stream.next().await {
 </ul>
 
 <p>
-  <strong>9. <code>PricingRegistry</code> on <code>Session::new()</code>.</strong>
+  <strong>9. <code>ModelKey</code> + <code>PricingRegistry</code> on <code>Session::new()</code>.</strong>
   PR #2's <code>Session::new(frontend, host, llm)</code> grows to
-  <code>Session::new(frontend, host, llm, pricing)</code>. Three callers
-  to sweep: the tests in <code>session/tests.rs</code> from PR #2, plus
-  the inline test fixture this PR adds. No production caller yet
-  (binaries get wired in phase 7+). The PricingRegistry is held as an
-  owned value, not <code>Arc&lt;...&gt;</code>, because session-pricing
-  is per-session and not shared across sessions in M1; M6+ multi-session
-  setups can wrap one <code>PricingRegistry</code> in <code>Arc</code> at
-  that point and call <code>(&amp;*arc).clone()</code> for each new
-  session if needed.
+  <code>Session::new(frontend, host, llm, model, pricing)</code>. Two
+  new args land together because the translator needs both to construct
+  a <code>TurnUsage</code>: <code>model</code> is the
+  <code>ModelKey</code> the runner was built against (agent-rig's
+  <code>AgentEvent::Usage</code> deliberately omits it; the consumer is
+  the source of truth), and <code>pricing</code> turns
+  <code>(model, tokens)</code> into an <code>Option&lt;Cost&gt;</code>.
+  Three callers to sweep: the tests in <code>session/tests.rs</code>
+  from PR #2, plus the inline test fixture this PR adds. No production
+  caller yet (binaries get wired in phase 7+). Both fields are held as
+  owned values, not <code>Arc&lt;...&gt;</code>, because they're
+  per-session and not shared across sessions in M1; M6+ multi-session
+  setups can <code>Arc</code>-wrap if needed.
 </p>
 
 <h2 id="code">Code skeleton</h2>
@@ -269,6 +368,7 @@ while let Some(delta) = stream.next().await {
 
 pub struct Session&lt;F: Frontend, H: Host&gt; {
     // ...
+    model:   ModelKey,
     pricing: PricingRegistry,
     // ...
 }
@@ -278,10 +378,11 @@ impl&lt;F: Frontend, H: Host&gt; Session&lt;F, H&gt; {
         frontend: Arc&lt;F&gt;,
         host:     Arc&lt;H&gt;,
         llm:      Arc&lt;dyn LlmModel&gt;,
+        model:    ModelKey,
         pricing:  PricingRegistry,
     ) -&gt; Self {
         Self {
-            frontend, host, llm, pricing,
+            frontend, host, llm, model, pricing,
             history: Vec::new(),
             cumulative_usage: CumulativeUsage::default(),
             cancel_token: CancellationToken::new(),
@@ -293,7 +394,7 @@ impl&lt;F: Frontend, H: Host&gt; Session&lt;F, H&gt; {
 
 <pre><code>use crate::{
     AgentId, ContentBlock, CoreError, EventKind, Frontend, Host, Message,
-    Result, SessionEvent, StopReason, TurnUsage,
+    Result, SessionEvent, StopReason, TokenCounts, TurnUsage,
 };
 
 use super::Session;
@@ -305,30 +406,35 @@ impl&lt;F: Frontend, H: Host&gt; Session&lt;F, H&gt; {
 
         self.frontend.on_event(event(EventKind::TurnStart)).await;
 
-        let mut stream = /* agent-rig: run(history, cancel_token.clone()) */;
-        let mut blocks: Vec&lt;ContentBlock&gt; = Vec::new();
+        let mut stream = /* runner.run_with_cancellation(&amp;agent, history, token) */;
+        let mut blocks:      Vec&lt;ContentBlock&gt; = Vec::new();
+        let mut tokens:      TokenCounts       = TokenCounts::default();
+        let mut stop_reason: StopReason        = StopReason::EndTurn;
 
-        while let Some(delta) = stream.next().await {
-            match delta {
-                Ok(/* text */)     =&gt; { /* event + append_block */ }
-                Ok(/* thinking */) =&gt; { /* event + append_block */ }
-                Ok(/* stop */)     =&gt; {
-                    let usage = TurnUsage { agent_id: AgentId::Root, model, tokens,
-                                            cost: self.pricing.compute_cost(&amp;model, &amp;tokens) };
-                    self.cumulative_usage.record(usage.clone());
-                    self.history.push(Message::Assistant { content: blocks });
-                    self.frontend.on_event(event(EventKind::TurnEnd { stop_reason, usage })).await;
-                    return Ok(());
-                }
-                Err(e) =&gt; {
+        while let Some(ev) = stream.next().await {
+            match ev {
+                /* AgentEvent::TextDelta */     =&gt; { /* event + append_block */ }
+                /* AgentEvent::ThinkingDelta */ =&gt; { /* event + append_block */ }
+                /* AgentEvent::Usage(u) */      =&gt; { tokens += to_counts(u); }
+                /* AgentEvent::Cancelled */     =&gt; { stop_reason = StopReason::Cancelled; break; }
+                /* AgentEvent::Error(e) */      =&gt; {
                     self.frontend.on_event(event(EventKind::Error { message: e.to_string() })).await;
                     return Err(CoreError::Session(e.to_string()));
                 }
             }
         }
 
-        // Stream ended without a Stop delta &mdash; treat as transport error.
-        Err(CoreError::Session("stream ended without stop".into()))
+        let cost  = self.pricing.compute_cost(&amp;self.model, &amp;tokens);
+        let usage = TurnUsage {
+            agent_id: AgentId::Root,
+            model:    self.model.clone(),
+            tokens,
+            cost,
+        };
+        self.cumulative_usage.record(usage.clone());
+        self.history.push(Message::Assistant { content: blocks });
+        self.frontend.on_event(event(EventKind::TurnEnd { stop_reason, usage })).await;
+        Ok(())
     }
 }
 
@@ -338,10 +444,14 @@ fn event(kind: EventKind) -&gt; SessionEvent {
 
 fn append_block(blocks: &amp;mut Vec&lt;ContentBlock&gt;, /* delta, kind */) {
     // Extend the last same-kind block, or push a new one.
+}
+
+fn to_counts(u: /* agent_rig::TokenUsage */) -&gt; TokenCounts {
+    // Shape per the decision in discussion point 5b.
 }</code></pre>
 
 <p>
-  The exact agent-rig API surface (the names of the delta variants and
+  The exact agent-rig API surface (the names of the event variants and
   the runner constructor) is what shapes the <code>match</code> arms; the
   skeleton above shows the structure that has to hold regardless.
 </p>
@@ -349,17 +459,18 @@ fn append_block(blocks: &amp;mut Vec&lt;ContentBlock&gt;, /* delta, kind */) {
 <h2 id="tests">Tests</h2>
 
 <p>
-  Three new <code>#[tokio::test]</code>s, plus a tiny inline test-double
+  Four new <code>#[tokio::test]</code>s, plus a tiny inline test-double
   <code>LlmModel</code> at the top of <code>session/tests.rs</code> that
-  emits a fixed sequence of deltas (text, text, stop). The full
-  <code>ScriptedLlm</code> helper (PR #6) is not used here &mdash; this
-  test wants minimum coupling.
+  emits a fixed sequence of agent-rig events (text, text, usage). The
+  full <code>ScriptedLlm</code> helper (PR #6) is not used here &mdash;
+  this test wants minimum coupling.
 </p>
 
 <ul>
-  <li><strong>Happy path</strong>: prompt with one text turn; assert events emitted in order (<code>TurnStart</code>, two <code>TextDelta</code>s, one <code>TurnEnd</code>); assert <code>history</code> has two entries (user + assistant); assert <code>assistant.content</code> is one <code>Text</code> block with the concatenated text; assert <code>cumulative_usage.turns_total == 1</code>.</li>
+  <li><strong>Happy path</strong>: prompt with one text turn; the test double emits two <code>TextDelta</code>s, one <code>Usage</code>, then ends the stream; assert events emitted in order (<code>TurnStart</code>, two <code>TextDelta</code>s, one <code>TurnEnd</code>); assert <code>history</code> has two entries (user + assistant); assert <code>assistant.content</code> is one <code>Text</code> block with the concatenated text; assert <code>cumulative_usage.turns_total == 1</code> and the recorded <code>TokenCounts</code> matches the emitted <code>Usage</code>.</li>
   <li><strong>Unknown pricing</strong>: build the session with an empty <code>PricingRegistry::default()</code>; assert the emitted <code>TurnEnd.usage.cost</code> is <code>None</code> and the bucket counts as <code>turns_with_unknown_cost == 1</code>.</li>
-  <li><strong>Stream error mid-turn</strong>: scripted LLM emits one text delta then an error; assert <code>TextDelta</code> fires, then <code>Error</code>, then <code>prompt()</code> returns <code>Err</code>; assert <code>history</code> still has only the user message (partial assistant blocks were not pushed).</li>
+  <li><strong>Cancellation mid-turn</strong>: test double emits one <code>TextDelta</code>, one <code>Usage</code>, then <code>AgentEvent::Cancelled</code>; assert <code>TextDelta</code> fires, then <code>TurnEnd { stop_reason: Cancelled, usage }</code>; assert <code>history</code> has two entries (the partial assistant message is preserved, per discussion point 3); assert <code>usage.tokens</code> reflects the one <code>Usage</code> event that arrived before the cancel.</li>
+  <li><strong>Stream error mid-turn</strong>: test double emits one <code>TextDelta</code> then <code>AgentEvent::Error</code>; assert <code>TextDelta</code> fires, then <code>Error</code>, then <code>prompt()</code> returns <code>Err</code>; assert <code>history</code> still has only the user message (partial assistant blocks were not pushed, per discussion point 6).</li>
 </ul>
 
 <h2 id="acceptance">Acceptance</h2>
