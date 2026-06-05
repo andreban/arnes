@@ -67,18 +67,17 @@
 <h2 id="goal">Goal</h2>
 
 <p>
-  Implement <code>Session::prompt</code>. Wire <code>PricingRegistry</code>
-  into <code>Session::new()</code> so the translator can turn agent-rig's
-  token counts into a <code>TurnUsage</code> with a real (or
-  <code>None</code>) cost. Land the test that asserts the per-delta
-  fork is the only place doing both jobs.
+  Implement <code>Session::prompt</code>. Wire <code>ModelKey</code> into
+  <code>Session::new()</code> so the translator can build a
+  <code>TurnUsage</code> from agent-rig's token counts. Land the test
+  that asserts the per-delta fork is the only place doing both jobs.
 </p>
 
 <h2 id="files">Files touched</h2>
 
 <ul>
   <li><strong>new</strong>: <code>crates/arnes-core/src/session/prompt.rs</code> &mdash; the translator. (Submodule of <code>session</code>; <code>impl&lt;F, H&gt; Session&lt;F, H&gt;</code> block with the <code>prompt</code> method.)</li>
-  <li><strong>modify</strong>: <code>crates/arnes-core/src/session/mod.rs</code> &mdash; <code>mod prompt;</code>, add <code>model: ModelKey</code> and <code>pricing: PricingRegistry</code> fields, extend <code>Session::new()</code> with the two new args.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/session/mod.rs</code> &mdash; <code>mod prompt;</code>, add <code>model: ModelKey</code> field, extend <code>Session::new()</code> with the new arg.</li>
   <li><strong>modify</strong>: <code>crates/arnes-core/src/session/tests.rs</code> &mdash; extend PR #2's tests to thread the new args; add the translator tests below.</li>
 </ul>
 
@@ -151,8 +150,7 @@ while let Some(ev) = stream.next().await {
     }
 }
 
-let cost  = self.pricing.compute_cost(&amp;self.model, &amp;tokens);
-let usage = TurnUsage { agent_id: AgentId::Root, model: self.model.clone(), tokens, cost };
+let usage = TurnUsage { agent_id: AgentId::Root, model: self.model.clone(), tokens };
 self.cumulative_usage.record(usage.clone());
 self.history.push(Message::Assistant { content: blocks });
 emit_event(EventKind::TurnEnd { stop_reason, usage });
@@ -210,21 +208,17 @@ Ok(())</code></pre>
 </p>
 
 <p>
-  <strong>5. <code>TurnUsage</code> construction: pricing lookup happens here; model identity comes from the session.</strong>
-  agent-rig's <code>AgentEvent::Usage</code> carries only the token
-  counts &mdash; not the model identity. That's deliberate upstream:
-  the consumer already knows which model it built the runner with, so
-  bundling it on every event would be redundant. arnes' answer is a
+  <strong>5. <code>TurnUsage</code> construction: model identity comes
+  from the session.</strong> agent-rig's
+  <code>AgentEvent::Usage</code> carries only the token counts &mdash;
+  not the model identity. That's deliberate upstream: the consumer
+  already knows which model it built the runner with, so bundling it on
+  every event would be redundant. arnes' answer is a
   <code>model: ModelKey</code> field on <code>Session</code>, set at
   construction time (point 9 below). At <code>TurnEnd</code> synthesis,
-  the translator passes <code>(&amp;self.model, &amp;tokens)</code> to
-  <code>PricingRegistry::compute_cost</code>; the
-  <code>Option&lt;Cost&gt;</code> result feeds <code>TurnUsage.cost</code>
-  directly, preserving the cross-cutting "Unknown is never silently
-  zero" invariant from phase 3. No fallback to <code>Cost::default()</code>
-  &mdash; if pricing is unknown, the cost is <code>None</code> and
-  <code>CumulativeUsage::record</code> counts it as an unknown-cost
-  turn.
+  the translator builds the <code>TurnUsage</code> with
+  <code>self.model.clone()</code> and the accumulated <code>tokens</code>;
+  no further lookup is required.
 </p>
 
 <p>
@@ -234,46 +228,17 @@ Ok(())</code></pre>
 </p>
 
 <p>
-  <strong>5b. <code>TokenUsage</code> &rarr; <code>TokenCounts</code> shape mismatch (decide here).</strong>
-  agent-rig's <code>TokenUsage</code> and arnes' <code>TokenCounts</code>
-  ship with different shapes today:
-</p>
-
-<table>
-  <thead><tr><th>Field</th><th>agent-rig <code>TokenUsage</code></th><th>arnes <code>TokenCounts</code></th></tr></thead>
-  <tbody>
-    <tr><td>billable input total</td><td><code>input_tokens</code> (<em>includes</em> cache hits)</td><td><code>input</code> (does <em>not</em> include cache)</td></tr>
-    <tr><td>output</td><td><code>output_tokens</code></td><td><code>output</code></td></tr>
-    <tr><td>cache hit</td><td><code>cached_input_tokens</code> (subset of <code>input_tokens</code>)</td><td><code>cache_read</code> (additive &mdash; separate from <code>input</code>)</td></tr>
-    <tr><td>cache write</td><td>&mdash; (not reported)</td><td><code>cache_write</code></td></tr>
-    <tr><td>thinking</td><td><code>thinking_tokens</code></td><td><code>thinking</code></td></tr>
-    <tr><td>tool-use prompt</td><td><code>tool_use_prompt_tokens</code></td><td>&mdash; (no field)</td></tr>
-    <tr><td>none-vs-zero distinction</td><td>each field <code>Option&lt;u32&gt;</code></td><td>each field <code>u64</code></td></tr>
-  </tbody>
-</table>
-
-<p>
-  The translator has to pick a shape contract. Two options, each with
-  consequences worth surfacing rather than burying in the
-  <code>to_counts</code> helper:
-</p>
-
-<ul>
-  <li><strong>(a) Reshape <code>TokenCounts</code> to match agent-rig (subset semantics; rename fields; add <code>tool_use_prompt</code>; drop <code>cache_write</code> until needed).</strong> Honest about what providers actually report at M1 (Gemini-shaped subset, no cache write); reopens phase 3's <code>TokenCounts</code> + <code>Cost</code> + <code>ModelPricing</code> shapes for a coordinated rename. The translator becomes a near-direct field copy with <code>unwrap_or(0)</code> per field. When Anthropic-style additive providers land in agent-rig, the normalisation happens at the agent-rig adapter layer (upstream's plan, per PR #31's note).</li>
-  <li><strong>(b) Keep <code>TokenCounts</code> as-is; translator does the mapping.</strong> Map <code>cached_input_tokens</code> &rarr; <code>cache_read</code>; map <code>input_tokens - cached_input_tokens</code> &rarr; <code>input</code> (subtract so the additive invariant holds); leave <code>cache_write = 0</code> and drop <code>tool_use_prompt_tokens</code> on the floor. Phase 3's shipped types stay stable; the mismatch is paid each turn at the seam, and the dropped dimension is invisible to the user.</li>
-</ul>
-
-<p>
-  The two options aren't drop-in equivalents for downstream consumers
-  &mdash; pricing tables and any per-token-kind frontend rendering
-  depend on which one we pick. Recommend (a): the reshape is contained
-  (phase 3 hasn't shipped to any external caller yet), the M1 cost
-  computation gains a real <code>tool_use_prompt</code> dimension when
-  pricing tables list it, and the translator stops doing arithmetic
-  that could drift later. If we pick (a), the reshape is its own
-  follow-up PR (revising phase 3) and this PR builds against the
-  reshaped <code>TokenCounts</code>; if we pick (b), the
-  <code>to_counts</code> helper is a few lines inside this PR.
+  <strong>5b. <code>TokenUsage</code> &rarr; <code>TokenCounts</code>
+  field reduction.</strong> agent-rig's <code>TokenUsage</code> reports
+  per-kind fields (<code>input_tokens</code>, <code>output_tokens</code>,
+  <code>cached_input_tokens</code>, <code>thinking_tokens</code>,
+  <code>tool_use_prompt_tokens</code>); arnes' <code>TokenCounts</code>
+  carries one <code>total</code>. The translator sums the per-kind
+  fields (with <code>unwrap_or(0)</code> for the <code>Option</code>
+  variants) into one number. If a future consumer needs the breakdown
+  we grow <code>TokenCounts</code> back to per-kind fields and the
+  translator stops collapsing &mdash; that's the
+  <code>to_counts</code> helper's whole point.
 </p>
 
 <p>
@@ -343,21 +308,18 @@ Ok(())</code></pre>
 </ul>
 
 <p>
-  <strong>9. <code>ModelKey</code> + <code>PricingRegistry</code> on <code>Session::new()</code>.</strong>
+  <strong>9. <code>ModelKey</code> on <code>Session::new()</code>.</strong>
   PR #2's <code>Session::new(frontend, host, llm)</code> grows to
-  <code>Session::new(frontend, host, llm, model, pricing)</code>. Two
-  new args land together because the translator needs both to construct
-  a <code>TurnUsage</code>: <code>model</code> is the
-  <code>ModelKey</code> the runner was built against (agent-rig's
-  <code>AgentEvent::Usage</code> deliberately omits it; the consumer is
-  the source of truth), and <code>pricing</code> turns
-  <code>(model, tokens)</code> into an <code>Option&lt;Cost&gt;</code>.
-  Three callers to sweep: the tests in <code>session/tests.rs</code>
-  from PR #2, plus the inline test fixture this PR adds. No production
-  caller yet (binaries get wired in phase 7+). Both fields are held as
-  owned values, not <code>Arc&lt;...&gt;</code>, because they're
-  per-session and not shared across sessions in M1; M6+ multi-session
-  setups can <code>Arc</code>-wrap if needed.
+  <code>Session::new(frontend, host, llm, model)</code>. The translator
+  needs <code>model</code> to stamp every <code>TurnUsage</code>:
+  agent-rig's <code>AgentEvent::Usage</code> deliberately omits it; the
+  consumer is the source of truth. Two callers to sweep: the tests in
+  <code>session/tests.rs</code> from PR #2, plus the inline test
+  fixture this PR adds. No production caller yet (binaries get wired in
+  phase 7+). <code>model</code> is held as an owned value, not
+  <code>Arc&lt;...&gt;</code>, because it's per-session and not shared
+  across sessions in M1; M6+ multi-session setups can
+  <code>Arc</code>-wrap if needed.
 </p>
 
 <h2 id="code">Code skeleton</h2>
@@ -368,8 +330,7 @@ Ok(())</code></pre>
 
 pub struct Session&lt;F: Frontend, H: Host&gt; {
     // ...
-    model:   ModelKey,
-    pricing: PricingRegistry,
+    model: ModelKey,
     // ...
 }
 
@@ -379,10 +340,9 @@ impl&lt;F: Frontend, H: Host&gt; Session&lt;F, H&gt; {
         host:     Arc&lt;H&gt;,
         llm:      Arc&lt;dyn LlmModel&gt;,
         model:    ModelKey,
-        pricing:  PricingRegistry,
     ) -&gt; Self {
         Self {
-            frontend, host, llm, model, pricing,
+            frontend, host, llm, model,
             history: Vec::new(),
             cumulative_usage: CumulativeUsage::default(),
             cancel_token: CancellationToken::new(),
@@ -424,12 +384,10 @@ impl&lt;F: Frontend, H: Host&gt; Session&lt;F, H&gt; {
             }
         }
 
-        let cost  = self.pricing.compute_cost(&amp;self.model, &amp;tokens);
         let usage = TurnUsage {
             agent_id: AgentId::Root,
             model:    self.model.clone(),
             tokens,
-            cost,
         };
         self.cumulative_usage.record(usage.clone());
         self.history.push(Message::Assistant { content: blocks });
@@ -447,7 +405,8 @@ fn append_block(blocks: &amp;mut Vec&lt;ContentBlock&gt;, /* delta, kind */) {
 }
 
 fn to_counts(u: /* agent_rig::TokenUsage */) -&gt; TokenCounts {
-    // Shape per the decision in discussion point 5b.
+    // Sum agent-rig's per-kind fields into one `total`.
+    // See discussion point 5b.
 }</code></pre>
 
 <p>
@@ -468,7 +427,6 @@ fn to_counts(u: /* agent_rig::TokenUsage */) -&gt; TokenCounts {
 
 <ul>
   <li><strong>Happy path</strong>: prompt with one text turn; the test double emits two <code>TextDelta</code>s, one <code>Usage</code>, then ends the stream; assert events emitted in order (<code>TurnStart</code>, two <code>TextDelta</code>s, one <code>TurnEnd</code>); assert <code>history</code> has two entries (user + assistant); assert <code>assistant.content</code> is one <code>Text</code> block with the concatenated text; assert <code>cumulative_usage.turns_total == 1</code> and the recorded <code>TokenCounts</code> matches the emitted <code>Usage</code>.</li>
-  <li><strong>Unknown pricing</strong>: build the session with an empty <code>PricingRegistry::default()</code>; assert the emitted <code>TurnEnd.usage.cost</code> is <code>None</code> and the bucket counts as <code>turns_with_unknown_cost == 1</code>.</li>
   <li><strong>Cancellation mid-turn</strong>: test double emits one <code>TextDelta</code>, one <code>Usage</code>, then <code>AgentEvent::Cancelled</code>; assert <code>TextDelta</code> fires, then <code>TurnEnd { stop_reason: Cancelled, usage }</code>; assert <code>history</code> has two entries (the partial assistant message is preserved, per discussion point 3); assert <code>usage.tokens</code> reflects the one <code>Usage</code> event that arrived before the cancel.</li>
   <li><strong>Stream error mid-turn</strong>: test double emits one <code>TextDelta</code> then <code>AgentEvent::Error</code>; assert <code>TextDelta</code> fires, then <code>Error</code>, then <code>prompt()</code> returns <code>Err</code>; assert <code>history</code> still has only the user message (partial assistant blocks were not pushed, per discussion point 6).</li>
 </ul>
@@ -478,7 +436,7 @@ fn to_counts(u: /* agent_rig::TokenUsage */) -&gt; TokenCounts {
 <ul>
   <li><code>cargo check --workspace</code> clean.</li>
   <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
-  <li><code>cargo test -p arnes-core</code> green; the three new tests pass alongside PR #2's three.</li>
+  <li><code>cargo test -p arnes-core</code> green; the three new tests (happy path, cancellation mid-turn, stream error mid-turn) pass alongside PR #2's three.</li>
   <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
   <li><code>Session::prompt</code> is reachable through the public re-export (<code>arnes_core::Session</code>).</li>
 </ul>

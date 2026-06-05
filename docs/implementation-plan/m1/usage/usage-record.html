@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feat/usage-record</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="../../type-map.html" data-accent="coding">Type map</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 1 of 4</span>
+  <h1><code>feat/usage-record</code></h1>
+  <p class="lead">
+    <code>TurnUsage</code> (the per-turn record) and <code>ModelUsage</code>
+    (the aggregated-row shape that <code>CumulativeUsage</code> stores
+    per bucket in PR #2). Also lands <code>TokenCounts</code> &mdash;
+    the one-field token count that both records hold.
+  </p>
+</div>
+
+<h2 id="goal">Goal</h2>
+
+<p>
+  Define the per-turn usage record and the aggregated row shape it folds
+  into.
+</p>
+
+<h2 id="files">Files touched</h2>
+
+<ul>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/metering/token_counts.rs</code>, <code>turn_usage.rs</code>, <code>model_usage.rs</code>.</li>
+  <li><strong>modify</strong>: <code>crates/arnes-core/src/metering/mod.rs</code> + <code>crates/arnes-core/src/lib.rs</code> &mdash; module + re-exports.</li>
+</ul>
+
+<p>No new deps.</p>
+
+<h2 id="discussion">Discussion</h2>
+
+<p>
+  <strong>1. <code>TokenCounts</code> shape.</strong> One field
+  (<code>total: u64</code>) with <code>Add</code> / <code>AddAssign</code>
+  for aggregation. An earlier prototype carried five per-kind fields
+  (input, output, cache_read, cache_write, thinking) because the cost
+  calculator needed per-kind rates; with cost gone there is no consumer
+  for the breakdown. Keeping the struct (rather than a bare
+  <code>u64</code> on <code>TurnUsage</code>) leaves a place to grow
+  back per-kind fields without renaming every site that reads
+  <code>usage.tokens</code>.
+</p>
+
+<p>
+  <strong>2. <code>TurnUsage</code> carries <code>agent_id</code> and
+  <code>ModelKey</code>.</strong> Already established in
+  <code>core.html</code>'s future-compat table: every
+  <code>TurnUsage</code> is tagged with which agent produced it and
+  which model it was billed to. Phase 4's <code>Session</code> sets
+  these at the boundary; <code>CumulativeUsage</code> (PR #2) uses the
+  <code>(agent_id, model)</code> pair as its hash-map key.
+</p>
+
+<p>
+  <strong>3. <code>ModelUsage</code> shape.</strong> One bucket's
+  aggregated state &mdash; what <code>CumulativeUsage</code> stores per
+  <code>(AgentId, ModelKey)</code> key:
+</p>
+
+<ul>
+  <li><code>tokens: TokenCounts</code> &mdash; sum across all turns in this bucket.</li>
+  <li><code>turns: u32</code> &mdash; how many turns landed in this bucket.</li>
+</ul>
+
+<p>
+  The <code>model: ModelKey</code> field on <code>ModelUsage</code>
+  duplicates half of the map key, which makes flattened views (PR #3)
+  cleaner: a <code>by_model()</code> result is a list of
+  <code>ModelUsage</code> values that already know which model they're
+  about.
+</p>
+
+<h2 id="code">Code skeleton</h2>
+
+<pre><code>// crates/arnes-core/src/metering/token_counts.rs
+
+use std::ops::{Add, AddAssign};
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TokenCounts {
+    pub total: u64,
+}
+
+impl Add for TokenCounts { /* field-wise */ }
+impl AddAssign for TokenCounts { /* field-wise */ }
+
+// crates/arnes-core/src/metering/turn_usage.rs
+
+use crate::{AgentId, ModelKey, TokenCounts};
+
+#[derive(Clone, Debug)]
+pub struct TurnUsage {
+    pub agent_id: AgentId,
+    pub model:    ModelKey,
+    pub tokens:   TokenCounts,
+}
+
+// crates/arnes-core/src/metering/model_usage.rs
+
+use crate::{ModelKey, TokenCounts};
+
+#[derive(Clone, Debug)]
+pub struct ModelUsage {
+    pub model:  ModelKey,
+    pub tokens: TokenCounts,
+    pub turns:  u32,
+}</code></pre>
+
+<h2 id="lib-rs">lib.rs additions</h2>
+
+<pre><code>pub use metering::{ModelUsage, TokenCounts, TurnUsage};</code></pre>
+
+<h2 id="tests">Tests</h2>
+
+<ul>
+  <li><strong>Round-trip construction</strong>: build a <code>TurnUsage</code> with non-zero tokens; pattern-match back.</li>
+  <li><strong><code>TokenCounts::AddAssign</code></strong>: two values sum field-wise; default is zero.</li>
+</ul>
+
+<p>
+  Aggregation behaviour (constructing a <code>ModelUsage</code> from a
+  series of <code>TurnUsage</code>s) is tested in PR #2 where the
+  <code>record()</code> method lands.
+</p>
+
+<h2 id="acceptance">Acceptance</h2>
+
+<ul>
+  <li><code>cargo check --workspace</code> clean.</li>
+  <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
+  <li><code>cargo test -p arnes-core</code> green.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="index.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">Phase 3 &mdash; Usage</span>
+  </a>
+  <a class="next" href="cumulative-usage.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/cumulative-usage</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

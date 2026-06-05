@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phase 3 &mdash; Usage</title>
+<link rel="stylesheet" href="../../../build-your-own-harness/assets/styles.css" />
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">&alpha;</span>
+    <span>arnes &middot; plan</span>
+  </div>
+  <div class="nav-group"><h4>Overview</h4><ul>
+    <li><a href="../../index.html">Introduction</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Architecture</h4><ul>
+    <li><a href="../../architecture.html">Modular design</a></li>
+    <li><a href="../../core.html" data-accent="coding">arnes-core</a></li>
+    <li><a href="../../type-map.html" data-accent="coding">Type map</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Adapters</h4><ul>
+    <li><a href="../../adapter-tui.html"  data-accent="tui">TUI</a></li>
+    <li><a href="../../adapter-acp.html"  data-accent="agent">Agent Client Protocol</a></li>
+    <li><a href="../../adapter-http.html" data-accent="ai">HTTP / WebSockets</a></li>
+    <li><a href="../../adapter-gui.html"  data-accent="coding">GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Plan</h4><ul>
+    <li><a href="../../roadmap.html">Roadmap</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Milestones</h4><ul>
+    <li><a href="../index.html">M1: Foundation</a></li>
+    <li><a href="../plan.html">M1 work plan</a></li>
+    <li><a href="../../m2/index.html">M2: First tool</a></li>
+    <li><a href="../../m3/index.html">M3: Coding toolkit</a></li>
+    <li><a href="../../m4/index.html">M4: System prompt</a></li>
+    <li><a href="../../m5/index.html">M5: Skills</a></li>
+    <li><a href="../../m6/index.html">M6: Sessions</a></li>
+    <li><a href="../../m7/index.html">M7: Compaction</a></li>
+    <li><a href="../../m8/index.html">M8: HTTP / WS</a></li>
+    <li><a href="../../m9/index.html">M9: GUI</a></li>
+  </ul></div>
+  <div class="nav-group"><h4>Reference</h4><ul>
+    <li><a href="../../../build-your-own-harness/index.html">Build Your Own Harness</a></li>
+  </ul></div>
+</aside>
+
+<main class="main">
+
+<div class="page-header" data-accent="coding">
+  <span class="eyebrow">M1 &middot; Phase 3</span>
+  <h1>Usage</h1>
+  <p class="lead">
+    Token-count types and per-<code>(agent, model)</code> aggregation. A
+    frontend can display "how many tokens did this session burn" broken
+    down by model or by agent. One total per turn for V1; per-kind
+    breakdowns (input / output / cache / thinking) can grow back when
+    there is a real consumer for them.
+  </p>
+</div>
+
+<div class="note">
+  <strong>Cost tracking removed.</strong> An earlier revision of this
+  phase shipped a <code>Cost</code> / <code>Micros</code> /
+  <code>ModelPricing</code> / <code>PricingRegistry</code> stack with a
+  three-state Priced / Free / Unknown pricing model and a JSON loader for
+  <code>~/.arnes/pricing.json</code>. We walked it back: the harness
+  displays token counts only and leaves cost conversion to whoever wants
+  to compute it from those counts. The user-facing reasons:
+  <ul>
+    <li>Bundled defaults would have committed us to keeping rates current; pushing the file to users shifts the maintenance to whoever cares enough to populate it &mdash; at which point they can just compute cost themselves.</li>
+    <li>Per-token-kind breakdown (input / output / cache / thinking) is what cost calculation needed. Without cost, one total per turn is enough for V1 displays.</li>
+    <li>"Unknown is never silently zero" only matters once cost numbers are on the screen. With tokens only, there is no zero to confuse anyone.</li>
+  </ul>
+</div>
+
+<h2 id="prs">PRs in this phase</h2>
+
+<table>
+  <thead><tr><th>Order</th><th>PR</th><th>One-line goal</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><a href="usage-record.html"><code>feat/usage-record</code></a></td><td><code>TurnUsage</code> (per-turn) + <code>ModelUsage</code> (aggregated row shape).</td></tr>
+    <tr><td>2</td><td><a href="cumulative-usage.html"><code>feat/cumulative-usage</code></a></td><td><code>CumulativeUsage</code> + <code>record()</code> &mdash; per-(agent, model) bucketing.</td></tr>
+    <tr><td>3</td><td><a href="cumulative-usage-projections.html"><code>feat/cumulative-usage-projections</code></a></td><td><code>by_model()</code> / <code>by_agent()</code> derived views.</td></tr>
+    <tr><td>4</td><td><a href="turnend-usage-wiring.html"><code>feat/turnend-usage-wiring</code></a></td><td>Add the <code>usage: TurnUsage</code> field to <code>EventKind::TurnEnd</code>.</td></tr>
+  </tbody>
+</table>
+
+<p>
+  Order matters: PRs 1&ndash;2 build the type stack bottom-up
+  (<code>TokenCounts</code> &rarr; <code>TurnUsage</code> /
+  <code>ModelUsage</code> &rarr; <code>CumulativeUsage</code>). PR #3
+  (<code>by_model</code> / <code>by_agent</code>) needs
+  <code>CumulativeUsage</code>, so it lands after #2. PR #4 (wire into
+  <code>EventKind::TurnEnd</code>) needs <code>TurnUsage</code> (#1) and
+  is independent of the aggregation work.
+</p>
+
+<h2 id="cross-cutting">Cross-cutting decisions (settled)</h2>
+
+<p>
+  <strong>1. <code>TokenCounts</code> carries one <code>total</code>
+  field for V1.</strong> Earlier prototypes carried five fields (input,
+  output, cache_read, cache_write, thinking) because the cost calculator
+  needed per-kind rates. With cost calculation gone the displays we
+  actually want to ship at M1&ndash;M3 only show one number ("12.3k
+  tokens"). Keeping the struct (rather than a bare <code>u64</code> on
+  <code>TurnUsage</code>) leaves a place to grow back per-kind fields
+  without renaming every site that reads <code>usage.tokens</code>.
+</p>
+
+<p>
+  <strong>2. Per-(agent, model) bucketing stays.</strong>
+  <code>CumulativeUsage</code> still indexes by
+  <code>(AgentId, ModelKey)</code>. V1 only ever populates
+  <code>(AgentId::Root, &lt;current model&gt;)</code>, but the keyed map
+  is the source of truth so post-V1 sub-agents and mid-session model
+  switches are additive, not breaking.
+</p>
+
+<h2 id="discussion-pattern">Discussion sections in each PR doc</h2>
+
+<ul>
+  <li><strong>usage-record</strong>: shape of <code>TurnUsage</code> (agent_id + ModelKey + tokens); <code>ModelUsage</code> as the aggregated row.</li>
+  <li><strong>cumulative-usage</strong>: indexing by <code>(AgentId, ModelKey)</code>; <code>record()</code> semantics.</li>
+  <li><strong>cumulative-usage-projections</strong>: borrowed vs owned view returns; projection consistency invariant; whether to expose iterators instead.</li>
+  <li><strong>turnend-usage-wiring</strong>: one-field addition; consumer sweep.</li>
+</ul>
+
+<h2 id="tests">Test strategy for the phase</h2>
+
+<ul>
+  <li><strong>Per-(agent, model) bucketing</strong> (PR #2): two synthetic <code>TurnUsage</code> values with different <code>ModelKey</code>s produce two entries in <code>CumulativeUsage</code>.</li>
+  <li><strong>Cumulative sums are consistent</strong> (PRs #2 + #3): the sum of <code>by_model()</code> token totals equals the sum of <code>by_agent()</code> token totals equals the sum of every recorded turn's tokens.</li>
+</ul>
+
+<h2 id="acceptance">Phase acceptance</h2>
+
+<ul>
+  <li>All 4 PRs merged.</li>
+  <li><code>cargo check --workspace</code> clean (CI green throughout).</li>
+  <li><code>cargo test -p arnes-core</code> green; the integration assertions above pass.</li>
+  <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
+  <li>End state: <code>arnes-core</code> exports <code>TokenCounts</code>, <code>TurnUsage</code>, <code>ModelUsage</code>, <code>CumulativeUsage</code>, and <code>EventKind::TurnEnd</code> carries a <code>TurnUsage</code>. Emission lands in phase 4 with <code>Session</code>.</li>
+</ul>
+
+<div class="pager">
+  <a class="prev" href="../plan.html">
+    <span class="pager-label">&larr; Back</span>
+    <span class="pager-title">M1 work plan</span>
+  </a>
+  <a class="next" href="usage-record.html">
+    <span class="pager-label">Next &rarr;</span>
+    <span class="pager-title">feat/usage-record</span>
+  </a>
+</div>
+
+</main>
+</div>
+<script src="../../../build-your-own-harness/assets/nav.js"></script>
+</body>
+</html>

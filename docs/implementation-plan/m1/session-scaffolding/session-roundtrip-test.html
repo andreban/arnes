@@ -105,23 +105,13 @@
 </p>
 
 <p>
-  <strong>3. Pricing in the test.</strong> The test seeds a
-  <code>PricingRegistry</code> with one provider block that prices turn
-  1's model and leaves turn 2's model unknown. After both turns, the
-  test asserts:
-</p>
-
-<ul>
-  <li>Turn 1's <code>TurnEnd.usage.cost</code> is <code>Some(...)</code> with the expected micros.</li>
-  <li>Turn 2's <code>TurnEnd.usage.cost</code> is <code>None</code>.</li>
-  <li><code>cumulative_usage()</code>'s <code>total_known_cost()</code> matches turn 1's known cost.</li>
-  <li><code>cumulative_usage()</code>'s <code>total_turns_with_unknown_cost()</code> equals 1.</li>
-</ul>
-
-<p>
-  This bakes the cross-cutting "Unknown is never silently zero" decision
-  from phase 3 into the integration test &mdash; if a future refactor
-  starts coercing unknown costs to zero, this test fails loudly.
+  <strong>3. Token totals in the test.</strong> Each scripted stop
+  carries a <code>TokenCounts</code>. After both turns the test asserts
+  <code>cumulative_usage().turns_total == 2</code> and that the
+  per-model and per-agent projections each sum to the same total. The
+  two turns use different <code>ModelKey</code>s so
+  <code>by_model()</code> has two entries while <code>by_agent()</code>
+  has one (both turns ran as <code>AgentId::Root</code>).
 </p>
 
 <p>
@@ -180,7 +170,7 @@ mod support;
 use std::sync::Arc;
 
 use arnes_core::{
-    AgentId, EventKind, ModelKey, PricingRegistry, Session, TokenCounts,
+    AgentId, EventKind, ModelKey, Session, TokenCounts,
 };
 
 use support::{
@@ -194,8 +184,8 @@ async fn two_turn_roundtrip() {
     let frontend = Arc::new(RecordingFrontend::new());
     let host     = Arc::new(InMemoryHost::new());
 
-    // Turn 1: two text deltas, one thinking, one text. Priced model.
-    // Turn 2: one text delta. Unknown-priced model.
+    // Turn 1: two text deltas, one thinking, one text. Gemini model.
+    // Turn 2: one text delta. Different model so by_model() has two rows.
     let llm = Arc::new(ScriptedLlm::new(vec![
         TurnScript {
             deltas: vec![
@@ -206,7 +196,7 @@ async fn two_turn_roundtrip() {
             ],
             stop: ScriptedStop {
                 reason: /* end-of-turn */,
-                tokens: TokenCounts { input: 10, output: 5, ..TokenCounts::default() },
+                tokens: TokenCounts { total: 15 },
                 model:  ModelKey { provider: "gemini".into(), model_id: "g-2.5-flash".into() },
             },
         },
@@ -214,17 +204,18 @@ async fn two_turn_roundtrip() {
             deltas: vec![ScriptedDelta::Text("ack".into())],
             stop: ScriptedStop {
                 reason: /* end-of-turn */,
-                tokens: TokenCounts { input: 2, output: 1, ..TokenCounts::default() },
-                model:  ModelKey { provider: "unknown".into(), model_id: "mystery".into() },
+                tokens: TokenCounts { total: 3 },
+                model:  ModelKey { provider: "gemini".into(), model_id: "g-2.5-pro".into() },
             },
         },
     ]));
 
-    let pricing = PricingRegistry::from_providers([
-        /* one priced provider block for "gemini"; "unknown" deliberately omitted */
-    ]);
-
-    let mut session = Session::new(frontend.clone(), host, llm, pricing);
+    let mut session = Session::new(
+        frontend.clone(),
+        host,
+        llm,
+        ModelKey { provider: "gemini".into(), model_id: "g-2.5-flash".into() },
+    );
 
     session.prompt("hi").await.expect("turn 1 ok");
     session.prompt("ping").await.expect("turn 2 ok");
@@ -236,12 +227,12 @@ async fn two_turn_roundtrip() {
     // - text deltas for turn 1 concatenate to "Hello world. Goodbye."
     // - one ThinkingDelta in between
     // - turn-2 events all follow turn-1 events
-    // - TurnEnd[0].usage.cost is Some(_); TurnEnd[1].usage.cost is None
+    // - TurnEnd[0].usage.tokens.total == 15; TurnEnd[1].usage.tokens.total == 3
 
     let cu = session.cumulative_usage();
     assert_eq!(cu.turns_total, 2);
-    assert_eq!(cu.total_turns_with_unknown_cost(), 1);
-    // assert total_known_cost matches the priced turn-1 cost
+    assert_eq!(cu.by_model().len(), 2);
+    assert_eq!(cu.by_agent().len(), 1);
 
     // History shape:
     // - 4 entries: user, assistant, user, assistant

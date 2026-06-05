@@ -12,10 +12,10 @@ pub enum AgentId {
     SubAgent(Uuid),
 }
 
-/// Identifies a model for cost accounting and usage attribution.
+/// Identifies a model for usage attribution.
 ///
-/// The pair `(provider, model_id)` is the natural key; pricing data is
-/// indexed by it, and per-model usage breakdowns bucket by it.
+/// The pair `(provider, model_id)` is the natural key; per-model usage
+/// breakdowns bucket by it.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ModelKey {
     pub provider: String,

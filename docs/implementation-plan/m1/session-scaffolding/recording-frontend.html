@@ -94,7 +94,7 @@
 </p>
 
 <ul>
-  <li><strong>It's only for integration tests, not unit tests.</strong> Unit tests inside <code>src/</code> use inline fixtures (per the existing <code>metering/</code> and <code>pricing/</code> pattern). The support module exists so multiple <code>tests/*.rs</code> files can share helpers.</li>
+  <li><strong>It's only for integration tests, not unit tests.</strong> Unit tests inside <code>src/</code> use inline fixtures (per the existing <code>metering/</code> pattern). The support module exists so multiple <code>tests/*.rs</code> files can share helpers.</li>
   <li><strong>It doesn't ship in the published crate.</strong> Anything under <code>src/</code> would be reachable from downstream crates and visible in <code>cargo doc</code>; living under <code>tests/</code> keeps it firmly test-only. (<code>arnes-core</code> is <code>publish = false</code> anyway, but the principle holds.)</li>
 </ul>
 

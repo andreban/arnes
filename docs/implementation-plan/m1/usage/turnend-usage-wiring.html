@@ -51,7 +51,7 @@
 <main class="main">
 
 <div class="page-header" data-accent="coding">
-  <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 8 of 8</span>
+  <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 4 of 4</span>
   <h1><code>feat/turnend-usage-wiring</code></h1>
   <p class="lead">
     Adds the <code>usage: TurnUsage</code> field to
@@ -157,7 +157,7 @@ TurnEnd {
   <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.</li>
   <li><code>cargo test -p arnes-core</code> green (the existing 10 tests still pass).</li>
   <li><code>RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p arnes-core</code> clean.</li>
-  <li><strong>End of phase 3.</strong> <code>arnes-core</code> exports the full usage / pricing vocabulary; <code>EventKind::TurnEnd</code> is shaped to carry it; phase 4 (<code>Session</code> + scaffolding) can wire it up.</li>
+  <li><strong>End of phase 3.</strong> <code>arnes-core</code> exports the usage vocabulary; <code>EventKind::TurnEnd</code> is shaped to carry it; phase 4 (<code>Session</code> + scaffolding) can wire it up.</li>
 </ul>
 
 <div class="pager">
@@ -165,9 +165,9 @@ TurnEnd {
     <span class="pager-label">&larr; Back</span>
     <span class="pager-title">feat/cumulative-usage-projections</span>
   </a>
-  <a class="next" href="../plan.html">
+  <a class="next" href="../session-scaffolding/index.html">
     <span class="pager-label">Next &rarr;</span>
-    <span class="pager-title">Back to M1 work plan</span>
+    <span class="pager-title">Phase 4 &mdash; Session + test scaffolding</span>
   </a>
 </div>
 

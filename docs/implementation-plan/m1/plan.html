@@ -78,7 +78,7 @@
     <tr><td>0</td><td><a href="#repo-bootstrap">Repo bootstrap</a></td><td>done</td><td>direct-to-main</td></tr>
     <tr><td>1</td><td><a href="#workspace-ci">Workspace + CI</a></td><td>done</td><td>1 (merged)</td></tr>
     <tr><td>2</td><td><a href="core-types/index.html">Core types</a></td><td>done</td><td>6 (merged)</td></tr>
-    <tr><td>3</td><td><a href="usage-pricing/index.html">Usage + pricing</a></td><td>done</td><td>8 (merged)</td></tr>
+    <tr><td>3</td><td><a href="usage/index.html">Usage</a></td><td>done</td><td>4 (merged)</td></tr>
     <tr><td>4</td><td><a href="session-scaffolding/index.html">Session + test scaffolding</a></td><td>planned in detail</td><td>7</td></tr>
     <tr><td>5</td><td><a href="#acp-transport">ACP transport spike</a></td><td>scope only</td><td>1</td></tr>
     <tr><td>6</td><td><a href="#acp-protocol">ACP minimal protocol</a></td><td>scope only, to be detailed</td><td>~4</td></tr>
@@ -150,21 +150,20 @@
   implementation.
 </p>
 
-<h2 id="usage-pricing">Phase 3 &mdash; Usage + pricing <small>(planned in detail)</small></h2>
+<h2 id="usage">Phase 3 &mdash; Usage <small>(planned in detail)</small></h2>
 
 <p>
-  <strong>Goal.</strong> Token/cost types with three-state pricing
-  (Priced / Free / Unknown), per-<code>(agent, model)</code> aggregation,
-  and a tested registry loaded from the user's <code>~/.arnes/pricing.json</code>.
-  First phase that ships runtime arithmetic; previous phases shipped
-  type vocabularies only.
+  <strong>Goal.</strong> Token-count types and per-<code>(agent, model)</code>
+  aggregation. Cost tracking is out of scope for V1 &mdash; the harness
+  reports tokens; downstream consumers compute cost themselves if they
+  want it. Per-token-kind breakdown is out of scope for V1 too: one
+  <code>total</code> per turn.
 </p>
 
 <p>
-  <strong>See <a href="usage-pricing/index.html">the Usage + pricing phase plan</a></strong>
-  for the eight per-PR docs, the cross-cutting decisions (integer-micros
-  for money; Unknown is never silently zero), and the discussion items
-  each PR must surface before implementation.
+  <strong>See <a href="usage/index.html">the Usage phase plan</a></strong>
+  for the four per-PR docs and the discussion items each PR surfaces
+  before implementation.
 </p>
 
 <h2 id="session-scaffolding">Phase 4 &mdash; Session + test scaffolding <small>(planned in detail)</small></h2>
@@ -228,8 +227,8 @@
 <h2 id="gemini-provider">Phase 7 &mdash; Wire Gemini provider + real usage <small>(single PR)</small></h2>
 
 <p>
-  <strong>Goal.</strong> A real LLM call produces a real reply, real token
-  counts, and a real cost.
+  <strong>Goal.</strong> A real LLM call produces a real reply and real
+  token counts.
 </p>
 
 <p>

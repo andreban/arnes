@@ -96,7 +96,7 @@ pub enum SessionRow {
         agent_id:  AgentId,       // V1: always Root; post-V1 sub-agents append here too
         message:   Message,
     },
-    /// One row per turn carrying that turn's token counts + Option&lt;Cost&gt;.
+    /// One row per turn carrying that turn's token counts.
     /// agent_id and ModelKey live on the inner TurnUsage struct.
     Usage(UsageEntry),
     /// Recorded when compaction (M7) runs.

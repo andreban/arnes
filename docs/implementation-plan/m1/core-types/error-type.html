@@ -99,7 +99,6 @@
 
 <pre><code>pub enum CoreError {
     Session(String),     // session loop runtime errors
-    Pricing(String),     // pricing-registry lookup / TOML parse errors
     Io(io::Error),       // wrapping Host io errors when they cross the boundary
 }</code></pre>
 

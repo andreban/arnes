@@ -458,15 +458,11 @@ async fn execute(&amp;self, input: serde_json::Value, cx: &amp;ToolContext) -&gt
   <li>Tool-call cards expand to show output preview on success; full error
       on failure.</li>
   <li>Slash command: <code>/tools</code> lists active tools and their policies.</li>
-  <li><strong>Status line</strong> shows cumulative usage, format depends
-      on pricing state:
-      <ul>
-        <li>All turns priced (paid): <code>in:8,431 out:1,243 cache:6,200 &middot; $0.18 &middot; 12.3k/200k</code></li>
-        <li>All turns priced (free, e.g. Ollama): cost omitted &mdash; <code>in:8,431 out:1,243 &middot; 12.3k/200k</code></li>
-        <li>Some turns unpriced: <code>$0.18 +3 unpriced</code> &mdash; the known floor plus a count</li>
-        <li>All turns unpriced: <code>&mdash; &middot; 7 turns unpriced</code> &mdash; tokens shown, cost suppressed</li>
-      </ul>
-      Narrow terminals collapse to <code>12.3k/200k &middot; $0.18</code> (or the appropriate variant).</li>
+  <li><strong>Status line</strong> shows cumulative token usage and
+      context-window position: <code>12.3k tokens &middot; 12.3k/200k</code>.
+      Narrow terminals collapse to <code>12.3k/200k</code>. Cost
+      calculation is out of scope for V1 &mdash; whoever cares about
+      money multiplies tokens by their own rate table.</li>
 </ul>
 </div>
 <div>
