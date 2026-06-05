@@ -1,4 +1,84 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-fn main() {}
+use std::{io, sync::Arc};
+
+use agent_rig::models::gemini::GeminiModel;
+use arnes_core::{LocalHost, ModelKey, Session};
+use clap::Parser;
+use crossterm::{
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use ratatui::{Terminal, backend::CrosstermBackend};
+use tokio::sync::mpsc;
+
+mod app;
+mod frontend;
+
+use frontend::{TuiFrontend, UiCommand};
+
+#[derive(Parser)]
+#[command(about = "arnes — a local AI coding agent")]
+struct Args {
+    /// Gemini model identifier
+    #[arg(long, default_value = "gemini-3.5-flash")]
+    model: String,
+
+    /// Gemini API key
+    #[arg(long, env = "GEMINI_API_KEY")]
+    api_key: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
+    let args = Args::parse();
+
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        original_hook(info);
+    }));
+
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+
+    let result = run(&args, &mut terminal).await;
+
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
+    result
+}
+
+async fn run(
+    args: &Args,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let model = Arc::new(GeminiModel::new(&args.api_key, &args.model));
+    let model_key = ModelKey { provider: "gemini".into(), model_id: args.model.clone() };
+
+    let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiCommand>();
+    let frontend = Arc::new(TuiFrontend::new(ui_tx));
+    let host = Arc::new(LocalHost);
+    let session = Session::new(frontend, host, model, model_key);
+    let cancel = session.cancel_handle();
+
+    let (prompt_tx, mut prompt_rx) = mpsc::channel::<String>(1);
+
+    tokio::spawn(async move {
+        let mut session = session;
+        while let Some(text) = prompt_rx.recv().await {
+            let _ = session.prompt(text).await;
+        }
+    });
+
+    app::run(terminal, ui_rx, prompt_tx, cancel, args.model.clone()).await?;
+
+    Ok(())
+}
