@@ -22,9 +22,9 @@ impl<F: Frontend, H: Host> Session<F, H> {
         let thread = to_rig_thread(&self.history);
         self.frontend.on_event(mk_event(EventKind::TurnStart)).await;
 
-        let mut stream = self
-            .runner
-            .run_with_cancellation(&self.agent, thread, self.cancel_token.clone());
+        let mut stream =
+            self.runner
+                .run_with_cancellation(&self.agent, thread, self.cancel_token.clone());
 
         let mut blocks: Vec<ContentBlock> = Vec::new();
         let mut tokens = TokenCounts::default();
@@ -53,7 +53,9 @@ impl<F: Frontend, H: Host> Session<F, H> {
                 }
                 AgentEvent::Error(e) => {
                     self.frontend
-                        .on_event(mk_event(EventKind::Error { message: e.to_string() }))
+                        .on_event(mk_event(EventKind::Error {
+                            message: e.to_string(),
+                        }))
                         .await;
                     return Err(CoreError::Session(e.to_string()));
                 }
@@ -63,7 +65,11 @@ impl<F: Frontend, H: Host> Session<F, H> {
             }
         }
 
-        let usage = TurnUsage { agent_id: AgentId::Root, model: self.model.clone(), tokens };
+        let usage = TurnUsage {
+            agent_id: AgentId::Root,
+            model: self.model.clone(),
+            tokens,
+        };
         self.cumulative_usage.record(usage.clone());
         self.history.push(Message::Assistant { content: blocks });
         self.frontend
@@ -74,7 +80,11 @@ impl<F: Frontend, H: Host> Session<F, H> {
 }
 
 fn mk_event(kind: EventKind) -> SessionEvent {
-    SessionEvent { agent_id: AgentId::Root, depth: 0, kind }
+    SessionEvent {
+        agent_id: AgentId::Root,
+        depth: 0,
+        kind,
+    }
 }
 
 fn append_block(blocks: &mut Vec<ContentBlock>, text: String, thinking: bool) {
@@ -86,7 +96,9 @@ fn append_block(blocks: &mut Vec<ContentBlock>, text: String, thinking: bool) {
 
     if extend {
         match blocks.last_mut().unwrap() {
-            ContentBlock::Text { text: t } | ContentBlock::Thinking { text: t } => t.push_str(&text),
+            ContentBlock::Text { text: t } | ContentBlock::Thinking { text: t } => {
+                t.push_str(&text)
+            }
             _ => unreachable!(),
         }
     } else if thinking {
@@ -113,7 +125,11 @@ fn to_rig_thread(history: &[Message]) -> Vec<RigMessage> {
                 let text: String = content
                     .iter()
                     .filter_map(|b| {
-                        if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
+                        if let ContentBlock::Text { text } = b {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
                     })
                     .collect::<Vec<_>>()
                     .join("");
@@ -123,7 +139,11 @@ fn to_rig_thread(history: &[Message]) -> Vec<RigMessage> {
                 let text: String = content
                     .iter()
                     .filter_map(|b| {
-                        if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
+                        if let ContentBlock::Text { text } = b {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
                     })
                     .collect::<Vec<_>>()
                     .join("");

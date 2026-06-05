@@ -61,13 +61,19 @@ impl AppState {
             EventKind::TurnEnd { .. } => {
                 if !self.streaming.is_empty() {
                     let text = std::mem::take(&mut self.streaming);
-                    self.items.push(TranscriptItem { role: ItemRole::Assistant, text });
+                    self.items.push(TranscriptItem {
+                        role: ItemRole::Assistant,
+                        text,
+                    });
                 }
                 self.is_running = false;
             }
             EventKind::Error { message } => {
                 self.streaming.clear();
-                self.items.push(TranscriptItem { role: ItemRole::Error, text: message });
+                self.items.push(TranscriptItem {
+                    role: ItemRole::Error,
+                    text: message,
+                });
                 self.is_running = false;
             }
         }
@@ -93,7 +99,9 @@ fn render(f: &mut Frame, state: &AppState) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "> ",
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(item.text.clone(), Style::default().fg(Color::Cyan)),
                 ]));
@@ -143,8 +151,8 @@ fn render(f: &mut Frame, state: &AppState) {
         Style::default().fg(Color::White)
     };
     let input_display = format!("> {}", state.input);
-    let input_widget =
-        Paragraph::new(input_display).block(Block::default().borders(Borders::ALL).style(border_style));
+    let input_widget = Paragraph::new(input_display)
+        .block(Block::default().borders(Borders::ALL).style(border_style));
     f.render_widget(input_widget, chunks[2]);
 
     // Cursor inside input box (hidden while running)

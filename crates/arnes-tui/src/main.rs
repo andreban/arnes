@@ -61,7 +61,10 @@ async fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let model = Arc::new(GeminiModel::new(&args.api_key, &args.model));
-    let model_key = ModelKey { provider: "gemini".into(), model_id: args.model.clone() };
+    let model_key = ModelKey {
+        provider: "gemini".into(),
+        model_id: args.model.clone(),
+    };
 
     let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiCommand>();
     let frontend = Arc::new(TuiFrontend::new(ui_tx));
