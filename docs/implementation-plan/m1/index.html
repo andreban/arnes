@@ -205,7 +205,7 @@ pub struct SessionEvent {
 pub enum EventKind {
     AgentMessageDelta { text: String },
     TurnStart,
-    TurnEnd { stop_reason: StopReason, usage: TurnUsage },   // TurnUsage carries agent_id + ModelKey + tokens + Option&lt;Cost&gt;
+    TurnEnd { stop_reason: StopReason, usage: TurnUsage },   // TurnUsage carries agent_id + ModelKey + tokens
     Error { message: String },
     // M2 adds ToolCallStart/Update/End. Future SubAgentStart/SubAgentEnd
     // land post-V1 via a sweep of in-tree match sites.
@@ -277,16 +277,15 @@ impl&lt;F, H&gt; Session&lt;F, H&gt; where F: Frontend, H: Host {
 <h2 id="usage-stub">Usage subsystem stub</h2>
 
 <p>
-  Define the data shapes and the pricing-registry loader in
-  <code>arnes-core::metering</code>. Token tracking starts working at M1;
-  cost calculation works for the few models the user declares; everything
-  else is <code>ModelCostInfo::Unknown</code> and surfaces as such.
+  Define the token-count data shapes in <code>arnes-core::metering</code>.
+  Token tracking starts working at M1. Cost calculation is out of scope
+  &mdash; the harness reports tokens; whoever cares about money can
+  multiply them by their own rate table.
 </p>
 
 <ul>
-  <li>Types: <code>ModelKey</code>, <code>TurnUsage</code> (carries <code>agent_id</code> + <code>model</code>), <code>Cost</code>, <code>Micros</code>, <code>ModelCostInfo</code>, <code>ModelPricing</code>, <code>ModelUsage</code>, <code>CumulativeUsage</code> (indexed by <code>(AgentId, ModelKey)</code>). See <a href="../core.html#usage-module">core.html &sect; metering</a> for the full shape.</li>
-  <li>Pricing is loaded from <code>~/.arnes/pricing.json</code> if present. No bundled defaults &mdash; fresh installs report cost as <em>unknown</em> until the user opts in by populating the file. Users on local providers (Ollama, llama.cpp) declare a provider block with <code>"default": "free"</code> to get zero-cost reporting.</li>
-  <li><code>Session</code> reads token counts off agent-rig's stream at turn end, builds <code>TurnUsage</code> with its own <code>agent_id</code> + the active <code>ModelKey</code>, computes <code>cost</code> via the registry, emits <code>EventKind::TurnEnd { stop_reason, usage }</code>.</li>
+  <li>Types: <code>ModelKey</code>, <code>TokenCounts</code> (one <code>total</code> field for V1), <code>TurnUsage</code> (carries <code>agent_id</code> + <code>model</code> + <code>tokens</code>), <code>ModelUsage</code>, <code>CumulativeUsage</code> (indexed by <code>(AgentId, ModelKey)</code>). See <a href="../core.html#usage-module">core.html &sect; metering</a> for the full shape.</li>
+  <li><code>Session</code> reads token counts off agent-rig's stream at turn end, builds <code>TurnUsage</code> with its own <code>agent_id</code> + the active <code>ModelKey</code>, and emits <code>EventKind::TurnEnd { stop_reason, usage }</code>.</li>
   <li><code>Session::cumulative_usage() -&gt; CumulativeUsage</code> accessor for frontends. V1 only ever has one entry under <code>(AgentId::Root, model)</code>, but the per-(agent, model) map is the source of truth so post-V1 sub-agents and mid-session model switches are additive, not breaking.</li>
   <li>Frontends at M1 don't have to render usage yet (M3 wires the TUI status line), but the data &mdash; including the per-model breakdown view via <code>cumulative_usage().by_model()</code> &mdash; is available.</li>
 </ul>

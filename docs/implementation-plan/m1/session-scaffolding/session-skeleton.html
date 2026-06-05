@@ -76,7 +76,7 @@
 
 <ul>
   <li><strong>new</strong>: <code>crates/arnes-core/src/session/mod.rs</code> &mdash; the struct + constructor + non-prompt methods.</li>
-  <li><strong>new</strong>: <code>crates/arnes-core/src/session/tests.rs</code> &mdash; unit tests (per the tests-in-sibling-file convention used in <code>metering/</code> and <code>pricing/</code>).</li>
+  <li><strong>new</strong>: <code>crates/arnes-core/src/session/tests.rs</code> &mdash; unit tests (per the tests-in-sibling-file convention used in <code>metering/</code>).</li>
   <li><strong>modify</strong>: <code>crates/arnes-core/src/lib.rs</code> &mdash; <code>mod session;</code> + <code>pub use session::Session;</code>.</li>
 </ul>
 
@@ -128,10 +128,9 @@
 <p>
   Deliberately <em>not</em> taking: a <code>ToolRegistry</code> (empty at
   M1; lands in M2), a <code>SystemPromptBuilder</code> (M4), a
-  <code>SessionWriter</code> (M6), a <code>PricingRegistry</code> (see
-  point 5 below). Each of those becomes an additional <code>new()</code>
-  argument in the milestone that introduces it; M1 keeps the constructor
-  to its core three.
+  <code>SessionWriter</code> (M6). Each of those becomes an additional
+  <code>new()</code> argument in the milestone that introduces it; M1
+  keeps the constructor to its core three.
 </p>
 
 <p>
@@ -158,12 +157,11 @@
 <p>
   Returning a borrow rather than a clone keeps the <code>HashMap</code>
   inside <code>CumulativeUsage</code> from being copied every call.
-  Frontends that want a snapshot can clone explicitly. No pricing
-  lookup happens here &mdash; pricing-vs-unknown is decided at
-  <code>TurnUsage</code> construction in PR #3, which is when we have a
-  <code>ModelKey</code> to look up. Wiring a <code>PricingRegistry</code>
-  into <code>Session::new()</code> is also deferred to PR #3 (it's the
-  PR that needs it).
+  Frontends that want a snapshot can clone explicitly. The
+  <code>ModelKey</code> the translator builds <code>TurnUsage</code>
+  with is set on the session in PR #3 (along with the
+  <code>prompt()</code> method); the skeleton here just owns the running
+  cumulative total.
 </p>
 
 <p>

@@ -224,24 +224,13 @@ graph TD
   end
 
   subgraph metering[" metering "]
-    Micros["Micros<br/>(i64)"]
-    Cost["Cost<br/>input, output, cache_read,<br/>cache_write, thinking, total"]
-    TokenCounts["TokenCounts<br/>input, output, cache_read,<br/>cache_write, thinking"]
-    TurnUsage["TurnUsage<br/>per-turn snapshot"]:::planned
-    ModelCostInfo["ModelCostInfo<br/>(Priced | Free | Unknown)"]:::planned
-    ModelPricing["ModelPricing"]:::planned
-    ModelUsage["ModelUsage<br/>aggregated row"]:::planned
-    CumulativeUsage["CumulativeUsage"]:::planned
-    PricingRegistry["PricingRegistry"]:::planned
-    Cost --> Micros
+    TokenCounts["TokenCounts<br/>total"]
+    TurnUsage["TurnUsage<br/>per-turn snapshot"]
+    ModelUsage["ModelUsage<br/>aggregated row"]
+    CumulativeUsage["CumulativeUsage"]
     TurnUsage --> TokenCounts
-    TurnUsage --> Cost
-    ModelCostInfo --> ModelPricing
-    ModelPricing --> Micros
     ModelUsage --> TokenCounts
-    ModelUsage --> Cost
     CumulativeUsage -. "by (AgentId, ModelKey)" .-> ModelUsage
-    PricingRegistry -. lookup .-> ModelCostInfo
   end
 
   subgraph skills[" skills (planned) "]
@@ -309,7 +298,7 @@ graph TD
     <tr><td><code>frontend</code></td><td>all</td><td>&mdash;</td></tr>
     <tr><td><code>host</code></td><td>all (default impls)</td><td>&mdash;</td></tr>
     <tr><td><code>tool_context</code></td><td>all</td><td>&mdash;</td></tr>
-    <tr><td><code>usage</code></td><td><code>Micros</code>, <code>Cost</code></td><td>rest of <a href="m1/usage-pricing/index.html">M1 phase 3</a></td></tr>
+    <tr><td><code>metering</code></td><td>all</td><td>&mdash;</td></tr>
     <tr><td><code>tools</code></td><td>&mdash;</td><td><a href="m2/index.html">M2</a> (<code>Tool</code> + first tool), <a href="m3/index.html">M3</a> (permission allowlist + scopes)</td></tr>
     <tr><td><code>prompt</code></td><td>&mdash;</td><td><a href="m4/index.html">M4</a></td></tr>
     <tr><td><code>skills</code></td><td>&mdash;</td><td><a href="m5/index.html">M5</a></td></tr>

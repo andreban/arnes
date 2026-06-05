@@ -210,7 +210,7 @@ impl Frontend for GuiFrontend {
   <li><strong>Real markdown.</strong> Headings, lists, code blocks with syntax highlighting via <code>highlight.js</code> or a Rust port.</li>
   <li><strong>Structured diffs.</strong> <code>edit</code> tool emissions render as a real diff view (line-by-line, additions/removals coloured).</li>
   <li><strong>Drag-and-drop attachments.</strong> Drop a file or image into the input box to attach it as a <code>ContentBlock::Image</code> or <code>ContentBlock::EmbeddedResource</code> in the next user message.</li>
-  <li><strong>Usage panel.</strong> A sidebar widget breaks down current session usage: input / output / cache / thinking tokens, known cost (or <em>"&mdash; (N turns unpriced)"</em> if any), context-window percentage, per-turn sparkline. Unknown-cost turns surface as a distinct visual state, not collapsed to zero.</li>
+  <li><strong>Usage panel.</strong> A sidebar widget breaks down current session usage: token totals per model (via <code>cumulative_usage().by_model()</code>) and per agent (post-V1 sub-agents); context-window percentage; per-turn sparkline.</li>
 </ul>
 
 <h2 id="permission-ui">Permission UX, GUI flavour</h2>

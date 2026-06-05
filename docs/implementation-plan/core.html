@@ -74,7 +74,7 @@
     <tr><td><code>prompt</code></td><td><code>SystemPromptBuilder</code> &mdash; assembles the prompt from slots.</td><td>5</td></tr>
     <tr><td><code>persist</code></td><td><code>SessionWriter</code> + reader for JSONL session logs.</td><td>6</td></tr>
     <tr><td><code>compact</code></td><td>Token estimation, threshold trigger, summary prompt, history rewrite.</td><td>10</td></tr>
-    <tr><td><code>metering</code></td><td><code>TurnUsage</code>, <code>TokenCounts</code>, <code>Cost</code>, <code>CumulativeUsage</code>, <code>ModelPricing</code> + <code>ModelCostInfo</code>, and the <code>Micros</code> integer-money helper. Each type lives in its own file under <code>metering/</code>.</td><td>&mdash;</td></tr>
+    <tr><td><code>metering</code></td><td><code>TurnUsage</code>, <code>TokenCounts</code>, <code>ModelUsage</code>, <code>CumulativeUsage</code>. Each type lives in its own file under <code>metering/</code>. Token counts only &mdash; cost calculation is out of scope.</td><td>&mdash;</td></tr>
     <tr><td><code>extensions</code></td><td><code>ExtensionHost</code>, lifecycle events, host API surface. <em>Deferred</em> &mdash; design preserved, build is post-V1.</td><td>8</td></tr>
     <tr><td><code>skills</code></td><td>SKILL.md discovery + frontmatter parse + prompt-section emitter.</td><td>9</td></tr>
   </tbody>
@@ -153,7 +153,7 @@ async fn main() -&gt; arnes_core::Result&lt;()&gt; {
 
     // 4. Cumulative usage is queryable at any time.
     let usage = session.cumulative_usage();
-    println!("total: {:?}", usage.total_known_cost());
+    println!("turns: {}", usage.turns_total);
     Ok(())
 }</code></pre>
 
@@ -412,24 +412,24 @@ impl Compactor {
   at the top of the loop.
 </p>
 
-<h2 id="usage-module">metering &mdash; tokens and costs</h2>
+<h2 id="usage-module">metering &mdash; tokens</h2>
 
 <p>
-  Every turn produces a <code>TurnUsage</code> snapshot from the provider.
-  The session aggregates them into a <code>CumulativeUsage</code> the
-  frontends display. Three states matter: <em>priced</em> (we know the
-  cost), <em>free</em> (explicitly free, e.g. local models), and
-  <em>unknown</em> (no pricing data). They are kept distinct end-to-end;
-  unknown is never silently coerced to zero.
+  Every turn produces a <code>TurnUsage</code> snapshot from the
+  provider. The session aggregates them into a <code>CumulativeUsage</code>
+  the frontends display. V1 reports a single <code>total</code> per
+  turn; per-token-kind breakdown (input / output / cache / thinking) can
+  grow back later if a real consumer needs it. Cost calculation is out
+  of scope &mdash; whoever cares about money can multiply tokens by their
+  own rate table.
 </p>
 
-<pre><code>// arnes-core/src/metering/  (one type per file: turn_usage.rs, cost.rs,
-// micros.rs, model_cost_info.rs, model_pricing.rs, model_usage.rs,
-// token_counts.rs, cumulative_usage.rs)
+<pre><code>// arnes-core/src/metering/  (one type per file: token_counts.rs,
+// turn_usage.rs, model_usage.rs, cumulative_usage.rs)
 
-/// Identifies which model a turn ran against. The natural cost-accounting
-/// unit: pricing is keyed by this pair, and the UI reports usage broken
-/// down by it.
+/// Identifies which model a turn ran against. The natural unit:
+/// usage is keyed by this pair, and the UI reports usage broken down
+/// by it.
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct ModelKey {
     pub provider: String,    // "gemini", "ollama", ...
@@ -437,63 +437,29 @@ pub struct ModelKey {
 }
 
 pub struct TurnUsage {
-    pub agent_id: AgentId,        // who produced this turn (see frontend.rs)
-    pub model:    ModelKey,       // which model billed for it
+    pub agent_id: AgentId,    // who produced this turn (see frontend.rs)
+    pub model:    ModelKey,   // which model produced it
     pub tokens:   TokenCounts,
-    /// None: pricing not available for this model.
-    pub cost:     Option&lt;Cost&gt;,
 }
 
-/// Per-token-kind counts a turn consumed. Carries `Add` / `AddAssign`
-/// for aggregation; also the input to `ModelPricing::cost_for`.
+/// How many tokens a turn consumed. One number for V1; the struct
+/// exists so per-kind fields can grow back without renaming sites.
+/// Carries `Add` / `AddAssign` for aggregation.
 pub struct TokenCounts {
-    pub input:       u64,
-    pub output:      u64,
-    pub cache_read:  u64,
-    pub cache_write: u64,
-    pub thinking:    u64,
-}
-
-pub struct Cost {
-    pub input:       Micros,
-    pub output:      Micros,
-    pub cache_read:  Micros,
-    pub cache_write: Micros,
-    pub thinking:    Micros,
-    pub total:       Micros,
-}
-
-/// Integer micros = millionths of a dollar. Six decimal places, no float drift.
-pub struct Micros(pub i64);
-
-pub enum ModelCostInfo {
-    Priced(ModelPricing),   // declared in ~/.arnes/pricing.json
-    Free,                   // explicitly free (local Ollama, self-hosted)
-    Unknown,                // default for unrecognized / unconfigured models
-}
-
-pub struct ModelPricing {
-    pub input_per_mtok:        Micros,
-    pub output_per_mtok:       Micros,
-    pub cache_read_per_mtok:   Option&lt;Micros&gt;,
-    pub cache_write_per_mtok:  Option&lt;Micros&gt;,
-    pub thinking_per_mtok:     Option&lt;Micros&gt;,
+    pub total: u64,
 }
 
 /// One row of aggregated usage for a single (agent, model) bucket.
 pub struct ModelUsage {
-    pub model:                   ModelKey,
-    pub tokens:                  TokenCounts,
-    pub turns:                   u32,
-    /// Sum of priced turns for this (agent, model) bucket.
-    pub known_cost:              Cost,
-    pub turns_with_unknown_cost: u32,
+    pub model:  ModelKey,
+    pub tokens: TokenCounts,
+    pub turns:  u32,
 }
 
 pub struct CumulativeUsage {
     /// Single source of truth: indexed by (agent, model). A sub-agent that
     /// switched models mid-session has two entries. V1 only ever populates
-    /// AgentId::root().
+    /// AgentId::Root.
     by_agent_and_model: HashMap&lt;(AgentId, ModelKey), ModelUsage&gt;,
     pub turns_total: u32,
 }
@@ -506,57 +472,7 @@ impl CumulativeUsage {
 
     /// Flatten across models: total per AgentId.
     pub fn by_agent(&amp;self) -&gt; HashMap&lt;&amp;AgentId, ModelUsage&gt;;
-
-    /// Sum of all priced turns across all (agent, model) buckets.
-    pub fn total_known_cost(&amp;self) -&gt; Cost;
-
-    /// Count of all turns whose pricing was Unknown.
-    pub fn total_turns_with_unknown_cost(&amp;self) -&gt; u32;
 }</code></pre>
-
-<h3 id="pricing-registry">Pricing registry</h3>
-
-<p>
-  User-supplied JSON at <code>~/.arnes/pricing.json</code>. No bundled
-  defaults &mdash; shipping pricing in the binary would commit us to
-  keeping rates current, and the three-state <code>ModelCostInfo</code>
-  already handles "we don't know" honestly. The file is a list of
-  <code>ProviderPricing</code> values; each carries the provider name, an
-  optional <code>default</code> (the unmatched-model-on-this-provider
-  fallback, used by self-hosted providers like Ollama where the user
-  can't enumerate model_ids ahead of time), and an optional
-  <code>models</code> object keyed by <code>model_id</code> with inline
-  rates.
-</p>
-
-<pre><code>// ~/.arnes/pricing.json  (user-supplied; absent file is fine)
-[
-  {
-    "provider": "gemini",
-    "models": {
-      "gemini-2.5-flash": {
-        "input_per_mtok": 0.075,
-        "output_per_mtok": 0.30,
-        "cache_read_per_mtok": 0.01875
-      }
-    }
-  },
-  {
-    "provider": "ollama",
-    "default": "free"
-  }
-]
-// Anything not listed defaults to Unknown.</code></pre>
-
-<p>
-  <code>parse_pricing(src: &amp;str) -&gt; Result&lt;Vec&lt;ProviderPricing&gt;, _&gt;</code>
-  is a one-line <code>serde_json::from_str</code> wrapper; the session
-  reads the file once at start, calls
-  <code>PricingRegistry::from_providers(parse_pricing(&amp;src)?)</code>, and
-  then <code>registry.lookup(provider, model_id)</code> returns the
-  <code>ModelCostInfo</code>. That plus per-turn <code>TurnUsage</code>
-  token counts computes the turn's <code>cost</code> field.
-</p>
 
 <h3 id="usage-events">Where usage flows</h3>
 
@@ -566,8 +482,8 @@ impl CumulativeUsage {
   <code>Session</code> maintains <code>cumulative_usage()</code> as a
   running total accessible to frontends at any time. Persistence (M6)
   writes a <code>TurnUsage</code> row per turn into the JSONL alongside
-  messages; resume reconstructs the cumulative including the per-agent and
-  per-model breakdowns.
+  messages; resume reconstructs the cumulative including the per-agent
+  and per-model breakdowns.
 </p>
 
 <h2 id="future-compat">Future-compatibility: sub-agents</h2>
@@ -603,7 +519,7 @@ impl CumulativeUsage {
     </tr>
     <tr>
       <td><code>TurnUsage</code> + <code>CumulativeUsage</code></td>
-      <td>Every <code>TurnUsage</code> carries <code>agent_id</code> and <code>ModelKey</code>. <code>CumulativeUsage</code> indexes by (agent, model) so cost is reported per backend+model, with per-agent attribution available via <code>by_agent()</code>.</td>
+      <td>Every <code>TurnUsage</code> carries <code>agent_id</code> and <code>ModelKey</code>. <code>CumulativeUsage</code> indexes by (agent, model) so tokens are reported per backend+model, with per-agent attribution available via <code>by_agent()</code>.</td>
     </tr>
     <tr>
       <td><code>PermissionAllowlist</code></td>

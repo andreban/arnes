@@ -97,7 +97,7 @@
     <tr><td><code>GET /healthz</code></td><td>200 OK with build info. No auth.</td></tr>
     <tr><td><code>GET /v1/sessions</code></td><td>List sessions (id, title, created, last activity).</td></tr>
     <tr><td><code>POST /v1/sessions</code></td><td>Create. Body: <code>{ model, cwd, tools?, mode? }</code>. Returns session id.</td></tr>
-    <tr><td><code>GET /v1/sessions/{id}</code></td><td>Metadata + cumulative usage (tokens, known cost, unpriced-turn count) + paginated history.</td></tr>
+    <tr><td><code>GET /v1/sessions/{id}</code></td><td>Metadata + cumulative usage (tokens per model and per agent) + paginated history.</td></tr>
     <tr><td><code>DELETE /v1/sessions/{id}</code></td><td>Close session and delete its JSONL.</td></tr>
     <tr><td><code>POST /v1/sessions/{id}/prompt</code></td><td>Non-streaming prompt. Returns the final assistant message after the loop.</td></tr>
     <tr><td><code>POST /v1/sessions/{id}/cancel</code></td><td>Cancel the in-flight prompt.</td></tr>

@@ -51,7 +51,7 @@
 <main class="main">
 
 <div class="page-header" data-accent="coding">
-  <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 7 of 8</span>
+  <span class="eyebrow">M1 &middot; Phase 3 &middot; PR 3 of 4</span>
   <h1><code>feat/cumulative-usage-projections</code></h1>
   <p class="lead">
     <code>CumulativeUsage::by_model()</code> and
@@ -85,7 +85,7 @@
 </p>
 
 <ul>
-  <li><strong><code>by_model()</code></strong>: for each <code>ModelKey</code>, sum every bucket that shares that key (across agents). Useful for "what did each model cost / how many tokens did each model produce, regardless of which agent invoked it."</li>
+  <li><strong><code>by_model()</code></strong>: for each <code>ModelKey</code>, sum every bucket that shares that key (across agents). Useful for "how many tokens did each model produce, regardless of which agent invoked it."</li>
   <li><strong><code>by_agent()</code></strong>: for each <code>AgentId</code>, sum every bucket that shares that ID (across models). Useful at V1 only-Root, but mandatory for post-V1 sub-agent attribution.</li>
 </ul>
 
@@ -109,10 +109,7 @@
   <strong>3. <code>ModelUsage</code> values in the projection</strong>
   carry the <code>model</code> field (and effectively encode the
   <code>AgentId</code> in <code>by_agent</code>) so a consumer iterating
-  the values doesn't need the key. The
-  <code>turns_with_unknown_cost</code> count flows through the sum: a
-  per-model row's <code>turns_with_unknown_cost</code> is the sum across
-  agents for that model.
+  the values doesn't need the key.
 </p>
 
 <p>
@@ -121,8 +118,8 @@
 </p>
 
 <ul>
-  <li>Sum of <code>by_model()</code> values' <code>known_cost</code> = sum of <code>by_agent()</code> values' <code>known_cost</code> = <code>total_known_cost()</code>.</li>
-  <li>Same for <code>turns_with_unknown_cost</code> (each sum = <code>total_turns_with_unknown_cost()</code>) and each individual token-kind total.</li>
+  <li>Sum of <code>by_model()</code> values' <code>tokens.total</code> = sum of <code>by_agent()</code> values' <code>tokens.total</code> = sum of every recorded turn's tokens.</li>
+  <li>Sum of <code>by_model()</code> values' <code>turns</code> = sum of <code>by_agent()</code> values' <code>turns</code> = <code>turns_total</code>.</li>
 </ul>
 
 <p>
@@ -160,8 +157,6 @@ impl CumulativeUsage {
                 model: model.clone(),
                 tokens: TokenCounts::default(),
                 turns: 0,
-                known_cost: Cost::default(),
-                turns_with_unknown_cost: 0,
             });
             merge_into(entry, bucket);
         }
@@ -178,8 +173,6 @@ impl CumulativeUsage {
                 model: model.clone(),
                 tokens: TokenCounts::default(),
                 turns: 0,
-                known_cost: Cost::default(),
-                turns_with_unknown_cost: 0,
             });
             merge_into(entry, bucket);
         }
@@ -188,10 +181,8 @@ impl CumulativeUsage {
 }
 
 fn merge_into(into: &amp;mut ModelUsage, from: &amp;ModelUsage) {
-    into.tokens                  += from.tokens;
-    into.turns                   += from.turns;
-    into.known_cost              += from.known_cost;
-    into.turns_with_unknown_cost += from.turns_with_unknown_cost;
+    into.tokens += from.tokens;
+    into.turns  += from.turns;
 }</code></pre>
 
 <p>
@@ -212,7 +203,7 @@ fn merge_into(into: &amp;mut ModelUsage, from: &amp;ModelUsage) {
   <li><strong>Single bucket</strong>: one recorded <code>TurnUsage</code> shows up as one entry in both projections, with totals matching the original.</li>
   <li><strong>Two models, one agent</strong>: two <code>TurnUsage</code>s with same <code>AgentId</code> but different <code>ModelKey</code>s &mdash; <code>by_model</code> returns 2 entries; <code>by_agent</code> returns 1 entry with summed totals.</li>
   <li><strong>One model, two agents</strong>: mirror of above (only meaningful post-V1, but exercises the bucketing code).</li>
-  <li><strong>Projection consistency</strong>: with a fixture of 3+ distinct (agent, model) buckets, assert sums match: sum of <code>by_model()</code> values' <code>known_cost</code> equals sum of <code>by_agent()</code> values' <code>known_cost</code> equals <code>total_known_cost()</code>. Same for <code>turns_with_unknown_cost</code>.</li>
+  <li><strong>Projection consistency</strong>: with a fixture of 3+ distinct (agent, model) buckets, assert sums match: sum of <code>by_model()</code> values' tokens equals sum of <code>by_agent()</code> values' tokens equals the sum of all recorded turn tokens.</li>
 </ul>
 
 <h2 id="acceptance">Acceptance</h2>
@@ -225,9 +216,9 @@ fn merge_into(into: &amp;mut ModelUsage, from: &amp;ModelUsage) {
 </ul>
 
 <div class="pager">
-  <a class="prev" href="pricing-json-loader.html">
+  <a class="prev" href="cumulative-usage.html">
     <span class="pager-label">&larr; Back</span>
-    <span class="pager-title">feat/pricing-json-loader</span>
+    <span class="pager-title">feat/cumulative-usage</span>
   </a>
   <a class="next" href="turnend-usage-wiring.html">
     <span class="pager-label">Next &rarr;</span>

@@ -152,7 +152,7 @@
 <ul>
   <li><strong>Persistence (M6) needs to record it</strong> &mdash; an honest replay should include what the model was thinking, not just what it said. If we don't ship the variant now, M6's JSONL gets a breaking-shape change when we do.</li>
   <li><strong>Frontends choose what to do with it</strong> &mdash; TUI may render in dim color or hide behind a key; ACP forwards to the editor; HTTP streams it for inspector tools. The harness shouldn't pre-decide.</li>
-  <li><strong>Cost accounting attributes it</strong> &mdash; <code>TurnUsage.tokens.thinking</code> already exists in the design (see <a href="../../core.html#usage-module">metering module spec</a>). Without a thinking content block, the token count is unattributable to any visible artifact.</li>
+  <li><strong>Usage attribution surfaces it</strong> &mdash; if we ever grow per-kind <code>TokenCounts</code> back, thinking tokens are a distinct bucket; the message half of the attribution (which blocks the model generated) needs to exist.</li>
   <li><strong>M1's Gemini integration will emit them</strong> if the model is configured for thinking mode. Skipping this variant means M1 silently drops content that the API returned.</li>
 </ul>
 
@@ -243,12 +243,12 @@
 </ul>
 
 <p>
-  Provider caching matters for cost (huge win on long system prompts)
-  but lands later (post-M1). The decision is "make this simple now;
-  introduce the block-list shape when caching wiring shows up." That
-  shape change requires sweeping every site that constructs or matches
-  on <code>Message::System</code>, which is exactly the kind of
-  cognition the compile-error path gives us.
+  Provider caching matters for latency and token spend (huge win on
+  long system prompts) but lands later (post-M1). The decision is
+  "make this simple now; introduce the block-list shape when caching
+  wiring shows up." That shape change requires sweeping every site
+  that constructs or matches on <code>Message::System</code>, which is
+  exactly the kind of cognition the compile-error path gives us.
 </p>
 
 <h3 id="constructors">5. Helper constructors</h3>

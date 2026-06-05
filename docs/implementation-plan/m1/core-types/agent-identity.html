@@ -64,9 +64,10 @@
 <h2 id="goal">Goal</h2>
 
 <p>
-  Ship <code>AgentId</code> (with the post-V1 sub-agent variant in place
-  but never minted at M1) and <code>ModelKey</code> (the provider / model
-  cost-accounting key). The shapes encode the
+  Ship <code>AgentId</code> (with the post-V1 sub-agent variant in
+  place but never minted at M1) and <code>ModelKey</code> (the natural
+  key for usage attribution: which provider, which model produced this
+  turn). The shapes encode the
   <a href="../../core.html#future-compat">sub-agent commitments</a>
   &mdash; later PRs and milestones depend on these types not changing
   shape when sub-agents land.
@@ -147,18 +148,19 @@
   Question worth surfacing: model versions like
   <code>gemini-2.5-flash-001</code> vs
   <code>gemini-2.5-flash-latest</code> vs
-  <code>gemini-2.5-flash</code> exist. Cost-wise they're priced the
-  same; behavior-wise they can differ. Options:
+  <code>gemini-2.5-flash</code> exist. They behave differently and
+  external rate tables sometimes break down to version, sometimes not.
+  Options:
 </p>
 
 <ul>
-  <li><strong>Treat the version suffix as part of <code>model_id</code></strong> (chosen for M1). <code>ModelKey { provider: "gemini", model_id: "gemini-2.5-flash-001" }</code>. Lets pricing TOML key on whatever granularity each model uses; matches what agent-rig reports back from the wire.</li>
-  <li><strong>Add a separate <code>version</code> field.</strong> Cleaner semantically but most pricing data doesn't break down to version; over-engineered for what we're doing now.</li>
+  <li><strong>Treat the version suffix as part of <code>model_id</code></strong> (chosen for M1). <code>ModelKey { provider: "gemini", model_id: "gemini-2.5-flash-001" }</code>. Matches what agent-rig reports back from the wire and gives downstream tools (model routing, external cost reports) whatever granularity each model uses.</li>
+  <li><strong>Add a separate <code>version</code> field.</strong> Cleaner semantically but over-engineered for what we need now.</li>
 </ul>
 
 <p>
-  Keep it at two fields for M1; revisit if M2/M3 pricing or routing logic
-  actually needs the split.
+  Keep it at two fields for M1; revisit if M2/M3 routing or attribution
+  logic actually needs the split.
 </p>
 
 <p>
@@ -203,10 +205,10 @@ pub enum AgentId {
     SubAgent(Uuid),
 }
 
-/// Identifies a model for cost accounting and usage attribution.
+/// Identifies a model for usage attribution.
 ///
-/// The pair `(provider, model_id)` is the natural key; pricing data
-/// is indexed by it, and per-model usage breakdowns bucket by it.
+/// The pair `(provider, model_id)` is the natural key; per-model
+/// usage breakdowns bucket by it.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ModelKey {
     pub provider: String,
