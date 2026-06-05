@@ -8,3 +8,15 @@ publish = false
 [[bin]]
 name = "arnes"
 path = "src/main.rs"
+
+[dependencies]
+agent-rig    = { workspace = true, features = ["gemini"] }
+arnes-core   = { path = "../arnes-core" }
+async-trait  = { workspace = true }
+clap         = { version = "4", features = ["derive", "env"] }
+dotenvy      = "0.15"
+crossterm    = { version = "0.28", features = ["event-stream"] }
+futures-util = { workspace = true }
+ratatui      = "0.29"
+tokio        = { version = "1", features = ["full"] }
+tokio-util   = { workspace = true }
