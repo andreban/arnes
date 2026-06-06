@@ -71,6 +71,14 @@ apply to `Cargo.toml`, Markdown, or the rendered HTML docs.
 - Tests that need a real provider key are `#[ignore]` by default and run
   with `cargo test -- --ignored` in a CI job that has the secret available.
 
+## Before every commit
+
+```sh
+cargo fmt --all
+```
+
+Run this before staging files. CI fails on any formatting diff.
+
 ## Before opening a PR
 
 ```sh

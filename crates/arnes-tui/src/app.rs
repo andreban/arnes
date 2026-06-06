@@ -36,6 +36,7 @@ pub struct AppState {
     input: String,
     is_running: bool,
     model_name: String,
+    current_cancel: Option<CancellationToken>,
 }
 
 impl AppState {
@@ -46,6 +47,7 @@ impl AppState {
             input: String::new(),
             is_running: false,
             model_name,
+            current_cancel: None,
         }
     }
 
@@ -67,6 +69,7 @@ impl AppState {
                     });
                 }
                 self.is_running = false;
+                self.current_cancel = None;
             }
             EventKind::Error { message } => {
                 self.streaming.clear();
@@ -75,6 +78,7 @@ impl AppState {
                     text: message,
                 });
                 self.is_running = false;
+                self.current_cancel = None;
             }
         }
     }
@@ -167,8 +171,7 @@ fn render(f: &mut Frame, state: &AppState) {
 pub async fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     mut ui_rx: mpsc::UnboundedReceiver<UiCommand>,
-    prompt_tx: mpsc::Sender<String>,
-    cancel: CancellationToken,
+    prompt_tx: mpsc::Sender<(String, CancellationToken)>,
     model_name: String,
 ) -> io::Result<()> {
     let mut state = AppState::new(model_name);
@@ -186,8 +189,15 @@ pub async fn run(
                     Event::Key(KeyEvent { code, modifiers, kind: KeyEventKind::Press, .. }) => {
                         match (code, modifiers) {
                             (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                                cancel.cancel();
+                                if let Some(cancel) = &state.current_cancel {
+                                    cancel.cancel();
+                                }
                                 break;
+                            }
+                            (KeyCode::Esc, _) if state.is_running => {
+                                if let Some(cancel) = &state.current_cancel {
+                                    cancel.cancel();
+                                }
                             }
                             (KeyCode::Enter, _) if !state.is_running => {
                                 let text = state.input.trim().to_string();
@@ -197,7 +207,9 @@ pub async fn run(
                                         role: ItemRole::User,
                                         text: text.clone(),
                                     });
-                                    let _ = prompt_tx.send(text).await;
+                                    let cancel = CancellationToken::new();
+                                    state.current_cancel = Some(cancel.clone());
+                                    let _ = prompt_tx.send((text, cancel)).await;
                                 }
                             }
                             (KeyCode::Backspace, _) if !state.is_running => {

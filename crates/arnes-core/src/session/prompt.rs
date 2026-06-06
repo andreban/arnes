@@ -6,6 +6,7 @@ use agent_rig::{
     runner::AgentEvent,
 };
 use futures_util::StreamExt;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     AgentId, ContentBlock, CoreError, EventKind, Frontend, Host, Message, Result, SessionEvent,
@@ -15,16 +16,20 @@ use crate::{
 use super::Session;
 
 impl<F: Frontend, H: Host> Session<F, H> {
-    pub async fn prompt(&mut self, input: impl Into<String>) -> Result<()> {
+    pub async fn prompt(
+        &mut self,
+        input: impl Into<String>,
+        cancel: CancellationToken,
+    ) -> Result<()> {
         let input = input.into();
         self.history.push(Message::user_text(&input));
 
         let thread = to_rig_thread(&self.history);
         self.frontend.on_event(mk_event(EventKind::TurnStart)).await;
 
-        let mut stream =
-            self.runner
-                .run_with_cancellation(&self.agent, thread, self.cancel_token.clone());
+        let mut stream = self
+            .runner
+            .run_with_cancellation(&self.agent, thread, cancel);
 
         let mut blocks: Vec<ContentBlock> = Vec::new();
         let mut tokens = TokenCounts::default();
