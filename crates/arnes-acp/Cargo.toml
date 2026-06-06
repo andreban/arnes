@@ -4,3 +4,20 @@ version = "0.0.0"
 edition = "2024"
 license = "Apache-2.0"
 publish = false
+
+[[bin]]
+name = "arnes-acp"
+path = "src/main.rs"
+
+[dependencies]
+agent-rig    = { workspace = true, features = ["gemini"] }
+arnes-core   = { path = "../arnes-core" }
+async-trait  = { workspace = true }
+clap         = { version = "4", features = ["derive", "env"] }
+dotenvy      = "0.15"
+futures-util = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+tokio        = { version = "1", features = ["full"] }
+tokio-util   = { workspace = true, features = ["codec"] }
+uuid         = { workspace = true }
