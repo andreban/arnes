@@ -12,6 +12,7 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 mod app;
 mod frontend;
@@ -70,18 +71,17 @@ async fn run(
     let frontend = Arc::new(TuiFrontend::new(ui_tx));
     let host = Arc::new(LocalHost);
     let session = Session::new(frontend, host, model, model_key);
-    let cancel = session.cancel_handle();
 
-    let (prompt_tx, mut prompt_rx) = mpsc::channel::<String>(1);
+    let (prompt_tx, mut prompt_rx) = mpsc::channel::<(String, CancellationToken)>(1);
 
     tokio::spawn(async move {
         let mut session = session;
-        while let Some(text) = prompt_rx.recv().await {
-            let _ = session.prompt(text).await;
+        while let Some((text, cancel)) = prompt_rx.recv().await {
+            let _ = session.prompt(text, cancel).await;
         }
     });
 
-    app::run(terminal, ui_rx, prompt_tx, cancel, args.model.clone()).await?;
+    app::run(terminal, ui_rx, prompt_tx, args.model.clone()).await?;
 
     Ok(())
 }

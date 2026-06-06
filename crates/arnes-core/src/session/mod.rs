@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use agent_rig::{Agent, model::LlmModel, runner::AgentRunner};
-use tokio_util::sync::CancellationToken;
 
 use crate::{CumulativeUsage, Frontend, Host, Message, ModelKey};
 
@@ -19,7 +18,6 @@ pub struct Session<F: Frontend, H: Host> {
     pub(super) agent: Agent,
     pub(super) history: Vec<Message>,
     pub(super) cumulative_usage: CumulativeUsage,
-    pub(super) cancel_token: CancellationToken,
     pub(super) model: ModelKey,
 }
 
@@ -37,15 +35,8 @@ impl<F: Frontend, H: Host> Session<F, H> {
             agent,
             history: Vec::new(),
             cumulative_usage: CumulativeUsage::default(),
-            cancel_token: CancellationToken::new(),
             model,
         }
-    }
-
-    /// Returns a cloned cancellation token that can be fired from any task to
-    /// abort the current `prompt()` call.
-    pub fn cancel_handle(&self) -> CancellationToken {
-        self.cancel_token.clone()
     }
 
     pub fn cumulative_usage(&self) -> &CumulativeUsage {
