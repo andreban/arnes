@@ -48,6 +48,10 @@ impl Handler {
         }
     }
 
+    pub fn write_tx(&self) -> mpsc::UnboundedSender<String> {
+        self.notify_tx.clone()
+    }
+
     pub async fn handle_initialize(&self, id: Value, params: Value) -> Response {
         let Ok(p) = serde_json::from_value::<InitializeParams>(params) else {
             return Response::err(id, -32602, "invalid params");
