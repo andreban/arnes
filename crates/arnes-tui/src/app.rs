@@ -4,7 +4,9 @@
 use std::io;
 
 use arnes_core::{EventKind, SessionEvent};
-use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
 use futures_util::StreamExt;
 use ratatui::{
     Frame, Terminal,
@@ -37,6 +39,10 @@ pub struct AppState {
     is_running: bool,
     model_name: String,
     current_cancel: Option<CancellationToken>,
+    // Lines scrolled up from the bottom of the transcript. 0 follows the tail.
+    scroll_offset: u16,
+    last_transcript_height: u16,
+    last_max_scroll: u16,
 }
 
 impl AppState {
@@ -48,7 +54,33 @@ impl AppState {
             is_running: false,
             model_name,
             current_cancel: None,
+            scroll_offset: 0,
+            last_transcript_height: 0,
+            last_max_scroll: 0,
         }
+    }
+
+    fn scroll_up(&mut self, by: u16) {
+        self.scroll_offset = self
+            .scroll_offset
+            .saturating_add(by)
+            .min(self.last_max_scroll);
+    }
+
+    fn scroll_down(&mut self, by: u16) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(by);
+    }
+
+    fn scroll_to_top(&mut self) {
+        self.scroll_offset = self.last_max_scroll;
+    }
+
+    fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = 0;
+    }
+
+    fn page_size(&self) -> u16 {
+        self.last_transcript_height.saturating_sub(1).max(1)
     }
 
     fn handle_session_event(&mut self, ev: SessionEvent) {
@@ -84,7 +116,7 @@ impl AppState {
     }
 }
 
-fn render(f: &mut Frame, state: &AppState) {
+fn render(f: &mut Frame, state: &mut AppState) {
     let area = f.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -135,7 +167,14 @@ fn render(f: &mut Frame, state: &AppState) {
     }
 
     let transcript_height = chunks[0].height as usize;
-    let scroll = lines.len().saturating_sub(transcript_height) as u16;
+    let max_scroll = lines.len().saturating_sub(transcript_height);
+    let max_scroll_u16 = max_scroll.min(u16::MAX as usize) as u16;
+    state.last_transcript_height = chunks[0].height;
+    state.last_max_scroll = max_scroll_u16;
+    if state.scroll_offset > max_scroll_u16 {
+        state.scroll_offset = max_scroll_u16;
+    }
+    let scroll = max_scroll_u16.saturating_sub(state.scroll_offset);
     let transcript = Paragraph::new(Text::from(lines)).scroll((scroll, 0));
     f.render_widget(transcript, chunks[0]);
 
@@ -178,7 +217,7 @@ pub async fn run(
     let mut event_stream = EventStream::new();
 
     loop {
-        terminal.draw(|f| render(f, &state))?;
+        terminal.draw(|f| render(f, &mut state))?;
 
         tokio::select! {
             biased;
@@ -207,6 +246,7 @@ pub async fn run(
                                         role: ItemRole::User,
                                         text: text.clone(),
                                     });
+                                    state.scroll_to_bottom();
                                     let cancel = CancellationToken::new();
                                     state.current_cancel = Some(cancel.clone());
                                     let _ = prompt_tx.send((text, cancel)).await;
@@ -215,11 +255,32 @@ pub async fn run(
                             (KeyCode::Backspace, _) if !state.is_running => {
                                 state.input.pop();
                             }
+                            (KeyCode::PageUp, _) => {
+                                let page = state.page_size();
+                                state.scroll_up(page);
+                            }
+                            (KeyCode::PageDown, _) => {
+                                let page = state.page_size();
+                                state.scroll_down(page);
+                            }
+                            (KeyCode::Home, KeyModifiers::CONTROL) => {
+                                state.scroll_to_top();
+                            }
+                            (KeyCode::End, KeyModifiers::CONTROL) => {
+                                state.scroll_to_bottom();
+                            }
                             (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT)
                                 if !state.is_running =>
                             {
                                 state.input.push(c);
                             }
+                            _ => {}
+                        }
+                    }
+                    Event::Mouse(MouseEvent { kind, .. }) => {
+                        match kind {
+                            MouseEventKind::ScrollUp => state.scroll_up(3),
+                            MouseEventKind::ScrollDown => state.scroll_down(3),
                             _ => {}
                         }
                     }
