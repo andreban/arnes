@@ -14,7 +14,6 @@ use tokio_util::codec::{FramedRead, LinesCodec};
 
 mod frontend;
 mod handler;
-mod host;
 mod types;
 
 use handler::Handler;

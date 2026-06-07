@@ -13,7 +13,9 @@ pub trait Frontend: Send + Sync {
     async fn on_event(&self, event: SessionEvent);
     async fn request_permission(&self, req: PermissionRequest) -> Permission;
     fn capabilities(&self) -> FrontendCapabilities {
-        FrontendCapabilities
+        FrontendCapabilities {
+            ..Default::default()
+        }
     }
 }
 
@@ -61,7 +63,20 @@ pub enum Permission {
     Deny,
 }
 
-/// What the frontend supports. Bool fields added per capability when
-/// there's a real caller branching on it.
+/// Frontend features the agent can use.
+///
+/// Defaults to nothing supported; set a field to `true` only when a
+/// real caller branches on it. New capabilities are added the same
+/// way — opt-in, never speculative.
 #[derive(Clone, Debug, Default)]
-pub struct FrontendCapabilities;
+pub struct FrontendCapabilities {
+    pub fs: FilesystemCapabilities,
+    pub terminal: bool,
+}
+
+/// Filesystem operations the frontend exposes to the agent.
+#[derive(Clone, Debug, Default)]
+pub struct FilesystemCapabilities {
+    pub read_file: bool,
+    pub write_file: bool,
+}

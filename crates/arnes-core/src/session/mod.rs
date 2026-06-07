@@ -10,10 +10,10 @@ use crate::{CumulativeUsage, Frontend, Host, Message, ModelKey};
 mod prompt;
 
 /// The single entry point a frontend talks to.
-pub struct Session<F: Frontend, H: Host> {
+pub struct Session<F: Frontend> {
     pub(super) frontend: Arc<F>,
     #[allow(dead_code)]
-    pub(super) host: Arc<H>,
+    pub(super) host: Host,
     pub(super) runner: AgentRunner,
     pub(super) agent: Agent,
     pub(super) history: Vec<Message>,
@@ -21,8 +21,8 @@ pub struct Session<F: Frontend, H: Host> {
     pub(super) model: ModelKey,
 }
 
-impl<F: Frontend, H: Host> Session<F, H> {
-    pub fn new(frontend: Arc<F>, host: Arc<H>, llm: Arc<dyn LlmModel>, model: ModelKey) -> Self {
+impl<F: Frontend> Session<F> {
+    pub fn new(frontend: Arc<F>, host: Host, llm: Arc<dyn LlmModel>, model: ModelKey) -> Self {
         let runner = AgentRunner::new(llm);
         let agent = Agent::builder()
             .name("arnes")

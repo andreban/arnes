@@ -71,6 +71,6 @@ impl Frontend for AcpFrontend {
     }
 
     fn capabilities(&self) -> FrontendCapabilities {
-        FrontendCapabilities
+        FrontendCapabilities::default()
     }
 }

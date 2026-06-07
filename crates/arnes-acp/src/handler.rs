@@ -4,7 +4,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use agent_rig::model::LlmModel;
-use arnes_core::{ModelKey, Session};
+use arnes_core::{Host, ModelKey, Session};
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -12,7 +12,6 @@ use uuid::Uuid;
 
 use crate::{
     frontend::AcpFrontend,
-    host::AcpHost,
     types::{
         initialize::{AgentCapabilities, AgentInfo, InitializeParams, InitializeResult},
         jsonrpc::Response,
@@ -23,7 +22,7 @@ use crate::{
     },
 };
 
-type AcpSession = Session<AcpFrontend, AcpHost>;
+type AcpSession = Session<AcpFrontend>;
 
 pub struct Handler {
     llm: Arc<dyn LlmModel>,
@@ -67,6 +66,7 @@ impl Handler {
                 },
                 agent_capabilities: AgentCapabilities {
                     load_session: false,
+                    ..Default::default()
                 },
                 auth_methods: vec![],
             },
@@ -78,7 +78,7 @@ impl Handler {
             .unwrap_or(SessionNewParams { cwd: None });
         let session_id = Uuid::now_v7().to_string();
         let frontend = Arc::new(AcpFrontend::new(session_id.clone(), self.notify_tx.clone()));
-        let host = Arc::new(AcpHost);
+        let host = Host::default();
         let session = Session::new(frontend, host, self.llm.clone(), self.model_key.clone());
         self.sessions
             .lock()
