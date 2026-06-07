@@ -4,6 +4,7 @@
 //! Frontend trait and the event vocabulary it consumes.
 
 use async_trait::async_trait;
+use serde_json::Value;
 
 use crate::{AgentId, TurnUsage};
 
@@ -44,6 +45,22 @@ pub enum EventKind {
     Error {
         message: String,
     },
+    ToolCallStarted {
+        name: String,
+        args: Value,
+    },
+    ToolCallFinished {
+        name: String,
+        outcome: ToolCallOutcome,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub enum ToolCallOutcome {
+    Ok(Value),
+    Err(String),
+    Denied,
+    Unknown,
 }
 
 #[derive(Clone, Debug)]
