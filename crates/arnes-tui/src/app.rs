@@ -3,7 +3,7 @@
 
 use std::io;
 
-use arnes_core::{EventKind, SessionEvent};
+use arnes_core::{EventKind, SessionEvent, ToolCallOutcome};
 use crossterm::event::{
     Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
@@ -21,15 +21,22 @@ use tokio_util::sync::CancellationToken;
 
 use crate::frontend::UiCommand;
 
-enum ItemRole {
-    User,
-    Assistant,
-    Error,
+enum TranscriptItem {
+    User(String),
+    Assistant(String),
+    Error(String),
+    ToolCall {
+        name: String,
+        args: String,
+        outcome: Option<RenderedOutcome>,
+    },
 }
 
-struct TranscriptItem {
-    role: ItemRole,
-    text: String,
+enum RenderedOutcome {
+    Ok(String),
+    Err(String),
+    Denied,
+    Unknown,
 }
 
 pub struct AppState {
@@ -93,26 +100,122 @@ impl AppState {
             }
             EventKind::ThinkingDelta { .. } => {}
             EventKind::TurnEnd { .. } => {
-                if !self.streaming.is_empty() {
-                    let text = std::mem::take(&mut self.streaming);
-                    self.items.push(TranscriptItem {
-                        role: ItemRole::Assistant,
-                        text,
-                    });
-                }
+                self.flush_streaming();
                 self.is_running = false;
                 self.current_cancel = None;
             }
             EventKind::Error { message } => {
                 self.streaming.clear();
-                self.items.push(TranscriptItem {
-                    role: ItemRole::Error,
-                    text: message,
-                });
+                self.items.push(TranscriptItem::Error(message));
                 self.is_running = false;
                 self.current_cancel = None;
             }
+            EventKind::ToolCallStarted { name, args } => {
+                self.flush_streaming();
+                self.items.push(TranscriptItem::ToolCall {
+                    name,
+                    args: summarize_json(&args),
+                    outcome: None,
+                });
+            }
+            EventKind::ToolCallFinished { name, outcome } => {
+                let rendered = render_outcome(outcome);
+                let matched = self.items.iter_mut().rev().find_map(|item| match item {
+                    TranscriptItem::ToolCall {
+                        name: n,
+                        outcome: o @ None,
+                        ..
+                    } if *n == name => Some(o),
+                    _ => None,
+                });
+                if let Some(slot) = matched {
+                    *slot = Some(rendered);
+                } else {
+                    self.items.push(TranscriptItem::ToolCall {
+                        name,
+                        args: String::new(),
+                        outcome: Some(rendered),
+                    });
+                }
+            }
         }
+    }
+
+    fn flush_streaming(&mut self) {
+        if !self.streaming.is_empty() {
+            let text = std::mem::take(&mut self.streaming);
+            self.items.push(TranscriptItem::Assistant(text));
+        }
+    }
+}
+
+const MAX_INLINE_JSON: usize = 80;
+
+fn summarize_json(value: &serde_json::Value) -> String {
+    let s = serde_json::to_string(value).unwrap_or_default();
+    truncate(&s, MAX_INLINE_JSON)
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
+}
+
+fn render_tool_call<'a>(
+    name: &'a str,
+    args: &'a str,
+    outcome: Option<&'a RenderedOutcome>,
+) -> Vec<Line<'a>> {
+    let mut lines = Vec::with_capacity(2);
+    let header_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+
+    let mut header = vec![
+        Span::styled("⚙ ", header_style),
+        Span::styled(name.to_owned(), header_style),
+    ];
+    if !args.is_empty() {
+        header.push(Span::styled(" ", dim));
+        header.push(Span::styled(args.to_owned(), dim));
+    }
+    lines.push(Line::from(header));
+
+    let result_line = match outcome {
+        None => Line::from(Span::styled("  ↳ running…", dim)),
+        Some(RenderedOutcome::Ok(value)) => Line::from(vec![
+            Span::styled("  ↳ ", Style::default().fg(Color::Green)),
+            Span::styled(value.clone(), Style::default().fg(Color::Green)),
+        ]),
+        Some(RenderedOutcome::Err(msg)) => Line::from(vec![
+            Span::styled("  ↳ error: ", Style::default().fg(Color::Red)),
+            Span::styled(msg.clone(), Style::default().fg(Color::Red)),
+        ]),
+        Some(RenderedOutcome::Denied) => {
+            Line::from(Span::styled("  ↳ denied", Style::default().fg(Color::Red)))
+        }
+        Some(RenderedOutcome::Unknown) => Line::from(Span::styled(
+            "  ↳ unknown tool",
+            Style::default().fg(Color::Red),
+        )),
+    };
+    lines.push(result_line);
+    lines.push(Line::from(""));
+    lines
+}
+
+fn render_outcome(outcome: ToolCallOutcome) -> RenderedOutcome {
+    match outcome {
+        ToolCallOutcome::Ok(v) => RenderedOutcome::Ok(summarize_json(&v)),
+        ToolCallOutcome::Err(msg) => RenderedOutcome::Err(truncate(&msg, MAX_INLINE_JSON)),
+        ToolCallOutcome::Denied => RenderedOutcome::Denied,
+        ToolCallOutcome::Unknown => RenderedOutcome::Unknown,
     }
 }
 
@@ -130,8 +233,8 @@ fn render(f: &mut Frame, state: &mut AppState) {
     // Transcript
     let mut lines: Vec<Line> = Vec::new();
     for item in &state.items {
-        match item.role {
-            ItemRole::User => {
+        match item {
+            TranscriptItem::User(text) => {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "> ",
@@ -139,20 +242,27 @@ fn render(f: &mut Frame, state: &mut AppState) {
                             .fg(Color::Cyan)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(item.text.clone(), Style::default().fg(Color::Cyan)),
+                    Span::styled(text.clone(), Style::default().fg(Color::Cyan)),
                 ]));
             }
-            ItemRole::Assistant => {
-                for line in item.text.lines() {
+            TranscriptItem::Assistant(text) => {
+                for line in text.lines() {
                     lines.push(Line::from(Span::raw(line.to_owned())));
                 }
                 lines.push(Line::from(""));
             }
-            ItemRole::Error => {
+            TranscriptItem::Error(text) => {
                 lines.push(Line::from(Span::styled(
-                    format!("error: {}", item.text),
+                    format!("error: {}", text),
                     Style::default().fg(Color::Red),
                 )));
+            }
+            TranscriptItem::ToolCall {
+                name,
+                args,
+                outcome,
+            } => {
+                lines.extend(render_tool_call(name, args, outcome.as_ref()));
             }
         }
     }
@@ -242,10 +352,7 @@ pub async fn run(
                                 let text = state.input.trim().to_string();
                                 if !text.is_empty() {
                                     state.input.clear();
-                                    state.items.push(TranscriptItem {
-                                        role: ItemRole::User,
-                                        text: text.clone(),
-                                    });
+                                    state.items.push(TranscriptItem::User(text.clone()));
                                     state.scroll_to_bottom();
                                     let cancel = CancellationToken::new();
                                     state.current_cancel = Some(cancel.clone());

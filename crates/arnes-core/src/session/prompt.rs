@@ -3,14 +3,14 @@
 
 use agent_rig::{
     model::{Message as RigMessage, TokenUsage},
-    runner::AgentEvent,
+    runner::{AgentEvent, ToolCallResult},
 };
 use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     AgentId, ContentBlock, CoreError, EventKind, Frontend, Message, Result, SessionEvent,
-    StopReason, TokenCounts, TurnUsage,
+    StopReason, TokenCounts, ToolCallOutcome, TurnUsage,
 };
 
 use super::Session;
@@ -71,8 +71,18 @@ impl<F: Frontend> Session<F> {
                         .await;
                     return Err(CoreError::Session(e.to_string()));
                 }
-                AgentEvent::ToolCallStarted { .. } | AgentEvent::ToolCallFinished { .. } => {
-                    // M2
+                AgentEvent::ToolCallStarted { name, args } => {
+                    self.frontend
+                        .on_event(mk_event(EventKind::ToolCallStarted { name, args }))
+                        .await;
+                }
+                AgentEvent::ToolCallFinished { name, result } => {
+                    self.frontend
+                        .on_event(mk_event(EventKind::ToolCallFinished {
+                            name,
+                            outcome: to_outcome(result),
+                        }))
+                        .await;
                 }
             }
         }
@@ -117,6 +127,15 @@ fn append_block(blocks: &mut Vec<ContentBlock>, text: String, thinking: bool) {
         blocks.push(ContentBlock::Thinking { text });
     } else {
         blocks.push(ContentBlock::Text { text });
+    }
+}
+
+fn to_outcome(result: ToolCallResult) -> ToolCallOutcome {
+    match result {
+        ToolCallResult::Ok(value) => ToolCallOutcome::Ok(value),
+        ToolCallResult::Err(err) => ToolCallOutcome::Err(err.to_string()),
+        ToolCallResult::Denied => ToolCallOutcome::Denied,
+        ToolCallResult::Unknown => ToolCallOutcome::Unknown,
     }
 }
 
