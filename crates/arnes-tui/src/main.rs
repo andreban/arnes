@@ -4,7 +4,7 @@
 use std::{io, sync::Arc};
 
 use agent_rig::models::gemini::GeminiModel;
-use arnes_core::{LocalHost, ModelKey, Session};
+use arnes_core::{Host, ModelKey, Session};
 use clap::Parser;
 use crossterm::{
     execute,
@@ -69,7 +69,8 @@ async fn run(
 
     let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiCommand>();
     let frontend = Arc::new(TuiFrontend::new(ui_tx));
-    let host = Arc::new(LocalHost);
+    let host = Host::default();
+
     let session = Session::new(frontend, host, model, model_key);
 
     let (prompt_tx, mut prompt_rx) = mpsc::channel::<(String, CancellationToken)>(1);

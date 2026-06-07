@@ -30,6 +30,6 @@ impl Frontend for TuiFrontend {
     }
 
     fn capabilities(&self) -> FrontendCapabilities {
-        FrontendCapabilities
+        FrontendCapabilities::default()
     }
 }

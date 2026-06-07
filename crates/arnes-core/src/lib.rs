@@ -15,7 +15,7 @@ pub use frontend::{
     EventKind, Frontend, FrontendCapabilities, Permission, PermissionRequest, SessionEvent,
     StopReason,
 };
-pub use host::{DirEntry, Host, LocalHost, TerminalHandle, TerminalSnapshot, TerminalSpec};
+pub use host::{Host, TerminalHandle, TerminalSnapshot, TerminalSpec};
 pub use identity::{AgentId, ModelKey};
 pub use message::{ContentBlock, Message};
 pub use metering::{CumulativeUsage, ModelUsage, TokenCounts, TurnUsage};

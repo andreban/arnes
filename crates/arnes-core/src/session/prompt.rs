@@ -9,13 +9,20 @@ use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AgentId, ContentBlock, CoreError, EventKind, Frontend, Host, Message, Result, SessionEvent,
+    AgentId, ContentBlock, CoreError, EventKind, Frontend, Message, Result, SessionEvent,
     StopReason, TokenCounts, TurnUsage,
 };
 
 use super::Session;
 
-impl<F: Frontend, H: Host> Session<F, H> {
+impl<F: Frontend> Session<F> {
+    /// Runs one turn against the model: appends `input` to the
+    /// conversation, streams agent events to the frontend, and records
+    /// the assistant's reply in history.
+    ///
+    /// Cancelling `cancel` ends the stream early with
+    /// [`StopReason::Cancelled`]; the partial reply still lands in
+    /// history.
     pub async fn prompt(
         &mut self,
         input: impl Into<String>,

@@ -13,7 +13,7 @@ use crate::{AgentId, Host};
 /// Everything a tool body needs from the harness, bundled so capability
 /// additions don't change `Tool::execute`'s signature.
 pub struct ToolContext {
-    pub host: Arc<dyn Host>,
+    pub host: Host,
     pub progress: Arc<dyn ProgressSink>,
     pub cancellation: CancellationToken,
     pub agent_id: AgentId,
