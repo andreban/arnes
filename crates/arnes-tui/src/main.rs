@@ -4,7 +4,7 @@
 use std::{io, sync::Arc};
 
 use agent_rig::models::gemini::GeminiModel;
-use arnes_core::{Host, ModelKey, Session};
+use arnes_core::{ModelKey, Session};
 use clap::Parser;
 use crossterm::{
     execute,
@@ -16,8 +16,11 @@ use tokio_util::sync::CancellationToken;
 
 mod app;
 mod frontend;
+mod host;
 
 use frontend::{TuiFrontend, UiCommand};
+
+use crate::host::tui_host;
 
 #[derive(Parser)]
 #[command(about = "arnes — a local AI coding agent")]
@@ -69,7 +72,7 @@ async fn run(
 
     let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiCommand>();
     let frontend = Arc::new(TuiFrontend::new(ui_tx));
-    let host = Host::default();
+    let host = tui_host();
 
     let session = Session::new(frontend, host, model, model_key);
 

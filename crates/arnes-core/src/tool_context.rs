@@ -5,17 +5,14 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
-use tokio_util::sync::CancellationToken;
-
 use crate::{AgentId, Host};
+use serde_json::Value;
 
 /// Everything a tool body needs from the harness, bundled so capability
 /// additions don't change `Tool::execute`'s signature.
 pub struct ToolContext {
     pub host: Host,
-    pub progress: Arc<dyn ProgressSink>,
-    pub cancellation: CancellationToken,
+    pub progress: Option<Arc<dyn ProgressSink>>,
     pub agent_id: AgentId,
 }
 

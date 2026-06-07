@@ -9,13 +9,16 @@ mod message;
 mod metering;
 mod session;
 mod tool_context;
+mod tools;
 
 pub use error::{CoreError, Result};
 pub use frontend::{
-    EventKind, Frontend, FrontendCapabilities, Permission, PermissionRequest, SessionEvent,
-    StopReason,
+    EventKind, FilesystemCapabilities, Frontend, FrontendCapabilities, Permission,
+    PermissionRequest, SessionEvent, StopReason,
 };
-pub use host::{Host, TerminalHandle, TerminalSnapshot, TerminalSpec};
+pub use host::{
+    Host, ReadTextFile, Terminal, TerminalHandle, TerminalSnapshot, TerminalSpec, WriteTextFile,
+};
 pub use identity::{AgentId, ModelKey};
 pub use message::{ContentBlock, Message};
 pub use metering::{CumulativeUsage, ModelUsage, TokenCounts, TurnUsage};

@@ -1,7 +1,10 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-use arnes_core::{Frontend, FrontendCapabilities, Permission, PermissionRequest, SessionEvent};
+use arnes_core::{
+    FilesystemCapabilities, Frontend, FrontendCapabilities, Permission, PermissionRequest,
+    SessionEvent,
+};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
@@ -30,6 +33,12 @@ impl Frontend for TuiFrontend {
     }
 
     fn capabilities(&self) -> FrontendCapabilities {
-        FrontendCapabilities::default()
+        FrontendCapabilities {
+            fs: FilesystemCapabilities {
+                read_file: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
     }
 }
