@@ -107,6 +107,7 @@ dependencies = [
  "clap",
  "dotenvy",
  "futures-util",
+ "geologia",
  "serde",
  "serde_json",
  "tokio",

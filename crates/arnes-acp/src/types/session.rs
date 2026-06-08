@@ -69,6 +69,12 @@ pub enum SessionUpdate {
         message_id: String,
         content: MessageContent,
     },
+    #[serde(rename = "agent_thought_chunk")]
+    AgentThoughtChunk {
+        #[serde(rename = "messageId")]
+        message_id: String,
+        content: MessageContent,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -76,4 +82,43 @@ pub struct MessageContent {
     #[serde(rename = "type")]
     pub kind: &'static str,
     pub text: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Pins the on-the-wire JSON shape for ACP session/update notifications.
+    // Any change to discriminator strings or field names is a protocol break;
+    // updating these literals must be a deliberate decision.
+
+    #[test]
+    fn agent_message_chunk_wire_shape() {
+        let update = SessionUpdateParams {
+            session_id: "sess-1".into(),
+            update: SessionUpdate::AgentMessageChunk {
+                message_id: "msg-1".into(),
+                content: MessageContent { kind: "text", text: "hello".into() },
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&update).unwrap(),
+            r#"{"sessionId":"sess-1","update":{"sessionUpdate":"agent_message_chunk","messageId":"msg-1","content":{"type":"text","text":"hello"}}}"#,
+        );
+    }
+
+    #[test]
+    fn agent_thought_chunk_wire_shape() {
+        let update = SessionUpdateParams {
+            session_id: "sess-1".into(),
+            update: SessionUpdate::AgentThoughtChunk {
+                message_id: "msg-1".into(),
+                content: MessageContent { kind: "text", text: "thinking...".into() },
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&update).unwrap(),
+            r#"{"sessionId":"sess-1","update":{"sessionUpdate":"agent_thought_chunk","messageId":"msg-1","content":{"type":"text","text":"thinking..."}}}"#,
+        );
+    }
 }

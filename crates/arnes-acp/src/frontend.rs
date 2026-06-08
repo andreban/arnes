@@ -59,6 +59,30 @@ impl Frontend for AcpFrontend {
                     let _ = self.notify_tx.send(line);
                 }
             }
+            EventKind::ThinkingDelta { text } => {
+                let message_id = self
+                    .current_message_id
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| Uuid::now_v7().to_string());
+                let notification = Notification::new(
+                    "session/update",
+                    SessionUpdateParams {
+                        session_id: self.session_id.clone(),
+                        update: SessionUpdate::AgentThoughtChunk {
+                            message_id,
+                            content: MessageContent {
+                                kind: "text",
+                                text,
+                            },
+                        },
+                    },
+                );
+                if let Ok(line) = serde_json::to_string(&notification) {
+                    let _ = self.notify_tx.send(line);
+                }
+            }
             EventKind::TurnEnd { .. } => {
                 *self.current_message_id.lock().unwrap() = None;
             }

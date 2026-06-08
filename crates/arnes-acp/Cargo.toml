@@ -16,6 +16,7 @@ async-trait  = { workspace = true }
 clap         = { version = "4", features = ["derive", "env"] }
 dotenvy      = "0.15"
 futures-util = { workspace = true }
+geologia     = { git = "https://github.com/andreban/geologia" }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 tokio        = { version = "1", features = ["full"] }
