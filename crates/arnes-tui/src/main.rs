@@ -11,6 +11,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use geologia::prelude::ThinkingConfig;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -69,7 +70,16 @@ async fn run(
     args: &Args,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let model = Arc::new(GeminiModel::new(&args.api_key, &args.model));
+    let thinking_config = ThinkingConfig {
+        include_thoughts: true,
+        thinking_level: Some(geologia::prelude::ThinkingLevel::High),
+        ..Default::default()
+    };
+    let model = Arc::new(
+        GeminiModel::builder(&args.api_key, &args.model)
+            .thinking_config(thinking_config)
+            .build(),
+    );
     let model_key = ModelKey {
         provider: "gemini".into(),
         model_id: args.model.clone(),
