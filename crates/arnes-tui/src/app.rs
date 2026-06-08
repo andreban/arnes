@@ -14,7 +14,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -316,8 +316,10 @@ fn render(f: &mut Frame, state: &mut AppState) {
         )));
     }
 
+    let transcript = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
     let transcript_height = chunks[0].height as usize;
-    let max_scroll = lines.len().saturating_sub(transcript_height);
+    let wrapped_lines = transcript.line_count(chunks[0].width);
+    let max_scroll = wrapped_lines.saturating_sub(transcript_height);
     let max_scroll_u16 = max_scroll.min(u16::MAX as usize) as u16;
     state.last_transcript_height = chunks[0].height;
     state.last_max_scroll = max_scroll_u16;
@@ -325,8 +327,7 @@ fn render(f: &mut Frame, state: &mut AppState) {
         state.scroll_offset = max_scroll_u16;
     }
     let scroll = max_scroll_u16.saturating_sub(state.scroll_offset);
-    let transcript = Paragraph::new(Text::from(lines)).scroll((scroll, 0));
-    f.render_widget(transcript, chunks[0]);
+    f.render_widget(transcript.scroll((scroll, 0)), chunks[0]);
 
     // Status line
     let status_text = if state.is_running {
