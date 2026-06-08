@@ -101,8 +101,9 @@ async fn run(
     let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiCommand>();
     let frontend = Arc::new(TuiFrontend::new(ui_tx));
     let host = tui_host();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-    let session = Session::new(frontend, host, model, model_key);
+    let session = Session::new(frontend, host, model, model_key, cwd);
 
     let (prompt_tx, mut prompt_rx) = mpsc::channel::<(String, CancellationToken)>(1);
 

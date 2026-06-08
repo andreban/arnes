@@ -69,17 +69,22 @@ impl AgentRigTool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
             .read_text_file
             .as_ref()
             .ok_or(AgentRigError::Agent("Capability unavailable".to_string()))?;
+        let path = if args.path.is_relative() {
+            self.context.cwd.join(&args.path)
+        } else {
+            args.path.clone()
+        };
         // Always return Ok so the model receives a valid JSON object.
         // (Gemini requires FunctionResponse.response to be an object; a bare
         // string causes an empty/null candidate and a silent non-response.)
-        match host.read_text_file(&args.path, args.line, args.limit).await {
+        match host.read_text_file(&path, args.line, args.limit).await {
             Ok(content) => Ok(ReadTextFileOutput {
                 content: Some(content),
                 error: None,
             }),
             Err(e) => Ok(ReadTextFileOutput {
                 content: None,
-                error: Some(format!("Failed to read '{}': {}", args.path.display(), e)),
+                error: Some(format!("Failed to read '{}': {}", path.display(), e)),
             }),
         }
     }
@@ -99,5 +104,82 @@ impl Tool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
 
     fn permission_required(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io,
+        path::{Path, PathBuf},
+        sync::{Arc, Mutex},
+    };
+
+    use async_trait::async_trait;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::{AgentId, Host, ToolContext, host::ReadTextFile as ReadTextFileTrait};
+
+    struct CapturingHost {
+        called_with: Mutex<Option<PathBuf>>,
+    }
+
+    #[async_trait]
+    impl ReadTextFileTrait for CapturingHost {
+        async fn read_text_file(
+            &self,
+            path: &Path,
+            _line: Option<usize>,
+            _limit: Option<usize>,
+        ) -> io::Result<String> {
+            *self.called_with.lock().unwrap() = Some(path.to_path_buf());
+            Ok(String::new())
+        }
+    }
+
+    fn make_tool(cwd: PathBuf) -> (ReadTextFile, Arc<CapturingHost>) {
+        let capturing = Arc::new(CapturingHost {
+            called_with: Mutex::new(None),
+        });
+        let context = ToolContext {
+            host: Host {
+                read_text_file: Some(Arc::clone(&capturing) as Arc<dyn ReadTextFileTrait>),
+                ..Host::default()
+            },
+            progress: None,
+            agent_id: AgentId::Root,
+            cwd,
+        };
+        (ReadTextFile::new(context), capturing)
+    }
+
+    #[tokio::test]
+    async fn relative_path_resolves_against_cwd() {
+        let cwd = std::env::temp_dir();
+        let (tool, capturing) = make_tool(cwd.clone());
+        let args = ReadTextFileParams {
+            path: PathBuf::from("subdir/file.txt"),
+            line: None,
+            limit: None,
+        };
+        let _ = tool.call(args, CancellationToken::new()).await.unwrap();
+        let called = capturing.called_with.lock().unwrap().clone().unwrap();
+        assert_eq!(called, cwd.join("subdir/file.txt"));
+    }
+
+    #[tokio::test]
+    async fn absolute_path_is_not_rebased() {
+        let cwd = std::env::temp_dir();
+        let (tool, capturing) = make_tool(cwd.clone());
+        let abs_path = cwd.join("absolute.txt");
+        let args = ReadTextFileParams {
+            path: abs_path.clone(),
+            line: None,
+            limit: None,
+        };
+        let _ = tool.call(args, CancellationToken::new()).await.unwrap();
+        let called = capturing.called_with.lock().unwrap().clone().unwrap();
+        assert_eq!(called, abs_path);
     }
 }
