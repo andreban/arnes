@@ -57,7 +57,10 @@ impl ReadTextFile for AcpReadTextFile {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         if self.notify_tx.send(serialized).is_err() {
             self.pending.lock().await.remove(&request_id);
-            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "client disconnected"));
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "client disconnected",
+            ));
         }
 
         match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
@@ -75,7 +78,10 @@ impl ReadTextFile for AcpReadTextFile {
             }
             Err(_) => {
                 self.pending.lock().await.remove(&request_id);
-                Err(io::Error::new(io::ErrorKind::TimedOut, "fs/read_text_file timed out"))
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "fs/read_text_file timed out",
+                ))
             }
         }
     }
