@@ -29,7 +29,11 @@ impl<F: Frontend> Session<F> {
         cancel: CancellationToken,
     ) -> Result<()> {
         let input = input.into();
-        tracing::debug!(input_len = input.len(), thread_len = self.rig_thread.len(), "prompt: starting turn");
+        tracing::debug!(
+            input_len = input.len(),
+            thread_len = self.rig_thread.len(),
+            "prompt: starting turn"
+        );
         self.history.push(Message::user_text(&input));
 
         let mut thread = self.rig_thread.clone();
@@ -91,7 +95,10 @@ impl<F: Frontend> Session<F> {
                         .await;
                 }
                 AgentEvent::EndTurn { thread } => {
-                    tracing::debug!(thread_len = thread.len(), "prompt: EndTurn received, persisting thread");
+                    tracing::debug!(
+                        thread_len = thread.len(),
+                        "prompt: EndTurn received, persisting thread"
+                    );
                     self.rig_thread = thread;
                 }
             }

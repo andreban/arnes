@@ -1,7 +1,10 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{io, sync::{Arc, Mutex}};
+use std::{
+    io,
+    sync::{Arc, Mutex},
+};
 
 use agent_rig::models::gemini::GeminiModel;
 use arnes_core::{ModelKey, Session};

@@ -73,7 +73,10 @@ impl AgentRigTool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
         // (Gemini requires FunctionResponse.response to be an object; a bare
         // string causes an empty/null candidate and a silent non-response.)
         match host.read_text_file(&args.path, args.line, args.limit).await {
-            Ok(content) => Ok(ReadTextFileOutput { content: Some(content), error: None }),
+            Ok(content) => Ok(ReadTextFileOutput {
+                content: Some(content),
+                error: None,
+            }),
             Err(e) => Ok(ReadTextFileOutput {
                 content: None,
                 error: Some(format!("Failed to read '{}': {}", args.path.display(), e)),
