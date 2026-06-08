@@ -222,7 +222,13 @@ fn render_tool_call<'a>(
 
 fn render_outcome(outcome: ToolCallOutcome) -> RenderedOutcome {
     match outcome {
-        ToolCallOutcome::Ok(v) => RenderedOutcome::Ok(summarize_json(&v)),
+        ToolCallOutcome::Ok(v) => {
+            if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+                RenderedOutcome::Err(truncate(err, MAX_INLINE_JSON))
+            } else {
+                RenderedOutcome::Ok(summarize_json(&v))
+            }
+        }
         ToolCallOutcome::Err(msg) => RenderedOutcome::Err(truncate(&msg, MAX_INLINE_JSON)),
         ToolCallOutcome::Denied => RenderedOutcome::Denied,
         ToolCallOutcome::Unknown => RenderedOutcome::Unknown,

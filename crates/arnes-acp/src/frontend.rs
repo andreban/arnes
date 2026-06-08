@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 use arnes_core::{
     EventKind, Frontend, FrontendCapabilities, Permission, PermissionRequest, SessionEvent,
+    ToolCallOutcome,
 };
 use async_trait::async_trait;
 use tokio::sync::mpsc;
@@ -19,6 +20,7 @@ pub struct AcpFrontend {
     session_id: String,
     notify_tx: mpsc::UnboundedSender<String>,
     current_message_id: Mutex<Option<String>>,
+    current_tool_call_id: Mutex<Option<String>>,
 }
 
 impl AcpFrontend {
@@ -27,6 +29,20 @@ impl AcpFrontend {
             session_id,
             notify_tx,
             current_message_id: Mutex::new(None),
+            current_tool_call_id: Mutex::new(None),
+        }
+    }
+
+    fn send(&self, update: SessionUpdate) {
+        let notification = Notification::new(
+            "session/update",
+            SessionUpdateParams {
+                session_id: self.session_id.clone(),
+                update,
+            },
+        );
+        if let Ok(line) = serde_json::to_string(&notification) {
+            let _ = self.notify_tx.send(line);
         }
     }
 }
@@ -45,19 +61,10 @@ impl Frontend for AcpFrontend {
                     .unwrap()
                     .clone()
                     .unwrap_or_else(|| Uuid::now_v7().to_string());
-                let notification = Notification::new(
-                    "session/update",
-                    SessionUpdateParams {
-                        session_id: self.session_id.clone(),
-                        update: SessionUpdate::AgentMessageChunk {
-                            message_id,
-                            content: MessageContent { kind: "text", text },
-                        },
-                    },
-                );
-                if let Ok(line) = serde_json::to_string(&notification) {
-                    let _ = self.notify_tx.send(line);
-                }
+                self.send(SessionUpdate::AgentMessageChunk {
+                    message_id,
+                    content: MessageContent { kind: "text", text },
+                });
             }
             EventKind::ThinkingDelta { text } => {
                 let message_id = self
@@ -66,19 +73,52 @@ impl Frontend for AcpFrontend {
                     .unwrap()
                     .clone()
                     .unwrap_or_else(|| Uuid::now_v7().to_string());
-                let notification = Notification::new(
-                    "session/update",
-                    SessionUpdateParams {
-                        session_id: self.session_id.clone(),
-                        update: SessionUpdate::AgentThoughtChunk {
-                            message_id,
-                            content: MessageContent { kind: "text", text },
-                        },
-                    },
-                );
-                if let Ok(line) = serde_json::to_string(&notification) {
-                    let _ = self.notify_tx.send(line);
-                }
+                self.send(SessionUpdate::AgentThoughtChunk {
+                    message_id,
+                    content: MessageContent { kind: "text", text },
+                });
+            }
+            EventKind::ToolCallStarted { name, .. } => {
+                let tool_call_id = Uuid::now_v7().to_string();
+                *self.current_tool_call_id.lock().unwrap() = Some(tool_call_id.clone());
+                self.send(SessionUpdate::ToolCall {
+                    tool_call_id: tool_call_id.clone(),
+                    title: name,
+                    kind: "tool_use",
+                    status: "pending",
+                });
+                self.send(SessionUpdate::ToolCallUpdate {
+                    tool_call_id,
+                    status: "in_progress",
+                    content: None,
+                });
+            }
+            EventKind::ToolCallFinished { outcome, .. } => {
+                let tool_call_id = self
+                    .current_tool_call_id
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .unwrap_or_else(|| Uuid::now_v7().to_string());
+                let text = match outcome {
+                    ToolCallOutcome::Ok(v) => {
+                        if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+                            format!("error: {err}")
+                        } else if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
+                            content.to_string()
+                        } else {
+                            v.to_string()
+                        }
+                    }
+                    ToolCallOutcome::Err(msg) => msg,
+                    ToolCallOutcome::Denied => "denied".to_string(),
+                    ToolCallOutcome::Unknown => "unknown".to_string(),
+                };
+                self.send(SessionUpdate::ToolCallUpdate {
+                    tool_call_id,
+                    status: "completed",
+                    content: Some(MessageContent { kind: "text", text }),
+                });
             }
             EventKind::TurnEnd { .. } => {
                 *self.current_message_id.lock().unwrap() = None;

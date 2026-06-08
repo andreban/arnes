@@ -75,6 +75,24 @@ pub enum SessionUpdate {
         message_id: String,
         content: MessageContent,
     },
+    /// LLM has requested a tool call; status is always "pending".
+    #[serde(rename = "tool_call")]
+    ToolCall {
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        title: String,
+        kind: &'static str,
+        status: &'static str,
+    },
+    /// Tool execution lifecycle update (in_progress or completed).
+    #[serde(rename = "tool_call_update")]
+    ToolCallUpdate {
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        status: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        content: Option<MessageContent>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -125,6 +143,58 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&update).unwrap(),
             r#"{"sessionId":"sess-1","update":{"sessionUpdate":"agent_thought_chunk","messageId":"msg-1","content":{"type":"text","text":"thinking..."}}}"#,
+        );
+    }
+
+    #[test]
+    fn tool_call_wire_shape() {
+        let update = SessionUpdateParams {
+            session_id: "sess-1".into(),
+            update: SessionUpdate::ToolCall {
+                tool_call_id: "tc-1".into(),
+                title: "read_text_file".into(),
+                kind: "tool_use",
+                status: "pending",
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&update).unwrap(),
+            r#"{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"read_text_file","kind":"tool_use","status":"pending"}}"#,
+        );
+    }
+
+    #[test]
+    fn tool_call_update_completed_wire_shape() {
+        let update = SessionUpdateParams {
+            session_id: "sess-1".into(),
+            update: SessionUpdate::ToolCallUpdate {
+                tool_call_id: "tc-1".into(),
+                status: "completed",
+                content: Some(MessageContent {
+                    kind: "text",
+                    text: "file content".into(),
+                }),
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&update).unwrap(),
+            r#"{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"completed","content":{"type":"text","text":"file content"}}}"#,
+        );
+    }
+
+    #[test]
+    fn tool_call_update_in_progress_wire_shape() {
+        let update = SessionUpdateParams {
+            session_id: "sess-1".into(),
+            update: SessionUpdate::ToolCallUpdate {
+                tool_call_id: "tc-1".into(),
+                status: "in_progress",
+                content: None,
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&update).unwrap(),
+            r#"{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"in_progress"}}"#,
         );
     }
 }

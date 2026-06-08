@@ -3,7 +3,12 @@
 
 use std::sync::Arc;
 
-use agent_rig::{Agent, model::LlmModel, runner::AgentRunner, tools::ToolRegistry};
+use agent_rig::{
+    Agent,
+    model::{LlmModel, Message as RigMessage},
+    runner::AgentRunner,
+    tools::ToolRegistry,
+};
 
 use crate::{
     AgentId, CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext,
@@ -20,6 +25,9 @@ pub struct Session<F: Frontend> {
     pub(super) runner: AgentRunner,
     pub(super) agent: Agent,
     pub(super) history: Vec<Message>,
+    /// Full agent-rig thread, including tool-call and tool-result messages,
+    /// carried forward across `prompt()` calls so the model retains context.
+    pub(super) rig_thread: Vec<RigMessage>,
     pub(super) cumulative_usage: CumulativeUsage,
     pub(super) model: ModelKey,
 }
@@ -59,6 +67,7 @@ impl<F: Frontend> Session<F> {
             runner,
             agent,
             history: Vec::new(),
+            rig_thread: Vec::new(),
             cumulative_usage: CumulativeUsage::default(),
             model,
         }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use agent_rig::{
-    model::{Message as RigMessage, TokenUsage},
+    model::TokenUsage,
     runner::{AgentEvent, ToolCallResult},
 };
 use futures_util::StreamExt;
@@ -29,9 +29,15 @@ impl<F: Frontend> Session<F> {
         cancel: CancellationToken,
     ) -> Result<()> {
         let input = input.into();
+        tracing::debug!(
+            input_len = input.len(),
+            thread_len = self.rig_thread.len(),
+            "prompt: starting turn"
+        );
         self.history.push(Message::user_text(&input));
 
-        let thread = to_rig_thread(&self.history);
+        let mut thread = self.rig_thread.clone();
+        thread.push(agent_rig::model::Message::user(&input));
         self.frontend.on_event(mk_event(EventKind::TurnStart)).await;
 
         let mut stream = self
@@ -60,10 +66,12 @@ impl<F: Frontend> Session<F> {
                     tokens += to_counts(u);
                 }
                 AgentEvent::Cancelled => {
+                    tracing::debug!("prompt: stream cancelled");
                     stop_reason = StopReason::Cancelled;
                     break;
                 }
                 AgentEvent::Error(e) => {
+                    tracing::error!(error = %e, "prompt: agent error");
                     self.frontend
                         .on_event(mk_event(EventKind::Error {
                             message: e.to_string(),
@@ -72,17 +80,26 @@ impl<F: Frontend> Session<F> {
                     return Err(CoreError::Session(e.to_string()));
                 }
                 AgentEvent::ToolCallStarted { name, args } => {
+                    tracing::debug!(tool = %name, "prompt: tool call started");
                     self.frontend
                         .on_event(mk_event(EventKind::ToolCallStarted { name, args }))
                         .await;
                 }
                 AgentEvent::ToolCallFinished { name, result } => {
+                    tracing::debug!(tool = %name, result = ?result, "prompt: tool call finished");
                     self.frontend
                         .on_event(mk_event(EventKind::ToolCallFinished {
                             name,
                             outcome: to_outcome(result),
                         }))
                         .await;
+                }
+                AgentEvent::EndTurn { thread } => {
+                    tracing::debug!(
+                        thread_len = thread.len(),
+                        "prompt: EndTurn received, persisting thread"
+                    );
+                    self.rig_thread = thread;
                 }
             }
         }
@@ -94,6 +111,7 @@ impl<F: Frontend> Session<F> {
         };
         self.cumulative_usage.record(usage.clone());
         self.history.push(Message::Assistant { content: blocks });
+        tracing::debug!(stop_reason = ?stop_reason, "prompt: emitting TurnEnd");
         self.frontend
             .on_event(mk_event(EventKind::TurnEnd { stop_reason, usage }))
             .await;
@@ -146,41 +164,4 @@ fn to_counts(u: TokenUsage) -> TokenCounts {
             + u64::from(u.thinking_tokens.unwrap_or(0))
             + u64::from(u.tool_use_prompt_tokens.unwrap_or(0)),
     }
-}
-
-fn to_rig_thread(history: &[Message]) -> Vec<RigMessage> {
-    history
-        .iter()
-        .filter_map(|m| match m {
-            Message::User { content } => {
-                let text: String = content
-                    .iter()
-                    .filter_map(|b| {
-                        if let ContentBlock::Text { text } = b {
-                            Some(text.as_str())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("");
-                Some(RigMessage::user(text))
-            }
-            Message::Assistant { content } => {
-                let text: String = content
-                    .iter()
-                    .filter_map(|b| {
-                        if let ContentBlock::Text { text } = b {
-                            Some(text.as_str())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("");
-                Some(RigMessage::assistant(text))
-            }
-            Message::System { .. } => None,
-        })
-        .collect()
 }
