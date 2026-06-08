@@ -52,10 +52,10 @@
 
 <div class="page-header" data-accent="coding">
   <span class="eyebrow">Milestone 2 &middot; First tool</span>
-  <h1>read</h1>
+  <h1>read_text_file</h1>
   <p class="lead">
     Wire tool-calling end-to-end with a single, simple tool. By the end
-    the model can call <code>read</code>; the TUI shows a tool-call card;
+    the model can call <code>read_text_file</code>; the TUI shows a tool-call card;
     the ACP client receives a <code>tool_call</code> update and an outbound
     <code>fs/read_text_file</code> request. Same agent, two completely
     different filesystem implementations.
@@ -145,7 +145,7 @@ pub struct ReadTool;
 
 #[async_trait]
 impl Tool for ReadTool {
-    fn name(&amp;self) -&gt; &amp;str { "read" }
+    fn name(&amp;self) -&gt; &amp;str { "read_text_file" }
     fn description(&amp;self) -&gt; &amp;str {
         "Read the contents of a UTF-8 text file. Use for source files, configs, \
          and logs. Optionally narrow by line/limit. Output is truncated to 1000 \
@@ -251,7 +251,7 @@ impl agent_rig::Tool for ToolAdapter {
 <ul>
   <li>Introduce a <code>ToolCallCard</code> widget &mdash; one row per active tool call.</li>
   <li>States rendered: <em>pending</em> &rarr; <em>running</em> &rarr; <em>done</em> / <em>error</em>.</li>
-  <li>Card shows tool name and a one-line preview of the input (e.g. <code>read  src/main.rs</code>).</li>
+  <li>Card shows tool name and a one-line preview of the input (e.g. <code>read_text_file  src/main.rs</code>).</li>
   <li>On error, expand to show the error text inline.</li>
 </ul>
 </div>
@@ -275,8 +275,8 @@ impl agent_rig::Tool for ToolAdapter {
   <li>Update <code>Session::prompt</code>: configure <code>AgentRunner</code> with the registered tools (wrapped via <code>ToolAdapter</code>); translate agent-rig's tool-call events into <code>SessionEvent</code>s.</li>
   <li>Implement <code>LocalHost::read_text_file</code> (one line).</li>
   <li>Implement <code>AcpHost::read_text_file</code> using the bidirectional JSON-RPC client.</li>
-  <li>Write the <code>read</code> tool in <code>arnes-core::tools</code>.</li>
-  <li>Register <code>read</code> by default in both binaries (<code>arnes</code> and <code>arnes-acp</code>) via the <code>arnes_core::tools::register_defaults(&amp;mut registry)</code> helper.</li>
+  <li>Write the <code>read_text_file</code> tool in <code>arnes-core::tools</code>.</li>
+  <li>Register <code>read_text_file</code> by default in both binaries (<code>arnes</code> and <code>arnes-acp</code>) via the <code>arnes_core::tools::register_defaults(&amp;mut registry)</code> helper.</li>
   <li>In <code>arnes-tui</code>: add <code>ToolCallCard</code> widget; wire to event stream.</li>
   <li>In <code>arnes-acp</code>: emit tool_call <code>session/update</code> variants; wire <code>AcpHost</code> into <code>Session</code> construction.</li>
   <li>Land the testing-infra workstream (see below).</li>
@@ -313,8 +313,8 @@ impl agent_rig::Tool for ToolAdapter {
 <h2 id="testing">Testing checklist</h2>
 
 <ul>
-  <li><strong>Unit:</strong> <code>read</code> tool against <code>InMemoryEnv</code> &mdash; happy path, missing file, permission denied (synthetic).</li>
-  <li><strong>Loop:</strong> Scripted LLM that emits a <code>read</code> tool_use, harness executes it via <code>InMemoryEnv</code>, verify the second turn receives the tool_result and emits a final text reply.</li>
+  <li><strong>Unit:</strong> <code>read_text_file</code> tool against <code>InMemoryEnv</code> &mdash; happy path, missing file, permission denied (synthetic).</li>
+  <li><strong>Loop:</strong> Scripted LLM that emits a <code>read_text_file</code> tool_use, harness executes it via <code>InMemoryEnv</code>, verify the second turn receives the tool_result and emits a final text reply.</li>
   <li><strong>ACP golden:</strong> Replay a transcript where the client serves <code>fs/read_text_file</code>; assert the harness issues the right outbound request with the right path and produces the right outbound <code>session/update</code>s.</li>
   <li><strong>TUI smoke:</strong> Manual. "what's in <code>Cargo.toml</code>?" &mdash; card appears, transitions, completes.</li>
 </ul>
@@ -331,7 +331,7 @@ impl agent_rig::Tool for ToolAdapter {
   <h4>End state of M2</h4>
   <p>
     Ask either frontend <em>"what is in my Cargo.toml?"</em>: the model
-    calls <code>read</code>; the TUI shows a card; the ACP client receives
+    calls <code>read_text_file</code>; the TUI shows a card; the ACP client receives
     a tool_call update and a corresponding <code>fs/read_text_file</code>
     request. Two completely different filesystem implementations behind one
     tool, with the harness aware of neither.
