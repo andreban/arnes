@@ -98,7 +98,10 @@ mod tests {
             session_id: "sess-1".into(),
             update: SessionUpdate::AgentMessageChunk {
                 message_id: "msg-1".into(),
-                content: MessageContent { kind: "text", text: "hello".into() },
+                content: MessageContent {
+                    kind: "text",
+                    text: "hello".into(),
+                },
             },
         };
         assert_eq!(
@@ -113,7 +116,10 @@ mod tests {
             session_id: "sess-1".into(),
             update: SessionUpdate::AgentThoughtChunk {
                 message_id: "msg-1".into(),
-                content: MessageContent { kind: "text", text: "thinking...".into() },
+                content: MessageContent {
+                    kind: "text",
+                    text: "thinking...".into(),
+                },
             },
         };
         assert_eq!(

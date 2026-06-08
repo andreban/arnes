@@ -72,10 +72,7 @@ impl Frontend for AcpFrontend {
                         session_id: self.session_id.clone(),
                         update: SessionUpdate::AgentThoughtChunk {
                             message_id,
-                            content: MessageContent {
-                                kind: "text",
-                                text,
-                            },
+                            content: MessageContent { kind: "text", text },
                         },
                     },
                 );
