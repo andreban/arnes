@@ -7,6 +7,7 @@ use agent_rig::models::gemini::GeminiModel;
 use arnes_core::ModelKey;
 use clap::Parser;
 use futures_util::StreamExt;
+use geologia::prelude::ThinkingConfig;
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -34,7 +35,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     let args = Args::parse();
 
-    let llm = Arc::new(GeminiModel::new(&args.api_key, &args.model));
+    let thinking_config = ThinkingConfig {
+        include_thoughts: true,
+        thinking_level: Some(geologia::prelude::ThinkingLevel::High),
+        ..Default::default()
+    };
+    let llm = Arc::new(
+        GeminiModel::builder(&args.api_key, &args.model)
+            .thinking_config(thinking_config)
+            .build(),
+    );
     let model_key = ModelKey {
         provider: "gemini".into(),
         model_id: args.model.clone(),
