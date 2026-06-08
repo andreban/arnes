@@ -28,7 +28,10 @@ pub struct ReadTextFileParams {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadTextFileOutput {
-    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 pub struct ReadTextFile {
@@ -66,11 +69,16 @@ impl AgentRigTool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
             .read_text_file
             .as_ref()
             .ok_or(AgentRigError::Agent("Capability unavailable".to_string()))?;
-        let content = host
-            .read_text_file(&args.path, args.line, args.limit)
-            .await
-            .map_err(|e| AgentRigError::Agent(e.to_string()))?;
-        Ok(ReadTextFileOutput { content })
+        // Always return Ok so the model receives a valid JSON object.
+        // (Gemini requires FunctionResponse.response to be an object; a bare
+        // string causes an empty/null candidate and a silent non-response.)
+        match host.read_text_file(&args.path, args.line, args.limit).await {
+            Ok(content) => Ok(ReadTextFileOutput { content: Some(content), error: None }),
+            Err(e) => Ok(ReadTextFileOutput {
+                content: None,
+                error: Some(format!("Failed to read '{}': {}", args.path.display(), e)),
+            }),
+        }
     }
 }
 

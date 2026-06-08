@@ -1,7 +1,7 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{io, sync::Arc};
+use std::{io, sync::{Arc, Mutex}};
 
 use agent_rig::models::gemini::GeminiModel;
 use arnes_core::{ModelKey, Session};
@@ -40,6 +40,16 @@ struct Args {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     let args = Args::parse();
+
+    let log_file = std::fs::File::create("arnes-tui.log")?;
+    let filter = tracing_subscriber::EnvFilter::new(
+        "off,ollama_rs=debug,geologia=debug,agent_rig=debug,arnes_core=debug,arnes=debug",
+    );
+    tracing_subscriber::fmt()
+        .with_writer(Mutex::new(log_file))
+        .with_env_filter(filter)
+        .with_ansi(false)
+        .init();
 
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

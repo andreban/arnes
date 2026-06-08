@@ -25,7 +25,11 @@ impl ReadTextFile for ReadLocalTextFile {
         line: Option<usize>,
         limit: Option<usize>,
     ) -> io::Result<String> {
-        let contents = tokio::fs::read_to_string(path).await?;
+        tracing::debug!(path = %path.display(), line, limit, "read_text_file: starting");
+        let contents = tokio::fs::read_to_string(path).await.inspect_err(|e| {
+            tracing::error!(path = %path.display(), error = %e, "read_text_file: failed");
+        })?;
+        tracing::debug!(path = %path.display(), bytes = contents.len(), "read_text_file: read ok");
         if line.is_none() && limit.is_none() {
             return Ok(contents);
         }

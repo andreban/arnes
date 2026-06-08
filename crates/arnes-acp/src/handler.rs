@@ -1,7 +1,13 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use agent_rig::model::LlmModel;
 use arnes_core::{Host, ModelKey, Session};
@@ -12,6 +18,7 @@ use uuid::Uuid;
 
 use crate::{
     frontend::AcpFrontend,
+    host::{AcpReadTextFile, PendingRequests},
     types::{
         initialize::{AgentCapabilities, AgentInfo, InitializeParams, InitializeResult},
         jsonrpc::Response,
@@ -30,6 +37,8 @@ pub struct Handler {
     notify_tx: mpsc::UnboundedSender<String>,
     sessions: Mutex<HashMap<String, AcpSession>>,
     cancel_tokens: Mutex<HashMap<String, CancellationToken>>,
+    fs_read_text_file: AtomicBool,
+    pending_requests: PendingRequests,
 }
 
 impl Handler {
@@ -44,6 +53,8 @@ impl Handler {
             notify_tx,
             sessions: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
+            fs_read_text_file: AtomicBool::new(false),
+            pending_requests: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -55,6 +66,8 @@ impl Handler {
         let Ok(p) = serde_json::from_value::<InitializeParams>(params) else {
             return Response::err(id, -32602, "invalid params");
         };
+        self.fs_read_text_file
+            .store(p.client_capabilities.fs.read_text_file, Ordering::Relaxed);
         Response::ok(
             id,
             InitializeResult {
@@ -78,7 +91,18 @@ impl Handler {
             .unwrap_or(SessionNewParams { cwd: None });
         let session_id = Uuid::now_v7().to_string();
         let frontend = Arc::new(AcpFrontend::new(session_id.clone(), self.notify_tx.clone()));
-        let host = Host::default();
+        let host = if self.fs_read_text_file.load(Ordering::Relaxed) {
+            Host {
+                read_text_file: Some(Arc::new(AcpReadTextFile::new(
+                    session_id.clone(),
+                    self.notify_tx.clone(),
+                    Arc::clone(&self.pending_requests),
+                ))),
+                ..Default::default()
+            }
+        } else {
+            Host::default()
+        };
         let session = Session::new(frontend, host, self.llm.clone(), self.model_key.clone());
         self.sessions
             .lock()
@@ -118,6 +142,13 @@ impl Handler {
         };
         if let Some(token) = self.cancel_tokens.lock().await.get(&p.session_id) {
             token.cancel();
+        }
+    }
+
+    /// Routes a JSON-RPC response (from the client) back to the waiting caller.
+    pub async fn handle_response(&self, id: String, result: Result<Value, String>) {
+        if let Some(tx) = self.pending_requests.lock().await.remove(&id) {
+            let _ = tx.send(result);
         }
     }
 }

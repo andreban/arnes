@@ -68,3 +68,23 @@ impl Notification {
         }
     }
 }
+
+/// An outbound JSON-RPC request from the agent to the client (expects a response).
+#[derive(Debug, Serialize)]
+pub struct OutboundRequest {
+    pub jsonrpc: &'static str,
+    pub id: String,
+    pub method: &'static str,
+    pub params: Value,
+}
+
+impl OutboundRequest {
+    pub fn new(id: String, method: &'static str, params: impl Serialize) -> Self {
+        Self {
+            jsonrpc: "2.0",
+            id,
+            method,
+            params: serde_json::to_value(params).unwrap(),
+        }
+    }
+}
