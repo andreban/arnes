@@ -5,6 +5,10 @@ edition = "2024"
 license = "Apache-2.0"
 publish = false
 
+[lib]
+name = "arnes_acp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "arnes-acp"
 path = "src/main.rs"

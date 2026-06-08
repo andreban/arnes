@@ -13,13 +13,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio_util::codec::{FramedRead, LinesCodec};
 
-mod frontend;
-mod handler;
-mod host;
-mod types;
-
-use handler::Handler;
-use types::jsonrpc::{Request, Response};
+use arnes_acp::handler::Handler;
+use arnes_acp::types::jsonrpc::{Request, Response};
 
 #[derive(Parser)]
 #[command(about = "arnes ACP server — JSON-RPC 2.0 over stdio")]
