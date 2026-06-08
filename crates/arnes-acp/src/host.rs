@@ -52,9 +52,12 @@ impl ReadTextFile for AcpReadTextFile {
             line: line.map(|n| n as u64),
             limit: limit.map(|n| n as u64),
         };
-        let req = OutboundRequest::new(request_id, "fs/read_text_file", params);
-        if let Ok(serialized) = serde_json::to_string(&req) {
-            let _ = self.notify_tx.send(serialized);
+        let req = OutboundRequest::new(request_id.clone(), "fs/read_text_file", params);
+        let serialized = serde_json::to_string(&req)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        if self.notify_tx.send(serialized).is_err() {
+            self.pending.lock().await.remove(&request_id);
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "client disconnected"));
         }
 
         match rx.await {
