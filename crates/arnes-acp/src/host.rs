@@ -60,16 +60,23 @@ impl ReadTextFile for AcpReadTextFile {
             return Err(io::Error::new(io::ErrorKind::BrokenPipe, "client disconnected"));
         }
 
-        match rx.await {
-            Ok(Ok(result)) => result["content"]
+        match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(Ok(result))) => result["content"]
                 .as_str()
                 .map(|s| s.to_owned())
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing content")),
-            Ok(Err(msg)) => Err(io::Error::other(msg)),
-            Err(_) => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "response channel closed",
-            )),
+            Ok(Ok(Err(msg))) => Err(io::Error::other(msg)),
+            Ok(Err(_)) => {
+                self.pending.lock().await.remove(&request_id);
+                Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "response channel closed",
+                ))
+            }
+            Err(_) => {
+                self.pending.lock().await.remove(&request_id);
+                Err(io::Error::new(io::ErrorKind::TimedOut, "fs/read_text_file timed out"))
+            }
         }
     }
 }
