@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let log_file = std::fs::File::create("arnes-tui.log")?;
     let filter = tracing_subscriber::EnvFilter::new(
-        "off,ollama_rs=debug,geologia=debug,agent_rig=debug,arnes_core=debug,arnes=debug",
+        "off,ollama_rs=debug,geologia=debug,agent_rig=debug,arnes_core=debug,arnes_tui=debug",
     );
     tracing_subscriber::fmt()
         .with_writer(Mutex::new(log_file))
