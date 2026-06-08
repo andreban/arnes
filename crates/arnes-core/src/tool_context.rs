@@ -3,7 +3,7 @@
 
 //! Per-invocation context passed to every tool's `execute`.
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::{AgentId, Host};
 use serde_json::Value;
@@ -14,6 +14,8 @@ pub struct ToolContext {
     pub host: Host,
     pub progress: Option<Arc<dyn ProgressSink>>,
     pub agent_id: AgentId,
+    /// Working directory for resolving relative paths in tool calls.
+    pub cwd: PathBuf,
 }
 
 /// One progress payload from a running tool.

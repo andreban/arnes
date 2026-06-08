@@ -21,7 +21,8 @@ async fn basic_text_roundtrip() {
     let frontend = RecordingFrontend::new();
     let llm = ScriptedLlm::new(vec![ScriptedTurn::Text("Hello!".into())]);
     let host = Host::default();
-    let mut session = Session::new(Arc::clone(&frontend), host, llm, model_key());
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let mut session = Session::new(Arc::clone(&frontend), host, llm, model_key(), cwd);
 
     session
         .prompt("hi", CancellationToken::new())

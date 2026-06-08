@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionNewParams {
-    #[allow(dead_code)]
     pub cwd: Option<String>,
 }
 

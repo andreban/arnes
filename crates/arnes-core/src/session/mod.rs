@@ -1,7 +1,10 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use agent_rig::{
     Agent,
@@ -30,10 +33,17 @@ pub struct Session<F: Frontend> {
     pub(super) rig_thread: Vec<RigMessage>,
     pub(super) cumulative_usage: CumulativeUsage,
     pub(super) model: ModelKey,
+    pub(super) cwd: PathBuf,
 }
 
 impl<F: Frontend> Session<F> {
-    pub fn new(frontend: Arc<F>, host: Host, llm: Arc<dyn LlmModel>, model: ModelKey) -> Self {
+    pub fn new(
+        frontend: Arc<F>,
+        host: Host,
+        llm: Arc<dyn LlmModel>,
+        model: ModelKey,
+        cwd: PathBuf,
+    ) -> Self {
         let mut tool_registry = ToolRegistry::new();
         let mut tool_guidelines: Vec<String> = Vec::new();
 
@@ -42,6 +52,7 @@ impl<F: Frontend> Session<F> {
                 host: host.clone(),
                 progress: None,
                 agent_id: AgentId::Root,
+                cwd: cwd.clone(),
             };
             let tool = ReadTextFile::new(tool_context);
             tool_guidelines.push(tool.prompt_guidelines().to_string());
@@ -70,7 +81,13 @@ impl<F: Frontend> Session<F> {
             rig_thread: Vec::new(),
             cumulative_usage: CumulativeUsage::default(),
             model,
+            cwd,
         }
+    }
+
+    /// Returns the working directory this session resolves relative paths against.
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
     }
 
     pub fn cumulative_usage(&self) -> &CumulativeUsage {

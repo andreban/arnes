@@ -3,6 +3,7 @@
 
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -87,8 +88,12 @@ impl Handler {
     }
 
     pub async fn handle_session_new(&self, id: Value, params: Value) -> Response {
-        let _p = serde_json::from_value::<SessionNewParams>(params)
+        let p = serde_json::from_value::<SessionNewParams>(params)
             .unwrap_or(SessionNewParams { cwd: None });
+        let cwd = p
+            .cwd
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let session_id = Uuid::now_v7().to_string();
         let frontend = Arc::new(AcpFrontend::new(session_id.clone(), self.notify_tx.clone()));
         let host = if self.fs_read_text_file.load(Ordering::Relaxed) {
@@ -103,7 +108,13 @@ impl Handler {
         } else {
             Host::default()
         };
-        let session = Session::new(frontend, host, self.llm.clone(), self.model_key.clone());
+        let session = Session::new(
+            frontend,
+            host,
+            self.llm.clone(),
+            self.model_key.clone(),
+            cwd,
+        );
         self.sessions
             .lock()
             .await
