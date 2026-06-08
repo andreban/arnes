@@ -23,7 +23,10 @@ use crate::frontend::UiCommand;
 
 enum TranscriptItem {
     User(String),
-    Assistant(String),
+    Assistant {
+        thinking: String,
+        text: String,
+    },
     Error(String),
     ToolCall {
         name: String,
@@ -42,6 +45,7 @@ enum RenderedOutcome {
 pub struct AppState {
     items: Vec<TranscriptItem>,
     streaming: String,
+    streaming_thinking: String,
     input: String,
     is_running: bool,
     model_name: String,
@@ -57,6 +61,7 @@ impl AppState {
         Self {
             items: Vec::new(),
             streaming: String::new(),
+            streaming_thinking: String::new(),
             input: String::new(),
             is_running: false,
             model_name,
@@ -98,7 +103,9 @@ impl AppState {
             EventKind::TextDelta { text } => {
                 self.streaming.push_str(&text);
             }
-            EventKind::ThinkingDelta { .. } => {}
+            EventKind::ThinkingDelta { text } => {
+                self.streaming_thinking.push_str(&text);
+            }
             EventKind::TurnEnd { .. } => {
                 self.flush_streaming();
                 self.is_running = false;
@@ -106,6 +113,7 @@ impl AppState {
             }
             EventKind::Error { message } => {
                 self.streaming.clear();
+                self.streaming_thinking.clear();
                 self.items.push(TranscriptItem::Error(message));
                 self.is_running = false;
                 self.current_cancel = None;
@@ -142,9 +150,11 @@ impl AppState {
     }
 
     fn flush_streaming(&mut self) {
-        if !self.streaming.is_empty() {
+        if !self.streaming.is_empty() || !self.streaming_thinking.is_empty() {
+            let thinking = std::mem::take(&mut self.streaming_thinking);
             let text = std::mem::take(&mut self.streaming);
-            self.items.push(TranscriptItem::Assistant(text));
+            self.items
+                .push(TranscriptItem::Assistant { thinking, text });
         }
     }
 }
@@ -245,7 +255,16 @@ fn render(f: &mut Frame, state: &mut AppState) {
                     Span::styled(text.clone(), Style::default().fg(Color::Cyan)),
                 ]));
             }
-            TranscriptItem::Assistant(text) => {
+            TranscriptItem::Assistant { thinking, text } => {
+                if !thinking.is_empty() {
+                    let dim_italic = Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC);
+                    lines.push(Line::from(Span::styled("◆ thinking", dim_italic)));
+                    for line in thinking.lines() {
+                        lines.push(Line::from(Span::styled(format!("  {line}"), dim_italic)));
+                    }
+                }
                 for line in text.lines() {
                     lines.push(Line::from(Span::raw(line.to_owned())));
                 }
@@ -264,6 +283,21 @@ fn render(f: &mut Frame, state: &mut AppState) {
             } => {
                 lines.extend(render_tool_call(name, args, outcome.as_ref()));
             }
+        }
+    }
+    if !state.streaming_thinking.is_empty() {
+        let dim_italic = Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC);
+        lines.push(Line::from(Span::styled("◆ thinking", dim_italic)));
+        for line in state.streaming_thinking.lines() {
+            lines.push(Line::from(Span::styled(format!("  {line}"), dim_italic)));
+        }
+        if state.streaming.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "▋",
+                Style::default().fg(Color::DarkGray),
+            )));
         }
     }
     if !state.streaming.is_empty() {
