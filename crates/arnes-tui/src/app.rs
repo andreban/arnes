@@ -29,6 +29,7 @@ enum TranscriptItem {
     },
     Error(String),
     ToolCall {
+        id: String,
         name: String,
         args: String,
         outcome: Option<RenderedOutcome>,
@@ -118,28 +119,31 @@ impl AppState {
                 self.is_running = false;
                 self.current_cancel = None;
             }
-            EventKind::ToolCallStarted { name, args, .. } => {
+            EventKind::ToolCallStarted { id, name, args } => {
                 self.flush_streaming();
                 self.items.push(TranscriptItem::ToolCall {
+                    id,
                     name,
                     args: summarize_json(&args),
                     outcome: None,
                 });
             }
-            EventKind::ToolCallFinished { name, outcome, .. } => {
+            EventKind::ToolCallFinished { id, name, outcome } => {
                 let rendered = render_outcome(outcome);
                 let matched = self.items.iter_mut().rev().find_map(|item| match item {
                     TranscriptItem::ToolCall {
+                        id: tool_call_id,
                         name: n,
                         outcome: o @ None,
                         ..
-                    } if *n == name => Some(o),
+                    } if *tool_call_id == id => Some(o),
                     _ => None,
                 });
                 if let Some(slot) = matched {
                     *slot = Some(rendered);
                 } else {
                     self.items.push(TranscriptItem::ToolCall {
+                        id,
                         name,
                         args: String::new(),
                         outcome: Some(rendered),
@@ -177,6 +181,7 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 fn render_tool_call<'a>(
+    _id: &'a str,
     name: &'a str,
     args: &'a str,
     outcome: Option<&'a RenderedOutcome>,
@@ -283,11 +288,12 @@ fn render(f: &mut Frame, state: &mut AppState) {
                 )));
             }
             TranscriptItem::ToolCall {
+                id,
                 name,
                 args,
                 outcome,
             } => {
-                lines.extend(render_tool_call(name, args, outcome.as_ref()));
+                lines.extend(render_tool_call(id, name, args, outcome.as_ref()));
             }
         }
     }
