@@ -118,7 +118,7 @@ impl AppState {
                 self.is_running = false;
                 self.current_cancel = None;
             }
-            EventKind::ToolCallStarted { name, args } => {
+            EventKind::ToolCallStarted { name, args, .. } => {
                 self.flush_streaming();
                 self.items.push(TranscriptItem::ToolCall {
                     name,
@@ -126,7 +126,7 @@ impl AppState {
                     outcome: None,
                 });
             }
-            EventKind::ToolCallFinished { name, outcome } => {
+            EventKind::ToolCallFinished { name, outcome, .. } => {
                 let rendered = render_outcome(outcome);
                 let matched = self.items.iter_mut().rev().find_map(|item| match item {
                     TranscriptItem::ToolCall {
