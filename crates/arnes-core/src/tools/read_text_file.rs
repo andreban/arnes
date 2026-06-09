@@ -138,6 +138,113 @@ mod tests {
         }
     }
 
+    /// Serves file contents from an in-memory map, applying the same
+    /// 1-indexed `line`/`limit` slicing the real host backends do.
+    struct MapHost {
+        files: std::collections::HashMap<PathBuf, String>,
+    }
+
+    #[async_trait]
+    impl ReadTextFileTrait for MapHost {
+        async fn read_text_file(
+            &self,
+            path: &Path,
+            line: Option<usize>,
+            limit: Option<usize>,
+        ) -> io::Result<String> {
+            let content = self.files.get(path).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, format!("not found: {path:?}"))
+            })?;
+            let lines: Vec<&str> = content.lines().collect();
+            let start = line
+                .map(|n| n.saturating_sub(1))
+                .unwrap_or(0)
+                .min(lines.len());
+            let slice = &lines[start..];
+            let slice = match limit {
+                Some(lim) => &slice[..slice.len().min(lim)],
+                None => slice,
+            };
+            Ok(slice.join("\n"))
+        }
+    }
+
+    fn map_tool(files: &[(&str, &str)]) -> ReadTextFile {
+        let files = files
+            .iter()
+            .map(|(p, c)| (PathBuf::from(p), (*c).to_string()))
+            .collect();
+        let context = ToolContext {
+            host: Host {
+                read_text_file: Some(Arc::new(MapHost { files })),
+                ..Host::default()
+            },
+            progress: None,
+            agent_id: AgentId::Root,
+            cwd: PathBuf::from("/"),
+        };
+        ReadTextFile::new(context)
+    }
+
+    #[tokio::test]
+    async fn happy_path_returns_content() {
+        let tool = map_tool(&[("/notes.txt", "hello world")]);
+        let args = ReadTextFileParams {
+            path: PathBuf::from("/notes.txt"),
+            line: None,
+            limit: None,
+        };
+        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        assert_eq!(out.content.as_deref(), Some("hello world"));
+        assert!(out.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn missing_file_returns_error_output() {
+        let tool = map_tool(&[("/present.txt", "here")]);
+        let args = ReadTextFileParams {
+            path: PathBuf::from("/absent.txt"),
+            line: None,
+            limit: None,
+        };
+        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        assert!(out.content.is_none());
+        assert!(out.error.is_some(), "missing file should populate error");
+    }
+
+    #[tokio::test]
+    async fn capability_unavailable_returns_err() {
+        let context = ToolContext {
+            host: Host::default(),
+            progress: None,
+            agent_id: AgentId::Root,
+            cwd: PathBuf::from("/"),
+        };
+        let tool = ReadTextFile::new(context);
+        let args = ReadTextFileParams {
+            path: PathBuf::from("/anything.txt"),
+            line: None,
+            limit: None,
+        };
+        let result = tool.call(args, CancellationToken::new()).await;
+        assert!(
+            result.is_err(),
+            "tool should error when the capability is absent"
+        );
+    }
+
+    #[tokio::test]
+    async fn line_and_limit_slice_the_file() {
+        let tool = map_tool(&[("/multi.txt", "one\ntwo\nthree\nfour\nfive")]);
+        let args = ReadTextFileParams {
+            path: PathBuf::from("/multi.txt"),
+            line: Some(2),
+            limit: Some(2),
+        };
+        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        assert_eq!(out.content.as_deref(), Some("two\nthree"));
+    }
+
     fn make_tool(cwd: PathBuf) -> (ReadTextFile, Arc<CapturingHost>) {
         let capturing = Arc::new(CapturingHost {
             called_with: Mutex::new(None),
