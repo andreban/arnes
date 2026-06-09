@@ -3,7 +3,7 @@
 
 use std::io;
 
-use arnes_core::{EventKind, SessionEvent, ToolCallOutcome};
+use arnes_core::{EventKind, Permission, SessionEvent, ToolCallOutcome};
 use crossterm::event::{
     Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
@@ -11,12 +11,12 @@ use futures_util::StreamExt;
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::frontend::UiCommand;
@@ -51,6 +51,8 @@ pub struct AppState {
     is_running: bool,
     model_name: String,
     current_cancel: Option<CancellationToken>,
+    // Set while a tool is awaiting the user's allow/deny answer.
+    pending_permission: Option<oneshot::Sender<Permission>>,
     // Lines scrolled up from the bottom of the transcript. 0 follows the tail.
     scroll_offset: u16,
     last_transcript_height: u16,
@@ -67,6 +69,7 @@ impl AppState {
             is_running: false,
             model_name,
             current_cancel: None,
+            pending_permission: None,
             scroll_offset: 0,
             last_transcript_height: 0,
             last_max_scroll: 0,
@@ -150,6 +153,12 @@ impl AppState {
                     });
                 }
             }
+        }
+    }
+
+    fn respond_permission(&mut self, decision: Permission) {
+        if let Some(responder) = self.pending_permission.take() {
+            let _ = responder.send(decision);
         }
     }
 
@@ -238,6 +247,57 @@ fn render_outcome(outcome: ToolCallOutcome) -> RenderedOutcome {
         ToolCallOutcome::Denied => RenderedOutcome::Denied,
         ToolCallOutcome::Unknown => RenderedOutcome::Unknown,
     }
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
+}
+
+fn render_permission_prompt(f: &mut Frame, area: Rect) {
+    let popup = centered_rect(54, 6, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default().borders(Borders::ALL).border_style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    );
+    let body = Text::from(vec![
+        Line::from("The agent is requesting permission to run a tool."),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "[y]",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" allow once    "),
+            Span::styled(
+                "[n/esc]",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" deny"),
+        ]),
+    ]);
+    let prompt = Paragraph::new(body)
+        .block(
+            block.title(Span::styled(
+                " Permission required ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+        )
+        .wrap(Wrap { trim: false });
+    f.render_widget(prompt, popup);
 }
 
 fn render(f: &mut Frame, state: &mut AppState) {
@@ -362,6 +422,11 @@ fn render(f: &mut Frame, state: &mut AppState) {
         let cursor_y = chunks[2].y + 1;
         f.set_cursor_position((cursor_x, cursor_y));
     }
+
+    // Modal permission prompt, drawn last so it sits above the transcript.
+    if state.pending_permission.is_some() {
+        render_permission_prompt(f, area);
+    }
 }
 
 pub async fn run(
@@ -383,6 +448,22 @@ pub async fn run(
                 let Some(Ok(event)) = maybe_event else { break; };
                 match event {
                     Event::Key(KeyEvent { code, modifiers, kind: KeyEventKind::Press, .. }) => {
+                        if state.pending_permission.is_some() {
+                            match (code, modifiers) {
+                                (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                                    state.respond_permission(Permission::Deny);
+                                    break;
+                                }
+                                (KeyCode::Char('y') | KeyCode::Char('Y'), _) => {
+                                    state.respond_permission(Permission::AllowOnce);
+                                }
+                                (KeyCode::Char('n') | KeyCode::Char('N'), _)
+                                | (KeyCode::Esc, _) => {
+                                    state.respond_permission(Permission::Deny);
+                                }
+                                _ => {}
+                            }
+                        } else {
                         match (code, modifiers) {
                             (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                                 if let Some(cancel) = &state.current_cancel {
@@ -430,6 +511,7 @@ pub async fn run(
                             }
                             _ => {}
                         }
+                        }
                     }
                     Event::Mouse(MouseEvent { kind, .. }) => {
                         match kind {
@@ -444,8 +526,12 @@ pub async fn run(
             }
 
             maybe_cmd = ui_rx.recv() => {
-                if let Some(UiCommand::Event(ev)) = maybe_cmd {
-                    state.handle_session_event(ev);
+                match maybe_cmd {
+                    Some(UiCommand::Event(ev)) => state.handle_session_event(ev),
+                    Some(UiCommand::PermissionRequest { responder }) => {
+                        state.pending_permission = Some(responder);
+                    }
+                    None => {}
                 }
             }
         }
