@@ -20,7 +20,6 @@ pub struct AcpFrontend {
     session_id: String,
     notify_tx: mpsc::UnboundedSender<String>,
     current_message_id: Mutex<Option<String>>,
-    current_tool_call_id: Mutex<Option<String>>,
 }
 
 impl AcpFrontend {
@@ -29,7 +28,6 @@ impl AcpFrontend {
             session_id,
             notify_tx,
             current_message_id: Mutex::new(None),
-            current_tool_call_id: Mutex::new(None),
         }
     }
 
@@ -78,28 +76,20 @@ impl Frontend for AcpFrontend {
                     content: MessageContent { kind: "text", text },
                 });
             }
-            EventKind::ToolCallStarted { name, .. } => {
-                let tool_call_id = Uuid::now_v7().to_string();
-                *self.current_tool_call_id.lock().unwrap() = Some(tool_call_id.clone());
+            EventKind::ToolCallStarted { id, name, .. } => {
                 self.send(SessionUpdate::ToolCall {
-                    tool_call_id: tool_call_id.clone(),
+                    tool_call_id: id.clone(),
                     title: name,
                     kind: "tool_use",
                     status: "pending",
                 });
                 self.send(SessionUpdate::ToolCallUpdate {
-                    tool_call_id,
+                    tool_call_id: id,
                     status: "in_progress",
                     content: None,
                 });
             }
-            EventKind::ToolCallFinished { outcome, .. } => {
-                let tool_call_id = self
-                    .current_tool_call_id
-                    .lock()
-                    .unwrap()
-                    .take()
-                    .unwrap_or_else(|| Uuid::now_v7().to_string());
+            EventKind::ToolCallFinished { id, outcome, .. } => {
                 let text = match outcome {
                     ToolCallOutcome::Ok(v) => {
                         if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
@@ -115,7 +105,7 @@ impl Frontend for AcpFrontend {
                     ToolCallOutcome::Unknown => "unknown".to_string(),
                 };
                 self.send(SessionUpdate::ToolCallUpdate {
-                    tool_call_id,
+                    tool_call_id: id,
                     status: "completed",
                     content: Some(MessageContent { kind: "text", text }),
                 });
