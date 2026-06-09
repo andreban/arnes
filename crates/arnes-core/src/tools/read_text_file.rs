@@ -103,7 +103,7 @@ impl Tool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
     }
 
     fn permission_required(&self) -> bool {
-        false
+        true
     }
 }
 

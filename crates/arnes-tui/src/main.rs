@@ -18,6 +18,7 @@ use geologia::prelude::ThinkingConfig;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 
 mod app;
 mod frontend;
@@ -53,6 +54,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(filter)
         .with_ansi(false)
         .init();
+
+    debug!("Starting arnes_tui");
 
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

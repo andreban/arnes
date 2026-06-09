@@ -15,6 +15,7 @@ use agent_rig::{
 
 use crate::{
     AgentId, CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext,
+    auth::AuthManager,
     tools::{ReadTextFile, Tool},
 };
 
@@ -70,7 +71,10 @@ impl<F: Frontend> Session<F> {
             .instructions(&instructions)
             .build();
 
-        let runner = AgentRunner::with_registry(llm, Arc::new(tool_registry));
+        let auth_manager = Arc::new(AuthManager::new(frontend.clone()));
+
+        let runner = AgentRunner::with_registry(llm, Arc::new(tool_registry))
+            .with_auth_manager(auth_manager);
 
         Self {
             frontend,

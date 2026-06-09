@@ -10,7 +10,7 @@ use crate::{AgentId, TurnUsage};
 
 /// Implemented by every UI adapter.
 #[async_trait]
-pub trait Frontend: Send + Sync {
+pub trait Frontend: Send + Sync + 'static {
     async fn on_event(&self, event: SessionEvent);
     async fn request_permission(&self, req: PermissionRequest) -> Permission;
     fn capabilities(&self) -> FrontendCapabilities {
