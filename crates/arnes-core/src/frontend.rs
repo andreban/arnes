@@ -46,10 +46,12 @@ pub enum EventKind {
         message: String,
     },
     ToolCallStarted {
+        id: String,
         name: String,
         args: Value,
     },
     ToolCallFinished {
+        id: String,
         name: String,
         outcome: ToolCallOutcome,
     },
