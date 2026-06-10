@@ -31,9 +31,10 @@ impl<F: Frontend> RigAuthManager for AuthManager<F> {
         true
     }
 
-    async fn authorize(&self, name: &str, args: &Value) -> bool {
+    async fn authorize(&self, id: &str, name: &str, args: &Value) -> bool {
         debug!(name, ?args, "AuthManager::authorize");
         let permission_request = PermissionRequest {
+            tool_call_id: id.to_string(),
             tool_name: name.to_string(),
             args: args.clone(),
         };
