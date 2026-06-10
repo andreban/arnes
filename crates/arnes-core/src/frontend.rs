@@ -74,6 +74,7 @@ pub enum StopReason {
 /// Describes the gated tool call awaiting the user's approval.
 #[derive(Clone, Debug, Default)]
 pub struct PermissionRequest {
+    pub tool_call_id: String,
     pub tool_name: String,
     pub args: Value,
 }

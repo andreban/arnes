@@ -136,14 +136,12 @@ impl Frontend for AcpFrontend {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(request_id.clone(), tx);
 
-        // The auth gate fires before agent-rig assigns the tool-call id we
-        // echo in session/update, so the prompt carries its own id rather
-        // than correlating with the tool_call card. Once authorize receives
-        // the id (andreban/agent-rig#48), reuse it here instead.
+        // Reuse the tool-call id from authorize so the prompt correlates with
+        // the tool_call card we echo in session/update.
         let params = RequestPermissionParams {
             session_id: self.session_id.clone(),
             tool_call: PermissionToolCall {
-                tool_call_id: Uuid::now_v7().to_string(),
+                tool_call_id: req.tool_call_id,
                 title: req.tool_name,
             },
             options: permission::default_options(),
