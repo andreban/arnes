@@ -3,6 +3,8 @@
 
 //! Frontend trait and the event vocabulary it consumes.
 
+use std::path::PathBuf;
+
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -71,12 +73,34 @@ pub enum StopReason {
     Cancelled,
 }
 
+/// Semantic category of a tool call, so a frontend can label it and pick an
+/// icon. `Other` is the catch-all default for tools that don't declare a more
+/// specific kind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToolKind {
+    Read,
+    Edit,
+    Delete,
+    Move,
+    Search,
+    Execute,
+    Think,
+    Fetch,
+    #[default]
+    Other,
+}
+
 /// Describes the gated tool call awaiting the user's approval.
 #[derive(Clone, Debug, Default)]
 pub struct PermissionRequest {
     pub tool_call_id: String,
     pub tool_name: String,
     pub args: Value,
+    /// Semantic category of the tool, for labelling the prompt.
+    pub kind: ToolKind,
+    /// Absolute paths the call will touch, resolved against the session cwd.
+    /// Empty for tools that declare no filesystem paths.
+    pub paths: Vec<PathBuf>,
 }
 
 /// Frontend's verdict on a permission request.

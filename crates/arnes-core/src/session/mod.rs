@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -10,12 +11,12 @@ use agent_rig::{
     Agent,
     model::{LlmModel, Message as RigMessage},
     runner::AgentRunner,
-    tools::ToolRegistry,
+    tools::{Tool as AgentRigTool, ToolRegistry},
 };
 
 use crate::{
     AgentId, CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext,
-    auth::AuthManager,
+    auth::{AuthManager, ToolPermissionMeta},
     tools::{ReadTextFile, Tool},
 };
 
@@ -47,6 +48,7 @@ impl<F: Frontend> Session<F> {
     ) -> Self {
         let mut tool_registry = ToolRegistry::new();
         let mut tool_guidelines: Vec<String> = Vec::new();
+        let mut tool_metadata: HashMap<String, ToolPermissionMeta> = HashMap::new();
 
         if host.read_text_file.is_some() {
             let tool_context = ToolContext {
@@ -57,6 +59,13 @@ impl<F: Frontend> Session<F> {
             };
             let tool = ReadTextFile::new(tool_context);
             tool_guidelines.push(tool.prompt_guidelines().to_string());
+            tool_metadata.insert(
+                tool.definition().name,
+                ToolPermissionMeta {
+                    kind: tool.tool_kind(),
+                    location_keys: tool.location_arg_keys(),
+                },
+            );
             tool_registry = tool_registry.register(tool);
         }
 
@@ -71,7 +80,11 @@ impl<F: Frontend> Session<F> {
             .instructions(&instructions)
             .build();
 
-        let auth_manager = Arc::new(AuthManager::new(frontend.clone()));
+        let auth_manager = Arc::new(AuthManager::new(
+            frontend.clone(),
+            tool_metadata,
+            cwd.clone(),
+        ));
 
         let runner = AgentRunner::with_registry(llm, Arc::new(tool_registry))
             .with_auth_manager(auth_manager);

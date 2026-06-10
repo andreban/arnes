@@ -1,6 +1,7 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
+use arnes_core::ToolKind;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -21,13 +22,44 @@ pub struct RequestPermissionParams {
 /// The tool call the prompt is about. A minimal `ToolCallUpdate`: the spec
 /// only requires `toolCallId`, and `title` gives the client something to show.
 /// `rawInput` carries the tool's argument object so the client can render what
-/// the call will act on (e.g. the path a file read targets).
+/// the call will act on (e.g. the path a file read targets). `kind` and
+/// `locations` enrich that further: a semantic category for the icon/label and
+/// the file paths the call touches, which the client can show and follow.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionToolCall {
     pub tool_call_id: String,
     pub title: String,
     pub raw_input: Value,
+    /// ACP `ToolKind`. Omitted for the `other` default the client assumes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<&'static str>,
+    /// Files the call touches, as `[{ "path": "..." }]`. Omitted when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub locations: Vec<PermissionLocation>,
+}
+
+/// One `locations` entry: an absolute path the gated call will act on.
+#[derive(Debug, Serialize)]
+pub struct PermissionLocation {
+    pub path: String,
+}
+
+/// Maps a core [`ToolKind`] to its ACP wire string, returning `None` for
+/// [`ToolKind::Other`] so the prompt omits a redundant `"other"` (the client's
+/// own default).
+pub fn acp_kind(kind: ToolKind) -> Option<&'static str> {
+    match kind {
+        ToolKind::Read => Some("read"),
+        ToolKind::Edit => Some("edit"),
+        ToolKind::Delete => Some("delete"),
+        ToolKind::Move => Some("move"),
+        ToolKind::Search => Some("search"),
+        ToolKind::Execute => Some("execute"),
+        ToolKind::Think => Some("think"),
+        ToolKind::Fetch => Some("fetch"),
+        ToolKind::Other => None,
+    }
 }
 
 /// ACP `PermissionOptionKind`. All four kinds are modelled even though
@@ -101,13 +133,41 @@ mod tests {
                 tool_call_id: "perm-1".into(),
                 title: "read_text_file".into(),
                 raw_input: serde_json::json!({ "path": "Cargo.toml" }),
+                kind: Some("read"),
+                locations: vec![PermissionLocation {
+                    path: "/work/Cargo.toml".into(),
+                }],
             },
             options: default_options(),
         };
         assert_eq!(
             serde_json::to_string(&params).unwrap(),
-            r#"{"sessionId":"sess-1","toolCall":{"toolCallId":"perm-1","title":"read_text_file","rawInput":{"path":"Cargo.toml"}},"options":[{"optionId":"allow-once","name":"Allow","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}"#,
+            r#"{"sessionId":"sess-1","toolCall":{"toolCallId":"perm-1","title":"read_text_file","rawInput":{"path":"Cargo.toml"},"kind":"read","locations":[{"path":"/work/Cargo.toml"}]},"options":[{"optionId":"allow-once","name":"Allow","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}"#,
         );
+    }
+
+    #[test]
+    fn kind_and_locations_omitted_when_absent() {
+        // An `other`-kind tool with no file locations drops both fields rather
+        // than sending a redundant `"other"` and an empty array.
+        let tool_call = PermissionToolCall {
+            tool_call_id: "perm-1".into(),
+            title: "some_tool".into(),
+            raw_input: serde_json::json!({}),
+            kind: acp_kind(ToolKind::Other),
+            locations: Vec::new(),
+        };
+        assert_eq!(
+            serde_json::to_string(&tool_call).unwrap(),
+            r#"{"toolCallId":"perm-1","title":"some_tool","rawInput":{}}"#,
+        );
+    }
+
+    #[test]
+    fn acp_kind_maps_known_kinds() {
+        assert_eq!(acp_kind(ToolKind::Read), Some("read"));
+        assert_eq!(acp_kind(ToolKind::Execute), Some("execute"));
+        assert_eq!(acp_kind(ToolKind::Other), None);
     }
 
     #[test]
