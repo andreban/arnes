@@ -17,8 +17,8 @@ use crate::{
     types::{
         jsonrpc::{Notification, OutboundRequest},
         permission::{
-            self, PermissionOutcome, PermissionToolCall, RequestPermissionParams,
-            RequestPermissionResult,
+            self, PermissionLocation, PermissionOutcome, PermissionToolCall,
+            RequestPermissionParams, RequestPermissionResult,
         },
         session::{MessageContent, SessionUpdate, SessionUpdateParams},
     },
@@ -136,6 +136,14 @@ impl Frontend for AcpFrontend {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(request_id.clone(), tx);
 
+        let locations = req
+            .paths
+            .iter()
+            .map(|path| PermissionLocation {
+                path: path.to_string_lossy().into_owned(),
+            })
+            .collect();
+
         // Reuse the tool-call id from authorize so the prompt correlates with
         // the tool_call card we echo in session/update.
         let params = RequestPermissionParams {
@@ -144,6 +152,8 @@ impl Frontend for AcpFrontend {
                 tool_call_id: req.tool_call_id,
                 title: req.tool_name,
                 raw_input: req.args,
+                kind: permission::acp_kind(req.kind),
+                locations,
             },
             options: permission::default_options(),
         };

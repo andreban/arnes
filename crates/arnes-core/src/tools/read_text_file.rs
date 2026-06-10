@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use crate::ToolContext;
+use crate::{ToolContext, ToolKind};
 
 use super::Tool;
 use agent_rig::error::Error as AgentRigError;
@@ -104,6 +104,14 @@ impl Tool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
 
     fn permission_required(&self) -> bool {
         true
+    }
+
+    fn tool_kind(&self) -> ToolKind {
+        ToolKind::Read
+    }
+
+    fn location_arg_keys(&self) -> &'static [&'static str] {
+        &["path"]
     }
 }
 
