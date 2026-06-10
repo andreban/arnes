@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Option id arnes sends for "allow this call once".
 pub const ALLOW_ONCE: &str = "allow-once";
@@ -19,11 +20,14 @@ pub struct RequestPermissionParams {
 
 /// The tool call the prompt is about. A minimal `ToolCallUpdate`: the spec
 /// only requires `toolCallId`, and `title` gives the client something to show.
+/// `rawInput` carries the tool's argument object so the client can render what
+/// the call will act on (e.g. the path a file read targets).
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionToolCall {
     pub tool_call_id: String,
     pub title: String,
+    pub raw_input: Value,
 }
 
 /// ACP `PermissionOptionKind`. All four kinds are modelled even though
@@ -96,12 +100,13 @@ mod tests {
             tool_call: PermissionToolCall {
                 tool_call_id: "perm-1".into(),
                 title: "read_text_file".into(),
+                raw_input: serde_json::json!({ "path": "Cargo.toml" }),
             },
             options: default_options(),
         };
         assert_eq!(
             serde_json::to_string(&params).unwrap(),
-            r#"{"sessionId":"sess-1","toolCall":{"toolCallId":"perm-1","title":"read_text_file"},"options":[{"optionId":"allow-once","name":"Allow","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}"#,
+            r#"{"sessionId":"sess-1","toolCall":{"toolCallId":"perm-1","title":"read_text_file","rawInput":{"path":"Cargo.toml"}},"options":[{"optionId":"allow-once","name":"Allow","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}"#,
         );
     }
 
