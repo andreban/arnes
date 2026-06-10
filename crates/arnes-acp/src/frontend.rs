@@ -8,25 +8,39 @@ use arnes_core::{
     ToolCallOutcome,
 };
 use async_trait::async_trait;
-use tokio::sync::mpsc;
+use serde_json::Value;
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
-use crate::types::{
-    jsonrpc::Notification,
-    session::{MessageContent, SessionUpdate, SessionUpdateParams},
+use crate::{
+    host::PendingRequests,
+    types::{
+        jsonrpc::{Notification, OutboundRequest},
+        permission::{
+            self, PermissionOutcome, PermissionToolCall, RequestPermissionParams,
+            RequestPermissionResult,
+        },
+        session::{MessageContent, SessionUpdate, SessionUpdateParams},
+    },
 };
 
 pub struct AcpFrontend {
     session_id: String,
     notify_tx: mpsc::UnboundedSender<String>,
+    pending: PendingRequests,
     current_message_id: Mutex<Option<String>>,
 }
 
 impl AcpFrontend {
-    pub fn new(session_id: String, notify_tx: mpsc::UnboundedSender<String>) -> Self {
+    pub fn new(
+        session_id: String,
+        notify_tx: mpsc::UnboundedSender<String>,
+        pending: PendingRequests,
+    ) -> Self {
         Self {
             session_id,
             notify_tx,
+            pending,
             current_message_id: Mutex::new(None),
         }
     }
@@ -117,11 +131,57 @@ impl Frontend for AcpFrontend {
         }
     }
 
-    async fn request_permission(&self, _req: PermissionRequest) -> Permission {
-        Permission::AllowOnce
+    async fn request_permission(&self, req: PermissionRequest) -> Permission {
+        let request_id = Uuid::now_v7().to_string();
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(request_id.clone(), tx);
+
+        // The auth gate fires before agent-rig assigns the tool-call id we
+        // echo in session/update, so the prompt carries its own id rather
+        // than correlating with the tool_call card. Once authorize receives
+        // the id (andreban/agent-rig#48), reuse it here instead.
+        let params = RequestPermissionParams {
+            session_id: self.session_id.clone(),
+            tool_call: PermissionToolCall {
+                tool_call_id: Uuid::now_v7().to_string(),
+                title: req.tool_name,
+            },
+            options: permission::default_options(),
+        };
+        let outbound =
+            OutboundRequest::new(request_id.clone(), "session/request_permission", params);
+        let Ok(serialized) = serde_json::to_string(&outbound) else {
+            self.pending.lock().await.remove(&request_id);
+            return Permission::Deny;
+        };
+        if self.notify_tx.send(serialized).is_err() {
+            self.pending.lock().await.remove(&request_id);
+            return Permission::Deny;
+        }
+
+        // No timeout: the user may take a while to answer. agent-rig races
+        // this future against session cancellation, so a stuck prompt is
+        // dropped when the turn is cancelled. A closed channel (client gone)
+        // or any non-allow outcome denies.
+        match rx.await {
+            Ok(Ok(value)) => permission_from_value(value),
+            _ => Permission::Deny,
+        }
     }
 
     fn capabilities(&self) -> FrontendCapabilities {
         FrontendCapabilities::default()
+    }
+}
+
+/// Maps a `session/request_permission` result to a verdict. Anything other
+/// than an explicit allow-once selection — reject, cancel, or an unparseable
+/// payload — denies.
+fn permission_from_value(value: Value) -> Permission {
+    match serde_json::from_value::<RequestPermissionResult>(value) {
+        Ok(RequestPermissionResult {
+            outcome: PermissionOutcome::Selected { option_id },
+        }) if option_id == permission::ALLOW_ONCE => Permission::AllowOnce,
+        _ => Permission::Deny,
     }
 }
