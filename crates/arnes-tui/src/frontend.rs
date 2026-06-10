@@ -13,6 +13,7 @@ pub enum UiCommand {
     Event(SessionEvent),
     /// A tool is asking to run; the UI answers through `responder`.
     PermissionRequest {
+        request: PermissionRequest,
         responder: oneshot::Sender<Permission>,
     },
 }
@@ -39,7 +40,10 @@ impl Frontend for TuiFrontend {
         let (responder, response) = oneshot::channel();
         if self
             .tx
-            .send(UiCommand::PermissionRequest { responder })
+            .send(UiCommand::PermissionRequest {
+                request: req,
+                responder,
+            })
             .is_err()
         {
             // UI is gone; deny rather than block forever.

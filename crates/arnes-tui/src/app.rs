@@ -43,6 +43,13 @@ enum RenderedOutcome {
     Unknown,
 }
 
+// A gated tool call awaiting the user's allow/deny answer.
+struct PendingPermission {
+    tool_name: String,
+    args: String,
+    responder: oneshot::Sender<Permission>,
+}
+
 pub struct AppState {
     items: Vec<TranscriptItem>,
     streaming: String,
@@ -52,7 +59,7 @@ pub struct AppState {
     model_name: String,
     current_cancel: Option<CancellationToken>,
     // Set while a tool is awaiting the user's allow/deny answer.
-    pending_permission: Option<oneshot::Sender<Permission>>,
+    pending_permission: Option<PendingPermission>,
     // Lines scrolled up from the bottom of the transcript. 0 follows the tail.
     scroll_offset: u16,
     last_transcript_height: u16,
@@ -157,8 +164,8 @@ impl AppState {
     }
 
     fn respond_permission(&mut self, decision: Permission) {
-        if let Some(responder) = self.pending_permission.take() {
-            let _ = responder.send(decision);
+        if let Some(pending) = self.pending_permission.take() {
+            let _ = pending.responder.send(decision);
         }
     }
 
@@ -260,8 +267,8 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     }
 }
 
-fn render_permission_prompt(f: &mut Frame, area: Rect) {
-    let popup = centered_rect(54, 6, area);
+fn render_permission_prompt(f: &mut Frame, area: Rect, pending: &PendingPermission) {
+    let popup = centered_rect(60, 9, area);
     f.render_widget(Clear, popup);
 
     let block = Block::default().borders(Borders::ALL).border_style(
@@ -269,24 +276,38 @@ fn render_permission_prompt(f: &mut Frame, area: Rect) {
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
     );
-    let body = Text::from(vec![
-        Line::from("The agent is requesting permission to run a tool."),
+    let mut lines = vec![
+        Line::from("The agent wants to run this tool:"),
         Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "[y]",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" allow once    "),
-            Span::styled(
-                "[n/esc]",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" deny"),
-        ]),
-    ]);
+        Line::from(Span::styled(
+            pending.tool_name.clone(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+    ];
+    if !pending.args.is_empty() {
+        lines.push(Line::from(Span::styled(
+            pending.args.clone(),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "[y]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" allow once    "),
+        Span::styled(
+            "[n/esc]",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" deny"),
+    ]));
+    let body = Text::from(lines);
     let prompt = Paragraph::new(body)
         .block(
             block.title(Span::styled(
@@ -424,8 +445,8 @@ fn render(f: &mut Frame, state: &mut AppState) {
     }
 
     // Modal permission prompt, drawn last so it sits above the transcript.
-    if state.pending_permission.is_some() {
-        render_permission_prompt(f, area);
+    if let Some(pending) = &state.pending_permission {
+        render_permission_prompt(f, area, pending);
     }
 }
 
@@ -528,8 +549,12 @@ pub async fn run(
             maybe_cmd = ui_rx.recv() => {
                 match maybe_cmd {
                     Some(UiCommand::Event(ev)) => state.handle_session_event(ev),
-                    Some(UiCommand::PermissionRequest { responder }) => {
-                        state.pending_permission = Some(responder);
+                    Some(UiCommand::PermissionRequest { request, responder }) => {
+                        state.pending_permission = Some(PendingPermission {
+                            tool_name: request.tool_name,
+                            args: summarize_json(&request.args),
+                            responder,
+                        });
                     }
                     None => {}
                 }

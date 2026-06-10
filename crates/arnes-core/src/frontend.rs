@@ -71,9 +71,12 @@ pub enum StopReason {
     Cancelled,
 }
 
-/// Permission-prompt payload. Filled in when the permission system lands.
+/// Describes the gated tool call awaiting the user's approval.
 #[derive(Clone, Debug, Default)]
-pub struct PermissionRequest;
+pub struct PermissionRequest {
+    pub tool_name: String,
+    pub args: Value,
+}
 
 /// Frontend's verdict on a permission request.
 #[derive(Clone, Debug)]
