@@ -143,6 +143,7 @@ impl Frontend for AcpFrontend {
             tool_call: PermissionToolCall {
                 tool_call_id: req.tool_call_id,
                 title: req.tool_name,
+                raw_input: req.args,
             },
             options: permission::default_options(),
         };
