@@ -26,30 +26,40 @@ pub struct PermissionToolCall {
     pub title: String,
 }
 
-/// One choice offered to the user. `kind` is an ACP `PermissionOptionKind`
-/// (`allow_once`, `allow_always`, `reject_once`, `reject_always`).
+/// ACP `PermissionOptionKind`. All four kinds are modelled even though
+/// [`default_options`] only offers the two arnes can currently honor.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionOptionKind {
+    AllowOnce,
+    AllowAlways,
+    RejectOnce,
+    RejectAlways,
+}
+
+/// One choice offered to the user.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionOption {
     pub option_id: &'static str,
     pub name: &'static str,
-    pub kind: &'static str,
+    pub kind: PermissionOptionKind,
 }
 
 /// The two choices arnes offers, mirroring the TUI's allow-once / deny. The
-/// `*_always` kinds are omitted because `arnes_core::Permission` has no
-/// persistent verdict to map them onto yet.
+/// `*_always` kinds aren't offered yet: `arnes_core::Permission` has no
+/// persistent verdict to honor them with.
 pub fn default_options() -> Vec<PermissionOption> {
     vec![
         PermissionOption {
             option_id: ALLOW_ONCE,
             name: "Allow",
-            kind: "allow_once",
+            kind: PermissionOptionKind::AllowOnce,
         },
         PermissionOption {
             option_id: REJECT_ONCE,
             name: "Reject",
-            kind: "reject_once",
+            kind: PermissionOptionKind::RejectOnce,
         },
     ]
 }
@@ -93,6 +103,18 @@ mod tests {
             serde_json::to_string(&params).unwrap(),
             r#"{"sessionId":"sess-1","toolCall":{"toolCallId":"perm-1","title":"read_text_file"},"options":[{"optionId":"allow-once","name":"Allow","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}"#,
         );
+    }
+
+    #[test]
+    fn option_kind_wire_strings() {
+        for (kind, expected) in [
+            (PermissionOptionKind::AllowOnce, r#""allow_once""#),
+            (PermissionOptionKind::AllowAlways, r#""allow_always""#),
+            (PermissionOptionKind::RejectOnce, r#""reject_once""#),
+            (PermissionOptionKind::RejectAlways, r#""reject_always""#),
+        ] {
+            assert_eq!(serde_json::to_string(&kind).unwrap(), expected);
+        }
     }
 
     #[test]
