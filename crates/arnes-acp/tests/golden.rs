@@ -166,17 +166,28 @@ async fn m2_tool_call_golden() {
                 let task =
                     tokio::spawn(async move { h.handle_session_prompt(id, params_sub).await });
 
-                // Collect outbound frames until the fs/read_text_file request
-                // arrives, then answer it as the client would.
+                // Collect outbound frames, answering each client request as it
+                // arrives: allow the permission prompt, then return the file
+                // contents. The loop ends once the read has been answered.
                 loop {
                     let raw = write_rx
                         .recv()
                         .await
                         .expect("channel closed before fs/read_text_file");
                     let v: Value = serde_json::from_str(&raw).unwrap();
-                    let is_read = v.get("method") == Some(&json!("fs/read_text_file"));
+                    let method = v.get("method").cloned();
                     outbound.push(v.clone());
-                    if is_read {
+                    if method == Some(json!("session/request_permission")) {
+                        let req_id = v["id"].as_str().unwrap().to_string();
+                        handler
+                            .handle_response(
+                                req_id,
+                                Ok(json!({
+                                    "outcome": { "outcome": "selected", "optionId": "allow-once" }
+                                })),
+                            )
+                            .await;
+                    } else if method == Some(json!("fs/read_text_file")) {
                         let req_id = v["id"].as_str().unwrap().to_string();
                         handler
                             .handle_response(req_id, Ok(json!({ "content": FILE_CONTENT })))
@@ -218,6 +229,16 @@ async fn m2_tool_call_golden() {
         .iter()
         .position(|v| v.get("method") == Some(&json!("fs/read_text_file")))
         .expect("expected an fs/read_text_file outbound request");
+    // The agent gates the tool behind the client: a session/request_permission
+    // request goes out before the tool runs (and thus before it reads the file).
+    let permission_idx = outbound
+        .iter()
+        .position(|v| v.get("method") == Some(&json!("session/request_permission")))
+        .expect("expected a session/request_permission outbound request");
+    assert!(
+        permission_idx < read_request_idx,
+        "permission request should precede the fs/read_text_file the tool issues"
+    );
     // The completed update is emitted once the client response arrives.
     let completed_idx = outbound
         .iter()

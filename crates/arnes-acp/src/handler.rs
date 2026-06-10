@@ -95,7 +95,11 @@ impl Handler {
             .map(PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let session_id = Uuid::now_v7().to_string();
-        let frontend = Arc::new(AcpFrontend::new(session_id.clone(), self.notify_tx.clone()));
+        let frontend = Arc::new(AcpFrontend::new(
+            session_id.clone(),
+            self.notify_tx.clone(),
+            Arc::clone(&self.pending_requests),
+        ));
         let host = if self.fs_read_text_file.load(Ordering::Relaxed) {
             Host {
                 read_text_file: Some(Arc::new(AcpReadTextFile::new(

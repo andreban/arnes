@@ -4,4 +4,5 @@
 pub mod filesystem;
 pub mod initialize;
 pub mod jsonrpc;
+pub mod permission;
 pub mod session;
