@@ -109,10 +109,6 @@ impl Tool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
     fn tool_kind(&self) -> ToolKind {
         ToolKind::Read
     }
-
-    fn location_arg_keys(&self) -> &'static [&'static str] {
-        &["path"]
-    }
 }
 
 #[cfg(test)]

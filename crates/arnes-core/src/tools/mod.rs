@@ -24,17 +24,4 @@ where
     fn tool_kind(&self) -> ToolKind {
         ToolKind::Other
     }
-
-    /// The names of this tool's argument fields that hold a file path. For
-    /// `read_text_file`, whose args are `{ "path": "f.txt", "line": 2 }`, this
-    /// is `["path"]` — not `"line"`, which is not a path.
-    ///
-    /// The permission layer sees a call's args as untyped JSON and can't tell
-    /// which fields are paths. This list tells it which fields to read the
-    /// paths out of, so it can show the files the call will touch in the
-    /// approval prompt (`PermissionRequest::locations`). Empty for tools that
-    /// take no file paths.
-    fn location_arg_keys(&self) -> &'static [&'static str] {
-        &[]
-    }
 }
