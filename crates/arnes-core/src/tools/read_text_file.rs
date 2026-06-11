@@ -9,7 +9,7 @@ use super::Tool;
 use agent_rig::error::Error as AgentRigError;
 use agent_rig::tools::{Tool as AgentRigTool, ToolDefinition};
 use async_trait::async_trait;
-use schemars::{JsonSchema, Schema, schema_for};
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
@@ -36,26 +36,26 @@ pub struct ReadTextFileOutput {
 
 pub struct ReadTextFile {
     context: ToolContext,
-    params: Schema,
+    definition: ToolDefinition,
 }
 
 impl ReadTextFile {
     pub fn new(context: ToolContext) -> Self {
         Self {
             context,
-            params: schema_for!(ReadTextFileParams),
+            definition: ToolDefinition {
+                name: NAME.to_string(),
+                description: DESCRIPTION.to_string(),
+                parameters: schema_for!(ReadTextFileParams),
+            },
         }
     }
 }
 
 #[async_trait]
 impl AgentRigTool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
-    fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: NAME.to_string(),
-            description: DESCRIPTION.to_string(),
-            parameters: self.params.clone(),
-        }
+    fn definition(&self) -> &ToolDefinition {
+        &self.definition
     }
 
     async fn call(

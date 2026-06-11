@@ -60,7 +60,7 @@ impl<F: Frontend> Session<F> {
             let tool = ReadTextFile::new(tool_context);
             tool_guidelines.push(tool.prompt_guidelines().to_string());
             tool_metadata.insert(
-                tool.definition().name,
+                tool.definition().name.clone(),
                 ToolPermissionMeta {
                     kind: tool.tool_kind(),
                 },

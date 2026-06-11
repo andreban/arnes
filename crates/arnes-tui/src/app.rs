@@ -129,7 +129,7 @@ impl AppState {
                 self.is_running = false;
                 self.current_cancel = None;
             }
-            EventKind::ToolCallStarted { id, name, args } => {
+            EventKind::ToolCallStarted { id, name, args, .. } => {
                 self.flush_streaming();
                 self.items.push(TranscriptItem::ToolCall {
                     id,
