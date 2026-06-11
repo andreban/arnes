@@ -3,8 +3,6 @@
 
 //! Frontend trait and the event vocabulary it consumes.
 
-use std::path::PathBuf;
-
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -98,9 +96,6 @@ pub struct PermissionRequest {
     pub args: Value,
     /// Semantic category of the tool, for labelling the prompt.
     pub kind: ToolKind,
-    /// Absolute paths the call will touch, resolved against the session cwd.
-    /// Empty for tools that declare no filesystem paths.
-    pub paths: Vec<PathBuf>,
 }
 
 /// Frontend's verdict on a permission request.

@@ -34,15 +34,6 @@ pub struct PermissionToolCall {
     /// ACP `ToolKind`. Omitted for the `other` default the client assumes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<&'static str>,
-    /// Files the call touches, as `[{ "path": "..." }]`. Omitted when empty.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub locations: Vec<PermissionLocation>,
-}
-
-/// One `locations` entry: an absolute path the gated call will act on.
-#[derive(Debug, Serialize)]
-pub struct PermissionLocation {
-    pub path: String,
 }
 
 /// Maps a core [`ToolKind`] to its ACP wire string, returning `None` for
@@ -134,15 +125,12 @@ mod tests {
                 title: "read_text_file".into(),
                 raw_input: serde_json::json!({ "path": "Cargo.toml" }),
                 kind: Some("read"),
-                locations: vec![PermissionLocation {
-                    path: "/work/Cargo.toml".into(),
-                }],
             },
             options: default_options(),
         };
         assert_eq!(
             serde_json::to_string(&params).unwrap(),
-            r#"{"sessionId":"sess-1","toolCall":{"toolCallId":"perm-1","title":"read_text_file","rawInput":{"path":"Cargo.toml"},"kind":"read","locations":[{"path":"/work/Cargo.toml"}]},"options":[{"optionId":"allow-once","name":"Allow","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}"#,
+            r#"{"sessionId":"sess-1","toolCall":{"toolCallId":"perm-1","title":"read_text_file","rawInput":{"path":"Cargo.toml"},"kind":"read"},"options":[{"optionId":"allow-once","name":"Allow","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}"#,
         );
     }
 
@@ -155,7 +143,6 @@ mod tests {
             title: "some_tool".into(),
             raw_input: serde_json::json!({}),
             kind: acp_kind(ToolKind::Other),
-            locations: Vec::new(),
         };
         assert_eq!(
             serde_json::to_string(&tool_call).unwrap(),

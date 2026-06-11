@@ -63,7 +63,6 @@ impl<F: Frontend> Session<F> {
                 tool.definition().name,
                 ToolPermissionMeta {
                     kind: tool.tool_kind(),
-                    location_keys: tool.location_arg_keys(),
                 },
             );
             tool_registry = tool_registry.register(tool);
@@ -80,11 +79,7 @@ impl<F: Frontend> Session<F> {
             .instructions(&instructions)
             .build();
 
-        let auth_manager = Arc::new(AuthManager::new(
-            frontend.clone(),
-            tool_metadata,
-            cwd.clone(),
-        ));
+        let auth_manager = Arc::new(AuthManager::new(frontend.clone(), tool_metadata));
 
         let runner = AgentRunner::with_registry(llm, Arc::new(tool_registry))
             .with_auth_manager(auth_manager);
