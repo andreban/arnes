@@ -49,6 +49,7 @@ pub enum EventKind {
         id: String,
         name: String,
         args: Value,
+        title: String,
     },
     ToolCallFinished {
         id: String,

@@ -79,10 +79,20 @@ impl<F: Frontend> Session<F> {
                         .await;
                     return Err(CoreError::Session(e.to_string()));
                 }
-                AgentEvent::ToolCallStarted { id, name, args } => {
+                AgentEvent::ToolCallStarted {
+                    id,
+                    name,
+                    args,
+                    title,
+                } => {
                     tracing::debug!(tool = %name, "prompt: tool call started");
                     self.frontend
-                        .on_event(mk_event(EventKind::ToolCallStarted { id, name, args }))
+                        .on_event(mk_event(EventKind::ToolCallStarted {
+                            id,
+                            name,
+                            args,
+                            title,
+                        }))
                         .await;
                 }
                 AgentEvent::ToolCallFinished { id, name, result } => {
