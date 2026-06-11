@@ -58,6 +58,13 @@ impl AgentRigTool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
         &self.definition
     }
 
+    fn title(&self, args: &ReadTextFileParams) -> String {
+        match args.path.to_str() {
+            Some(path) => format!("Read {}", path),
+            None => "Read".to_string(),
+        }
+    }
+
     async fn call(
         &self,
         args: ReadTextFileParams,
