@@ -213,10 +213,21 @@ async fn m2_tool_call_golden() {
             && v["params"]["update"]["sessionUpdate"] == json!(kind)
     };
 
-    // A `tool_call` lifecycle update is emitted for the read.
-    assert!(
-        outbound.iter().any(|v| is_session_update(v, "tool_call")),
-        "expected a tool_call session/update"
+    // A `tool_call` lifecycle update is emitted for the read, carrying the
+    // tool's descriptive title and the raw arguments the model supplied.
+    let tool_call = outbound
+        .iter()
+        .find(|v| is_session_update(v, "tool_call"))
+        .expect("expected a tool_call session/update");
+    assert_eq!(
+        tool_call["params"]["update"]["title"].as_str(),
+        Some("Read Cargo.toml"),
+        "tool_call update should carry the tool's descriptive title"
+    );
+    assert_eq!(
+        tool_call["params"]["update"]["rawInput"],
+        json!({ "path": "Cargo.toml" }),
+        "tool_call update should carry the model's raw arguments"
     );
     // The agent reaches out to the client over `fs/read_text_file`.
     //

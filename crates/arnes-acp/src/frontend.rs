@@ -90,15 +90,19 @@ impl Frontend for AcpFrontend {
                     content: MessageContent { kind: "text", text },
                 });
             }
-            EventKind::ToolCallStarted { id, name, .. } => {
+            EventKind::ToolCallStarted {
+                id, title, args, ..
+            } => {
                 self.send(SessionUpdate::ToolCall {
                     tool_call_id: id.clone(),
-                    title: name,
+                    title: Some(title.clone()),
                     kind: "tool_use",
                     status: "pending",
+                    raw_input: Some(args),
                 });
                 self.send(SessionUpdate::ToolCallUpdate {
                     tool_call_id: id,
+                    title: Some(title),
                     status: "in_progress",
                     content: None,
                 });
@@ -121,6 +125,7 @@ impl Frontend for AcpFrontend {
                 self.send(SessionUpdate::ToolCallUpdate {
                     tool_call_id: id,
                     status: "completed",
+                    title: None,
                     content: Some(MessageContent { kind: "text", text }),
                 });
             }
