@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,15 +80,21 @@ pub enum SessionUpdate {
     ToolCall {
         #[serde(rename = "toolCallId")]
         tool_call_id: String,
-        title: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
         kind: &'static str,
         status: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "rawInput")]
+        raw_input: Option<Value>,
     },
     /// Tool execution lifecycle update (in_progress or completed).
     #[serde(rename = "tool_call_update")]
     ToolCallUpdate {
         #[serde(rename = "toolCallId")]
         tool_call_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
         status: &'static str,
         #[serde(skip_serializing_if = "Option::is_none")]
         content: Option<MessageContent>,
@@ -151,9 +158,10 @@ mod tests {
             session_id: "sess-1".into(),
             update: SessionUpdate::ToolCall {
                 tool_call_id: "tc-1".into(),
-                title: "read_text_file".into(),
+                title: Some("read_text_file".into()),
                 kind: "tool_use",
                 status: "pending",
+                raw_input: None,
             },
         };
         assert_eq!(
@@ -169,6 +177,7 @@ mod tests {
             update: SessionUpdate::ToolCallUpdate {
                 tool_call_id: "tc-1".into(),
                 status: "completed",
+                title: None,
                 content: Some(MessageContent {
                     kind: "text",
                     text: "file content".into(),
@@ -188,6 +197,7 @@ mod tests {
             update: SessionUpdate::ToolCallUpdate {
                 tool_call_id: "tc-1".into(),
                 status: "in_progress",
+                title: None,
                 content: None,
             },
         };
