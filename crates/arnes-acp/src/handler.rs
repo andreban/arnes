@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::{
     frontend::AcpFrontend,
-    host::{AcpReadTextFile, PendingRequests},
+    host::{AcpReadTextFile, AcpWriteTextFile, PendingRequests},
     types::{
         initialize::{AgentCapabilities, AgentInfo, InitializeParams, InitializeResult},
         jsonrpc::Response,
@@ -39,6 +39,7 @@ pub struct Handler {
     sessions: Mutex<HashMap<String, AcpSession>>,
     cancel_tokens: Mutex<HashMap<String, CancellationToken>>,
     fs_read_text_file: AtomicBool,
+    fs_write_text_file: AtomicBool,
     pending_requests: PendingRequests,
 }
 
@@ -55,6 +56,7 @@ impl Handler {
             sessions: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
             fs_read_text_file: AtomicBool::new(false),
+            fs_write_text_file: AtomicBool::new(false),
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -69,6 +71,8 @@ impl Handler {
         };
         self.fs_read_text_file
             .store(p.client_capabilities.fs.read_text_file, Ordering::Relaxed);
+        self.fs_write_text_file
+            .store(p.client_capabilities.fs.write_text_file, Ordering::Relaxed);
         Response::ok(
             id,
             InitializeResult {
@@ -100,17 +104,26 @@ impl Handler {
             self.notify_tx.clone(),
             Arc::clone(&self.pending_requests),
         ));
-        let host = if self.fs_read_text_file.load(Ordering::Relaxed) {
-            Host {
-                read_text_file: Some(Arc::new(AcpReadTextFile::new(
+        let host = Host {
+            read_text_file: if self.fs_read_text_file.load(Ordering::Relaxed) {
+                Some(Arc::new(AcpReadTextFile::new(
                     session_id.clone(),
                     self.notify_tx.clone(),
                     Arc::clone(&self.pending_requests),
-                ))),
-                ..Default::default()
-            }
-        } else {
-            Host::default()
+                )))
+            } else {
+                None
+            },
+            write_text_file: if self.fs_write_text_file.load(Ordering::Relaxed) {
+                Some(Arc::new(AcpWriteTextFile::new(
+                    session_id.clone(),
+                    self.notify_tx.clone(),
+                    Arc::clone(&self.pending_requests),
+                )))
+            } else {
+                None
+            },
+            ..Default::default()
         };
         let session = Session::new(
             frontend,

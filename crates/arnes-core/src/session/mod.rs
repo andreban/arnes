@@ -17,7 +17,7 @@ use agent_rig::{
 use crate::{
     AgentId, CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext,
     auth::{AuthManager, ToolPermissionMeta},
-    tools::{ReadTextFile, Tool},
+    tools::{ReadTextFile, Tool, WriteTextFile},
 };
 
 mod prompt;
@@ -58,6 +58,24 @@ impl<F: Frontend> Session<F> {
                 cwd: cwd.clone(),
             };
             let tool = ReadTextFile::new(tool_context);
+            tool_guidelines.push(tool.prompt_guidelines().to_string());
+            tool_metadata.insert(
+                tool.definition().name.clone(),
+                ToolPermissionMeta {
+                    kind: tool.tool_kind(),
+                },
+            );
+            tool_registry = tool_registry.register(tool);
+        }
+
+        if host.write_text_file.is_some() {
+            let tool_context = ToolContext {
+                host: host.clone(),
+                progress: None,
+                agent_id: AgentId::Root,
+                cwd: cwd.clone(),
+            };
+            let tool = WriteTextFile::new(tool_context);
             tool_guidelines.push(tool.prompt_guidelines().to_string());
             tool_metadata.insert(
                 tool.definition().name.clone(),

@@ -7,31 +7,42 @@ use std::{
     collections::HashMap,
     io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
-use arnes_core::{Host, ReadTextFile};
+use arnes_core::{Host, ReadTextFile, WriteTextFile};
 use async_trait::async_trait;
 
 pub struct InMemoryEnv {
-    files: HashMap<PathBuf, String>,
+    files: Arc<Mutex<HashMap<PathBuf, String>>>,
 }
 
 impl InMemoryEnv {
     pub fn new() -> Self {
         Self {
-            files: HashMap::new(),
+            files: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     pub fn add_file(&mut self, path: impl Into<PathBuf>, content: impl Into<String>) {
-        self.files.insert(path.into(), content.into());
+        self.files
+            .lock()
+            .unwrap()
+            .insert(path.into(), content.into());
+    }
+
+    /// Returns the current contents of `path`, including anything written via the host.
+    pub fn read_file(&self, path: impl AsRef<Path>) -> Option<String> {
+        self.files.lock().unwrap().get(path.as_ref()).cloned()
     }
 
     pub fn build_host(&self) -> Host {
         Host {
             read_text_file: Some(Arc::new(InMemoryReadTextFile {
-                files: self.files.clone(),
+                files: Arc::clone(&self.files),
+            })),
+            write_text_file: Some(Arc::new(InMemoryWriteTextFile {
+                files: Arc::clone(&self.files),
             })),
             ..Default::default()
         }
@@ -39,7 +50,7 @@ impl InMemoryEnv {
 }
 
 struct InMemoryReadTextFile {
-    files: HashMap<PathBuf, String>,
+    files: Arc<Mutex<HashMap<PathBuf, String>>>,
 }
 
 #[async_trait]
@@ -50,7 +61,8 @@ impl ReadTextFile for InMemoryReadTextFile {
         line: Option<usize>,
         limit: Option<usize>,
     ) -> io::Result<String> {
-        let content = self.files.get(path).ok_or_else(|| {
+        let files = self.files.lock().unwrap();
+        let content = files.get(path).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("file not found: {}", path.display()),
@@ -58,7 +70,6 @@ impl ReadTextFile for InMemoryReadTextFile {
         })?;
 
         let lines: Vec<&str> = content.lines().collect();
-        // line is 1-indexed; None means start from beginning
         let start = line
             .map(|n| n.saturating_sub(1))
             .unwrap_or(0)
@@ -69,5 +80,20 @@ impl ReadTextFile for InMemoryReadTextFile {
             None => slice,
         };
         Ok(slice.join("\n"))
+    }
+}
+
+struct InMemoryWriteTextFile {
+    files: Arc<Mutex<HashMap<PathBuf, String>>>,
+}
+
+#[async_trait]
+impl WriteTextFile for InMemoryWriteTextFile {
+    async fn write_text_file(&self, path: &Path, content: &str) -> io::Result<()> {
+        self.files
+            .lock()
+            .unwrap()
+            .insert(path.to_path_buf(), content.to_owned());
+        Ok(())
     }
 }

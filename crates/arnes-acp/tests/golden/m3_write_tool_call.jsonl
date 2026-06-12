@@ -1,0 +1,3 @@
+{"jsonrpc":"2.0","id":"1","method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":true},"terminal":false}}}
+{"jsonrpc":"2.0","id":"2","method":"session/new","params":{}}
+{"jsonrpc":"2.0","id":"3","method":"session/prompt","params":{"sessionId":"<session-id>","prompt":[{"type":"text","text":"write hello to output.txt"}]}}
