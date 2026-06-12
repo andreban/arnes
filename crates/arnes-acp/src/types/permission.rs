@@ -20,7 +20,9 @@ pub struct RequestPermissionParams {
 }
 
 /// The tool call the prompt is about. A minimal `ToolCallUpdate`: the spec
-/// only requires `toolCallId`, and `title` gives the client something to show.
+/// only requires `toolCallId`. `title` is optional and omitted here, since the
+/// tool_call card echoed over `session/update` (correlated by the same
+/// `toolCallId`) already gave the client a title to show.
 /// `rawInput` carries the tool's argument object so the client can render what
 /// the call will act on (e.g. the path a file read targets). `kind` and
 /// `locations` enrich that further: a semantic category for the icon/label and
@@ -29,7 +31,8 @@ pub struct RequestPermissionParams {
 #[serde(rename_all = "camelCase")]
 pub struct PermissionToolCall {
     pub tool_call_id: String,
-    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub raw_input: Value,
     /// ACP `ToolKind`. Omitted for the `other` default the client assumes.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -122,7 +125,7 @@ mod tests {
             session_id: "sess-1".into(),
             tool_call: PermissionToolCall {
                 tool_call_id: "perm-1".into(),
-                title: "read_text_file".into(),
+                title: Some("read_text_file".into()),
                 raw_input: serde_json::json!({ "path": "Cargo.toml" }),
                 kind: Some("read"),
             },
@@ -135,18 +138,19 @@ mod tests {
     }
 
     #[test]
-    fn kind_and_locations_omitted_when_absent() {
-        // An `other`-kind tool with no file locations drops both fields rather
-        // than sending a redundant `"other"` and an empty array.
+    fn optional_fields_omitted_when_absent() {
+        // The shape the frontend actually sends: no title, and an `other`-kind
+        // tool drops `kind` rather than sending a redundant `"other"`. Only
+        // `toolCallId` and `rawInput` remain.
         let tool_call = PermissionToolCall {
             tool_call_id: "perm-1".into(),
-            title: "some_tool".into(),
+            title: None,
             raw_input: serde_json::json!({}),
             kind: acp_kind(ToolKind::Other),
         };
         assert_eq!(
             serde_json::to_string(&tool_call).unwrap(),
-            r#"{"toolCallId":"perm-1","title":"some_tool","rawInput":{}}"#,
+            r#"{"toolCallId":"perm-1","rawInput":{}}"#,
         );
     }
 
