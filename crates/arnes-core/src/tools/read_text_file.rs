@@ -244,6 +244,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn title_includes_the_path() {
+        let tool = map_tool(&[]);
+        let args = ReadTextFileParams {
+            path: PathBuf::from("/notes.txt"),
+            line: None,
+            limit: None,
+        };
+        assert_eq!(tool.title(&args), "Read /notes.txt");
+    }
+
     #[tokio::test]
     async fn line_and_limit_slice_the_file() {
         let tool = map_tool(&[("/multi.txt", "one\ntwo\nthree\nfour\nfive")]);
