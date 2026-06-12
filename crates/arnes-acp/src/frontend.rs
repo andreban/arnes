@@ -147,7 +147,7 @@ impl Frontend for AcpFrontend {
             session_id: self.session_id.clone(),
             tool_call: PermissionToolCall {
                 tool_call_id: req.tool_call_id,
-                title: req.tool_name,
+                title: None,
                 raw_input: req.args,
                 kind: permission::acp_kind(req.kind),
             },
