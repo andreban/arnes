@@ -14,3 +14,12 @@ pub struct FsReadTextFileParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u64>,
 }
+
+/// Params for the `fs/write_text_file` request sent to the ACP client.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FsWriteTextFileParams {
+    pub session_id: String,
+    pub path: String,
+    pub content: String,
+}

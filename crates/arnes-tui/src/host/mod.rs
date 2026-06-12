@@ -3,13 +3,14 @@
 
 use std::{path::Path, sync::Arc};
 
-use arnes_core::{Host, ReadTextFile};
+use arnes_core::{Host, ReadTextFile, WriteTextFile};
 use async_trait::async_trait;
 use tokio::io;
 
 pub fn tui_host() -> Host {
     Host {
         read_text_file: Some(Arc::new(ReadLocalTextFile {})),
+        write_text_file: Some(Arc::new(WriteLocalTextFile {})),
         ..Default::default()
     }
 }
@@ -45,5 +46,20 @@ impl ReadTextFile for ReadLocalTextFile {
             out.push('\n');
         }
         Ok(out)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct WriteLocalTextFile {}
+
+#[async_trait]
+impl WriteTextFile for WriteLocalTextFile {
+    async fn write_text_file(&self, path: &Path, content: &str) -> io::Result<()> {
+        tracing::debug!(path = %path.display(), bytes = content.len(), "write_text_file: starting");
+        tokio::fs::write(path, content).await.inspect_err(|e| {
+            tracing::error!(path = %path.display(), error = %e, "write_text_file: failed");
+        })?;
+        tracing::debug!(path = %path.display(), "write_text_file: write ok");
+        Ok(())
     }
 }

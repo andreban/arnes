@@ -78,3 +78,63 @@ async fn read_tool_roundtrip() {
         "last event should be TurnEnd with EndTurn stop reason"
     );
 }
+
+#[tokio::test]
+async fn write_tool_roundtrip() {
+    let cwd = PathBuf::from(".");
+    let env = InMemoryEnv::new();
+    let host = env.build_host();
+    let target_path = cwd.join("generated.txt");
+
+    let llm = ScriptedLlm::new(vec![ScriptedTurn::ToolCallThenText {
+        name: "write_text_file".into(),
+        args: serde_json::json!({ "path": "generated.txt", "content": "hello from agent" }),
+        follow_up: "File written successfully.".into(),
+    }]);
+
+    let frontend = RecordingFrontend::new();
+    let mut session = Session::new(Arc::clone(&frontend), host, llm, model_key(), cwd);
+    session
+        .prompt(
+            "write hello from agent to generated.txt",
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    let events = frontend.events();
+
+    let started = events.iter().any(
+        |e| matches!(&e.kind, EventKind::ToolCallStarted { name, .. } if name == "write_text_file"),
+    );
+    assert!(started, "expected a ToolCallStarted for write_text_file");
+
+    let finished_ok = events.iter().any(|e| {
+        matches!(
+            &e.kind,
+            EventKind::ToolCallFinished { name, outcome: ToolCallOutcome::Ok(_), .. }
+                if name == "write_text_file"
+        )
+    });
+    assert!(
+        finished_ok,
+        "expected a successful ToolCallFinished for write_text_file"
+    );
+
+    assert_eq!(
+        env.read_file(&target_path).as_deref(),
+        Some("hello from agent"),
+        "written content should be visible in the env"
+    );
+
+    assert!(
+        matches!(
+            events.last().unwrap().kind,
+            EventKind::TurnEnd {
+                stop_reason: StopReason::EndTurn,
+                ..
+            }
+        ),
+        "last event should be TurnEnd with EndTurn stop reason"
+    );
+}

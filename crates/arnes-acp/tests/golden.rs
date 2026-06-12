@@ -282,3 +282,160 @@ async fn m2_tool_call_golden() {
         "session/prompt should have stopReason: end_turn"
     );
 }
+
+#[tokio::test]
+async fn m3_write_tool_call_golden() {
+    let (write_tx, mut write_rx) = mpsc::unbounded_channel::<String>();
+    let llm = Arc::new(ScriptedLlm::new(vec![ScriptedTurn::ToolCallThenText {
+        name: "write_text_file".into(),
+        args: json!({ "path": "output.txt", "content": "hello" }),
+        follow_up: "File written successfully.".into(),
+    }]));
+    let model_key = ModelKey {
+        provider: "test".into(),
+        model_id: "scripted".into(),
+    };
+    let handler = Arc::new(Handler::new(llm, model_key, write_tx));
+
+    let golden_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/golden/m3_write_tool_call.jsonl"
+    );
+    let frames: Vec<String> = std::fs::read_to_string(golden_path)
+        .expect("golden file not found")
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.to_owned())
+        .collect();
+
+    let mut outbound: Vec<Value> = Vec::new();
+    let mut session_id = String::new();
+    let mut prompt_resp: Option<Value> = None;
+
+    for frame in &frames {
+        let req: Value = serde_json::from_str(frame).expect("invalid JSON in golden file");
+        let method = req["method"].as_str().expect("frame missing method");
+        let id = req["id"].clone();
+        let params = req["params"].clone();
+
+        match method {
+            "initialize" => {
+                handler.handle_initialize(id, params).await;
+            }
+            "session/new" => {
+                let resp = handler.handle_session_new(id, params).await;
+                let v = serde_json::to_value(&resp).unwrap();
+                session_id = v["result"]["sessionId"]
+                    .as_str()
+                    .expect("session/new should return a session id")
+                    .to_owned();
+            }
+            "session/prompt" => {
+                let params_str = params.to_string().replace("<session-id>", &session_id);
+                let params_sub: Value = serde_json::from_str(&params_str).unwrap();
+                let h = Arc::clone(&handler);
+                let task =
+                    tokio::spawn(async move { h.handle_session_prompt(id, params_sub).await });
+
+                loop {
+                    let raw = write_rx
+                        .recv()
+                        .await
+                        .expect("channel closed before fs/write_text_file");
+                    let v: Value = serde_json::from_str(&raw).unwrap();
+                    let method = v.get("method").cloned();
+                    outbound.push(v.clone());
+                    if method == Some(json!("session/request_permission")) {
+                        let req_id = v["id"].as_str().unwrap().to_string();
+                        handler
+                            .handle_response(
+                                req_id,
+                                Ok(json!({
+                                    "outcome": { "outcome": "selected", "optionId": "allow-once" }
+                                })),
+                            )
+                            .await;
+                    } else if method == Some(json!("fs/write_text_file")) {
+                        let req_id = v["id"].as_str().unwrap().to_string();
+                        handler.handle_response(req_id, Ok(json!({}))).await;
+                        break;
+                    }
+                }
+
+                let resp = task.await.unwrap();
+                prompt_resp = Some(serde_json::to_value(&resp).unwrap());
+
+                while let Ok(raw) = write_rx.try_recv() {
+                    outbound.push(serde_json::from_str(&raw).unwrap());
+                }
+            }
+            _ => panic!("unexpected method in golden file: {method}"),
+        }
+    }
+
+    let is_session_update = |v: &Value, kind: &str| {
+        v.get("method") == Some(&json!("session/update"))
+            && v["params"]["update"]["sessionUpdate"] == json!(kind)
+    };
+
+    // The `fs/write_text_file` outbound request carries path and content.
+    let write_request = outbound
+        .iter()
+        .find(|v| v.get("method") == Some(&json!("fs/write_text_file")))
+        .expect("expected an fs/write_text_file outbound request");
+    assert!(
+        write_request["params"]["path"]
+            .as_str()
+            .map(|p| p.ends_with("output.txt"))
+            .unwrap_or(false),
+        "write request should carry a path ending in output.txt"
+    );
+    assert_eq!(
+        write_request["params"]["content"].as_str(),
+        Some("hello"),
+        "write request should carry the file content"
+    );
+
+    // Permission precedes the write request.
+    let permission_idx = outbound
+        .iter()
+        .position(|v| v.get("method") == Some(&json!("session/request_permission")))
+        .expect("expected a session/request_permission outbound request");
+    let write_request_idx = outbound
+        .iter()
+        .position(|v| v.get("method") == Some(&json!("fs/write_text_file")))
+        .unwrap();
+    assert!(
+        permission_idx < write_request_idx,
+        "permission request should precede the fs/write_text_file the tool issues"
+    );
+
+    // Completed update follows the client response.
+    let completed_idx = outbound
+        .iter()
+        .position(|v| {
+            is_session_update(v, "tool_call_update")
+                && v["params"]["update"]["status"] == json!("completed")
+        })
+        .expect("expected a completed tool_call_update");
+    assert!(
+        completed_idx > write_request_idx,
+        "tool_call_update completed should follow the fs/write_text_file response"
+    );
+
+    // The assistant's reply chunk follows the completed tool call.
+    let message_idx = outbound
+        .iter()
+        .position(|v| is_session_update(v, "agent_message_chunk"))
+        .expect("expected an agent_message_chunk");
+    assert!(
+        message_idx > completed_idx,
+        "agent_message_chunk should follow the completed tool call"
+    );
+
+    assert_eq!(
+        prompt_resp.expect("session/prompt produced no response")["result"]["stopReason"].as_str(),
+        Some("end_turn"),
+        "session/prompt should have stopReason: end_turn"
+    );
+}
