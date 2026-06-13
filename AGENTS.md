@@ -6,6 +6,7 @@ internally consistent with what CI enforces; if you change one, change both.
 
 ## Rust style
 
+- Write idiomatic Rust at all times.
 - Format with `rustfmt`. Run `cargo fmt --all` before committing; CI runs
   `cargo fmt --all -- --check`.
 - Lint clean under `cargo clippy --workspace --all-targets -- -D warnings`.
