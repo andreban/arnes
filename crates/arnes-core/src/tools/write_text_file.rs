@@ -7,7 +7,7 @@ use crate::{ToolContext, ToolKind};
 
 use super::Tool;
 use agent_rig::error::Error as AgentRigError;
-use agent_rig::tools::{Tool as AgentRigTool, ToolDefinition};
+use agent_rig::tools::{ProgressReporter, SimpleTool, ToolDefinition};
 use async_trait::async_trait;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -50,7 +50,10 @@ impl WriteTextFile {
 }
 
 #[async_trait]
-impl AgentRigTool<WriteTextFileParams, WriteTextFileOutput> for WriteTextFile {
+impl SimpleTool for WriteTextFile {
+    type Args = WriteTextFileParams;
+    type Output = WriteTextFileOutput;
+
     fn definition(&self) -> &ToolDefinition {
         &self.definition
     }
@@ -65,6 +68,7 @@ impl AgentRigTool<WriteTextFileParams, WriteTextFileOutput> for WriteTextFile {
     async fn call(
         &self,
         args: WriteTextFileParams,
+        _progress: &dyn ProgressReporter,
         _cancellation: CancellationToken,
     ) -> Result<WriteTextFileOutput, AgentRigError> {
         let host = self
@@ -94,8 +98,7 @@ impl AgentRigTool<WriteTextFileParams, WriteTextFileOutput> for WriteTextFile {
     }
 }
 
-#[async_trait]
-impl Tool<WriteTextFileParams, WriteTextFileOutput> for WriteTextFile {
+impl Tool for WriteTextFile {
     fn prompt_guidelines(&self) -> &str {
         "Use `write_text_file` to create or overwrite a file with the given content. \
          The entire content replaces any existing file; there is no append mode."
@@ -126,7 +129,10 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::{AgentId, Host, ToolContext, host::WriteTextFile as WriteTextFileTrait};
+    use crate::{
+        AgentId, Host, ToolContext, host::WriteTextFile as WriteTextFileTrait,
+        tools::test_support::NoopProgress,
+    };
 
     struct CapturingHost {
         called_with: Mutex<Option<(PathBuf, String)>>,
@@ -196,7 +202,10 @@ mod tests {
             path: PathBuf::from("/output.txt"),
             content: "hello world".to_string(),
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(out.written);
         assert!(out.error.is_none());
     }
@@ -208,7 +217,10 @@ mod tests {
             path: PathBuf::from("/protected.txt"),
             content: "content".to_string(),
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(!out.written);
         assert!(
             out.error.is_some(),
@@ -229,7 +241,9 @@ mod tests {
             path: PathBuf::from("/anything.txt"),
             content: "content".to_string(),
         };
-        let result = tool.call(args, CancellationToken::new()).await;
+        let result = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await;
         assert!(
             result.is_err(),
             "tool should error when the capability is absent"
@@ -259,7 +273,10 @@ mod tests {
             path: PathBuf::from("subdir/out.txt"),
             content: "data".to_string(),
         };
-        let _ = tool.call(args, CancellationToken::new()).await.unwrap();
+        let _ = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         let (called_path, _) = capturing.called_with.lock().unwrap().clone().unwrap();
         assert_eq!(called_path, cwd.join("subdir/out.txt"));
     }
@@ -273,7 +290,10 @@ mod tests {
             path: abs_path.clone(),
             content: "data".to_string(),
         };
-        let _ = tool.call(args, CancellationToken::new()).await.unwrap();
+        let _ = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         let (called_path, _) = capturing.called_with.lock().unwrap().clone().unwrap();
         assert_eq!(called_path, abs_path);
     }
@@ -286,7 +306,10 @@ mod tests {
             path: PathBuf::from("/out.txt"),
             content: "line1\nline2\n".to_string(),
         };
-        let _ = tool.call(args, CancellationToken::new()).await.unwrap();
+        let _ = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         let (_, written_content) = capturing.called_with.lock().unwrap().clone().unwrap();
         assert_eq!(written_content, "line1\nline2\n");
     }

@@ -7,7 +7,7 @@ use crate::{ToolContext, ToolKind};
 
 use super::Tool;
 use agent_rig::error::Error as AgentRigError;
-use agent_rig::tools::{Tool as AgentRigTool, ToolDefinition};
+use agent_rig::tools::{ProgressReporter, SimpleTool, ToolDefinition};
 use async_trait::async_trait;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -53,7 +53,10 @@ impl ReadTextFile {
 }
 
 #[async_trait]
-impl AgentRigTool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
+impl SimpleTool for ReadTextFile {
+    type Args = ReadTextFileParams;
+    type Output = ReadTextFileOutput;
+
     fn definition(&self) -> &ToolDefinition {
         &self.definition
     }
@@ -68,6 +71,7 @@ impl AgentRigTool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
     async fn call(
         &self,
         args: ReadTextFileParams,
+        _progress: &dyn ProgressReporter,
         _cancellation: CancellationToken,
     ) -> Result<ReadTextFileOutput, AgentRigError> {
         let host = self
@@ -97,8 +101,7 @@ impl AgentRigTool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
     }
 }
 
-#[async_trait]
-impl Tool<ReadTextFileParams, ReadTextFileOutput> for ReadTextFile {
+impl Tool for ReadTextFile {
     fn prompt_guidelines(&self) -> &str {
         "Use `read_text_file` to inspect file contents before editing. \
          Prefer `line` and `limit` when the file is large; both are 1-indexed \
@@ -130,7 +133,10 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::{AgentId, Host, ToolContext, host::ReadTextFile as ReadTextFileTrait};
+    use crate::{
+        AgentId, Host, ToolContext, host::ReadTextFile as ReadTextFileTrait,
+        tools::test_support::NoopProgress,
+    };
 
     struct CapturingHost {
         called_with: Mutex<Option<PathBuf>>,
@@ -205,7 +211,10 @@ mod tests {
             line: None,
             limit: None,
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert_eq!(out.content.as_deref(), Some("hello world"));
         assert!(out.error.is_none());
     }
@@ -218,7 +227,10 @@ mod tests {
             line: None,
             limit: None,
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(out.content.is_none());
         assert!(out.error.is_some(), "missing file should populate error");
     }
@@ -237,7 +249,9 @@ mod tests {
             line: None,
             limit: None,
         };
-        let result = tool.call(args, CancellationToken::new()).await;
+        let result = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await;
         assert!(
             result.is_err(),
             "tool should error when the capability is absent"
@@ -263,7 +277,10 @@ mod tests {
             line: Some(2),
             limit: Some(2),
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert_eq!(out.content.as_deref(), Some("two\nthree"));
     }
 
@@ -292,7 +309,10 @@ mod tests {
             line: None,
             limit: None,
         };
-        let _ = tool.call(args, CancellationToken::new()).await.unwrap();
+        let _ = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         let called = capturing.called_with.lock().unwrap().clone().unwrap();
         assert_eq!(called, cwd.join("subdir/file.txt"));
     }
@@ -307,7 +327,10 @@ mod tests {
             line: None,
             limit: None,
         };
-        let _ = tool.call(args, CancellationToken::new()).await.unwrap();
+        let _ = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         let called = capturing.called_with.lock().unwrap().clone().unwrap();
         assert_eq!(called, abs_path);
     }
