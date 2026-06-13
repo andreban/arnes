@@ -65,6 +65,10 @@ impl<F: Frontend> Session<F> {
                 AgentEvent::Usage(u) => {
                     tokens += to_counts(u);
                 }
+                // The runner emits StartTurn as its first event, but arnes
+                // already emitted its own TurnStart before draining the stream,
+                // so this is dropped to avoid a duplicate.
+                AgentEvent::StartTurn => {}
                 AgentEvent::Cancelled => {
                     tracing::debug!("prompt: stream cancelled");
                     stop_reason = StopReason::Cancelled;
@@ -80,7 +84,7 @@ impl<F: Frontend> Session<F> {
                     return Err(CoreError::Session(e.to_string()));
                 }
                 AgentEvent::ToolCallStarted {
-                    id,
+                    tool_id,
                     name,
                     args,
                     title,
@@ -88,18 +92,25 @@ impl<F: Frontend> Session<F> {
                     tracing::debug!(tool = %name, "prompt: tool call started");
                     self.frontend
                         .on_event(mk_event(EventKind::ToolCallStarted {
-                            id,
+                            id: tool_id,
                             name,
                             args,
                             title,
                         }))
                         .await;
                 }
-                AgentEvent::ToolCallFinished { id, name, result } => {
+                // arnes does not surface mid-call tool progress; none of the
+                // tools it registers report any.
+                AgentEvent::ToolCallUpdate { .. } => {}
+                AgentEvent::ToolCallFinished {
+                    tool_id,
+                    name,
+                    result,
+                } => {
                     tracing::debug!(tool = %name, result = ?result, "prompt: tool call finished");
                     self.frontend
                         .on_event(mk_event(EventKind::ToolCallFinished {
-                            id,
+                            id: tool_id,
                             name,
                             outcome: to_outcome(result),
                         }))

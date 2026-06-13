@@ -11,7 +11,7 @@ use agent_rig::{
     Agent,
     model::{LlmModel, Message as RigMessage},
     runner::AgentRunner,
-    tools::{Tool as AgentRigTool, ToolRegistry},
+    tools::{SimpleTool, ToolRegistry},
 };
 
 use crate::{

@@ -7,7 +7,7 @@ use crate::{ToolContext, ToolKind};
 
 use super::Tool;
 use agent_rig::error::Error as AgentRigError;
-use agent_rig::tools::{Tool as AgentRigTool, ToolDefinition};
+use agent_rig::tools::{ProgressReporter, SimpleTool, ToolDefinition};
 use async_trait::async_trait;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -122,7 +122,10 @@ fn count_occurrences(haystack: &str, needle: &str) -> usize {
 }
 
 #[async_trait]
-impl AgentRigTool<EditParams, EditOutput> for Edit {
+impl SimpleTool for Edit {
+    type Args = EditParams;
+    type Output = EditOutput;
+
     fn definition(&self) -> &ToolDefinition {
         &self.definition
     }
@@ -137,6 +140,7 @@ impl AgentRigTool<EditParams, EditOutput> for Edit {
     async fn call(
         &self,
         args: EditParams,
+        _progress: &dyn ProgressReporter,
         _cancellation: CancellationToken,
     ) -> Result<EditOutput, AgentRigError> {
         let read_host = self
@@ -197,8 +201,7 @@ impl AgentRigTool<EditParams, EditOutput> for Edit {
     }
 }
 
-#[async_trait]
-impl Tool<EditParams, EditOutput> for Edit {
+impl Tool for Edit {
     fn prompt_guidelines(&self) -> &str {
         "Use `edit` to change part of an existing file by anchor text. Each edit's \
          `old_text` must appear exactly once in the current file; pick an anchor with \
@@ -236,6 +239,7 @@ mod tests {
     use crate::{
         AgentId, Host, ToolContext,
         host::{ReadTextFile as ReadTextFileTrait, WriteTextFile as WriteTextFileTrait},
+        tools::test_support::NoopProgress,
     };
 
     /// Serves file contents from an in-memory map and captures the single
@@ -303,7 +307,10 @@ mod tests {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("absent", "x")],
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(!out.applied);
         assert!(out.error.is_some());
         assert!(host.written.lock().unwrap().is_none());
@@ -316,7 +323,10 @@ mod tests {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("ab", "x")],
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(!out.applied);
         assert!(out.error.unwrap().contains("matched 2 times"));
         assert!(host.written.lock().unwrap().is_none());
@@ -329,7 +339,10 @@ mod tests {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("", "x")],
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(!out.applied);
         assert!(out.error.is_some());
         assert!(host.written.lock().unwrap().is_none());
@@ -343,7 +356,10 @@ mod tests {
             // "abc" spans [0,3); "cde" spans [2,5) — they intersect.
             edits: vec![op("abc", "X"), op("cde", "Y")],
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(!out.applied);
         assert!(out.error.unwrap().contains("overlap"));
         assert!(host.written.lock().unwrap().is_none());
@@ -357,7 +373,10 @@ mod tests {
             // "cd" spans [2,4), nested inside "bcde" spanning [1,5).
             edits: vec![op("bcde", "X"), op("cd", "Y")],
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(!out.applied);
         assert!(host.written.lock().unwrap().is_none());
     }
@@ -369,7 +388,10 @@ mod tests {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("hello", "hi"), op("world", "earth")],
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(out.applied);
         assert_eq!(out.edits_applied, Some(2));
         let (_, content) = host.written.lock().unwrap().clone().unwrap();
@@ -386,7 +408,10 @@ mod tests {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("foo", "bar"), op("bar", "qux")],
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(!out.applied);
         assert!(host.written.lock().unwrap().is_none());
     }
@@ -398,7 +423,10 @@ mod tests {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("hello", "hi"), op("absent", "x")],
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(!out.applied);
         assert!(host.written.lock().unwrap().is_none());
     }
@@ -410,7 +438,10 @@ mod tests {
             path: PathBuf::from("sub/f.txt"),
             edits: vec![op("abc", "xyz")],
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(out.applied);
         let (called_path, _) = host.written.lock().unwrap().clone().unwrap();
         assert_eq!(called_path, PathBuf::from("/base/sub/f.txt"));
@@ -423,7 +454,10 @@ mod tests {
             path: PathBuf::from("/elsewhere/f.txt"),
             edits: vec![op("abc", "xyz")],
         };
-        let out = tool.call(args, CancellationToken::new()).await.unwrap();
+        let out = tool
+            .call(args, &NoopProgress, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(out.applied);
         let (called_path, _) = host.written.lock().unwrap().clone().unwrap();
         assert_eq!(called_path, PathBuf::from("/elsewhere/f.txt"));
@@ -442,7 +476,11 @@ mod tests {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("a", "b")],
         };
-        assert!(tool.call(args, CancellationToken::new()).await.is_err());
+        assert!(
+            tool.call(args, &NoopProgress, CancellationToken::new())
+                .await
+                .is_err()
+        );
     }
 
     #[test]

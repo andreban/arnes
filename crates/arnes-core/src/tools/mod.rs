@@ -2,9 +2,7 @@ mod edit;
 mod read_text_file;
 mod write_text_file;
 
-use agent_rig::tools::Tool as AgentRigTool;
-use async_trait::async_trait;
-use serde::{Serialize, de::DeserializeOwned};
+use agent_rig::tools::SimpleTool;
 
 use crate::ToolKind;
 
@@ -12,12 +10,9 @@ pub use edit::Edit;
 pub use read_text_file::ReadTextFile;
 pub use write_text_file::WriteTextFile;
 
-#[async_trait]
-pub trait Tool<I, O>: AgentRigTool<I, O>
-where
-    I: Serialize + DeserializeOwned + Send + Sync,
-    O: Serialize + DeserializeOwned + Send + Sync,
-{
+/// Adds the prompt and permission metadata arnes needs on top of an agent-rig
+/// [`SimpleTool`].
+pub trait Tool: SimpleTool {
     fn prompt_guidelines(&self) -> &str;
     #[allow(dead_code)]
     fn prompt_snippet(&self) -> &str;
@@ -27,5 +22,20 @@ where
     /// Semantic category the permission prompt shows for this tool.
     fn tool_kind(&self) -> ToolKind {
         ToolKind::Other
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use agent_rig::tools::{ProgressDetails, ProgressReporter};
+    use async_trait::async_trait;
+
+    /// A [`ProgressReporter`] that drops every update, for tool tests that do
+    /// not exercise mid-call progress reporting.
+    pub(crate) struct NoopProgress;
+
+    #[async_trait]
+    impl ProgressReporter for NoopProgress {
+        async fn update(&self, _details: ProgressDetails) {}
     }
 }
