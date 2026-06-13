@@ -17,7 +17,7 @@ use agent_rig::{
 use crate::{
     AgentId, CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext,
     auth::{AuthManager, ToolPermissionMeta},
-    tools::{ReadTextFile, Tool, WriteTextFile},
+    tools::{Edit, ReadTextFile, Tool, WriteTextFile},
 };
 
 mod prompt;
@@ -76,6 +76,26 @@ impl<F: Frontend> Session<F> {
                 cwd: cwd.clone(),
             };
             let tool = WriteTextFile::new(tool_context);
+            tool_guidelines.push(tool.prompt_guidelines().to_string());
+            tool_metadata.insert(
+                tool.definition().name.clone(),
+                ToolPermissionMeta {
+                    kind: tool.tool_kind(),
+                },
+            );
+            tool_registry = tool_registry.register(tool);
+        }
+
+        // `edit` composes the read and write capabilities, so it is only
+        // available when the host provides both.
+        if host.read_text_file.is_some() && host.write_text_file.is_some() {
+            let tool_context = ToolContext {
+                host: host.clone(),
+                progress: None,
+                agent_id: AgentId::Root,
+                cwd: cwd.clone(),
+            };
+            let tool = Edit::new(tool_context);
             tool_guidelines.push(tool.prompt_guidelines().to_string());
             tool_metadata.insert(
                 tool.definition().name.clone(),

@@ -1,3 +1,4 @@
+mod edit;
 mod read_text_file;
 mod write_text_file;
 
@@ -7,6 +8,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::ToolKind;
 
+pub use edit::Edit;
 pub use read_text_file::ReadTextFile;
 pub use write_text_file::WriteTextFile;
 

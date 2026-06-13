@@ -80,6 +80,67 @@ async fn read_tool_roundtrip() {
 }
 
 #[tokio::test]
+async fn edit_tool_roundtrip() {
+    let cwd = PathBuf::from(".");
+    let mut env = InMemoryEnv::new();
+    let target_path = cwd.join("greeting.txt");
+    env.add_file(target_path.clone(), "hello world");
+    let host = env.build_host();
+
+    let llm = ScriptedLlm::new(vec![ScriptedTurn::ToolCallThenText {
+        name: "edit".into(),
+        args: serde_json::json!({
+            "path": "greeting.txt",
+            "edits": [{ "old_text": "world", "new_text": "agent" }],
+        }),
+        follow_up: "File edited successfully.".into(),
+    }]);
+
+    let frontend = RecordingFrontend::new();
+    let mut session = Session::new(Arc::clone(&frontend), host, llm, model_key(), cwd);
+    session
+        .prompt("replace world with agent", CancellationToken::new())
+        .await
+        .unwrap();
+
+    let events = frontend.events();
+
+    let started = events
+        .iter()
+        .any(|e| matches!(&e.kind, EventKind::ToolCallStarted { name, .. } if name == "edit"));
+    assert!(started, "expected a ToolCallStarted for edit");
+
+    let finished_ok = events.iter().any(|e| {
+        matches!(
+            &e.kind,
+            EventKind::ToolCallFinished { name, outcome: ToolCallOutcome::Ok(_), .. }
+                if name == "edit"
+        )
+    });
+    assert!(
+        finished_ok,
+        "expected a successful ToolCallFinished for edit"
+    );
+
+    assert_eq!(
+        env.read_file(&target_path).as_deref(),
+        Some("hello agent"),
+        "edited content should be visible in the env"
+    );
+
+    assert!(
+        matches!(
+            events.last().unwrap().kind,
+            EventKind::TurnEnd {
+                stop_reason: StopReason::EndTurn,
+                ..
+            }
+        ),
+        "last event should be TurnEnd with EndTurn stop reason"
+    );
+}
+
+#[tokio::test]
 async fn write_tool_roundtrip() {
     let cwd = PathBuf::from(".");
     let env = InMemoryEnv::new();
