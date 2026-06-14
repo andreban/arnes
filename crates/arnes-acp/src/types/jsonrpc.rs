@@ -4,6 +4,18 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// JSON-RPC 2.0 reserved error codes.
+pub mod error_code {
+    /// The request is not a valid Request object.
+    pub const INVALID_REQUEST: i32 = -32600;
+    /// The requested method does not exist.
+    pub const METHOD_NOT_FOUND: i32 = -32601;
+    /// The method's parameters are invalid.
+    pub const INVALID_PARAMS: i32 = -32602;
+    /// An internal error occurred while handling the request.
+    pub const INTERNAL_ERROR: i32 = -32603;
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Request {
     #[allow(dead_code)]

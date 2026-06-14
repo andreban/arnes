@@ -161,12 +161,13 @@ impl Frontend for AcpFrontend {
         }
 
         // Reuse the tool-call id from authorize so the prompt correlates with
-        // the tool_call card we echo in session/update.
+        // the tool_call card we echo in session/update. Clients (e.g. Zed)
+        // require a title on the permission tool call; the tool name serves.
         let params = RequestPermissionParams {
             session_id: self.session_id.clone(),
             tool_call: PermissionToolCall {
                 tool_call_id: req.tool_call_id,
-                title: None,
+                title: Some(req.tool_name),
                 raw_input: req.args,
                 kind: permission::acp_kind(req.kind),
             },
