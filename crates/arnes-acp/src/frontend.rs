@@ -4,8 +4,8 @@
 use std::sync::Mutex;
 
 use arnes_core::{
-    EventKind, Frontend, FrontendCapabilities, Permission, PermissionRequest, SessionEvent,
-    ToolCallOutcome,
+    EditTextFileProposal, EventKind, Frontend, FrontendCapabilities, Permission, PermissionRequest,
+    SessionEvent, ToolCallOutcome,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -20,7 +20,7 @@ use crate::{
             self, PermissionOutcome, PermissionToolCall, RequestPermissionParams,
             RequestPermissionResult,
         },
-        session::{MessageContent, SessionUpdate, SessionUpdateParams},
+        session::{MessageContent, SessionUpdate, SessionUpdateParams, ToolCallContent},
     },
 };
 
@@ -126,7 +126,9 @@ impl Frontend for AcpFrontend {
                     tool_call_id: id,
                     status: "completed",
                     title: None,
-                    content: Some(MessageContent { kind: "text", text }),
+                    content: Some(vec![ToolCallContent::Content {
+                        content: MessageContent { kind: "text", text },
+                    }]),
                 });
             }
             EventKind::TurnEnd { .. } => {
@@ -140,6 +142,23 @@ impl Frontend for AcpFrontend {
         let request_id = Uuid::now_v7().to_string();
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(request_id.clone(), tx);
+
+        // When the tool resolved a file edit, attach the before/after diff to
+        // the tool-call card so the client renders it. ACP's permission request
+        // references the card by id rather than carrying content itself; the
+        // card already exists because `tool_call` is emitted before authorize.
+        if let Some(edit) = EditTextFileProposal::from_proposal(&req.proposal) {
+            self.send(SessionUpdate::ToolCallUpdate {
+                tool_call_id: req.tool_call_id.clone(),
+                title: None,
+                status: "in_progress",
+                content: Some(vec![ToolCallContent::Diff {
+                    path: edit.path.display().to_string(),
+                    old_text: Some(edit.old_content),
+                    new_text: edit.new_content,
+                }]),
+            });
+        }
 
         // Reuse the tool-call id from authorize so the prompt correlates with
         // the tool_call card we echo in session/update.
