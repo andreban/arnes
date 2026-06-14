@@ -19,10 +19,10 @@ pub struct RequestPermissionParams {
     pub options: Vec<PermissionOption>,
 }
 
-/// The tool call the prompt is about. A minimal `ToolCallUpdate`: the spec
-/// only requires `toolCallId`. `title` is optional and omitted here, since the
-/// tool_call card echoed over `session/update` (correlated by the same
-/// `toolCallId`) already gave the client a title to show.
+/// The tool call the prompt is about, a `ToolCallUpdate` correlated with the
+/// card echoed over `session/update` by the same `toolCallId`. `title` holds the
+/// tool name: some clients (e.g. Zed) reject a permission request whose tool
+/// call has no title.
 /// `rawInput` carries the tool's argument object so the client can render what
 /// the call will act on (e.g. the path a file read targets). `kind` and
 /// `locations` enrich that further: a semantic category for the icon/label and
@@ -139,9 +139,10 @@ mod tests {
 
     #[test]
     fn optional_fields_omitted_when_absent() {
-        // The shape the frontend actually sends: no title, and an `other`-kind
-        // tool drops `kind` rather than sending a redundant `"other"`. Only
-        // `toolCallId` and `rawInput` remain.
+        // Serialization drops absent optionals: no title, and an `other`-kind
+        // tool drops `kind` rather than sending a redundant `"other"`, leaving
+        // only `toolCallId` and `rawInput`. (The frontend always sends a title;
+        // this pins the omission behaviour of the type itself.)
         let tool_call = PermissionToolCall {
             tool_call_id: "perm-1".into(),
             title: None,
