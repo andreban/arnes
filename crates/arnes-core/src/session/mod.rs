@@ -15,8 +15,8 @@ use agent_rig::{
 };
 
 use crate::{
-    AgentId, CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext,
-    auth::{AuthManager, ToolPermissionMeta},
+    AgentId, CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext, ToolKind,
+    auth::AuthManager,
     tools::{EditTextFile, ReadTextFile, Tool, WriteTextFile},
 };
 
@@ -36,6 +36,7 @@ pub struct Session<F: Frontend> {
     pub(super) cumulative_usage: CumulativeUsage,
     pub(super) model: ModelKey,
     pub(super) cwd: PathBuf,
+    tool_metadata: HashMap<String, ToolKind>,
 }
 
 impl<F: Frontend> Session<F> {
@@ -48,7 +49,7 @@ impl<F: Frontend> Session<F> {
     ) -> Self {
         let mut tool_registry = ToolRegistry::new();
         let mut tool_guidelines: Vec<String> = Vec::new();
-        let mut tool_metadata: HashMap<String, ToolPermissionMeta> = HashMap::new();
+        let mut tool_metadata: HashMap<String, ToolKind> = HashMap::new();
 
         if host.read_text_file.is_some() {
             let tool_context = ToolContext {
@@ -59,12 +60,7 @@ impl<F: Frontend> Session<F> {
             };
             let tool = ReadTextFile::new(tool_context);
             tool_guidelines.push(tool.prompt_guidelines().to_string());
-            tool_metadata.insert(
-                tool.definition().name.clone(),
-                ToolPermissionMeta {
-                    kind: tool.tool_kind(),
-                },
-            );
+            tool_metadata.insert(tool.definition().name.clone(), tool.tool_kind());
             tool_registry = tool_registry.register(tool);
         }
 
@@ -77,12 +73,7 @@ impl<F: Frontend> Session<F> {
             };
             let tool = WriteTextFile::new(tool_context);
             tool_guidelines.push(tool.prompt_guidelines().to_string());
-            tool_metadata.insert(
-                tool.definition().name.clone(),
-                ToolPermissionMeta {
-                    kind: tool.tool_kind(),
-                },
-            );
+            tool_metadata.insert(tool.definition().name.clone(), tool.tool_kind());
             tool_registry = tool_registry.register(tool);
         }
 
@@ -97,12 +88,7 @@ impl<F: Frontend> Session<F> {
             };
             let tool = EditTextFile::new(tool_context);
             tool_guidelines.push(tool.prompt_guidelines().to_string());
-            tool_metadata.insert(
-                tool.definition().name.clone(),
-                ToolPermissionMeta {
-                    kind: tool.tool_kind(),
-                },
-            );
+            tool_metadata.insert(tool.definition().name.clone(), tool.tool_kind());
             tool_registry = tool_registry.register(tool);
         }
 
@@ -117,10 +103,10 @@ impl<F: Frontend> Session<F> {
             .instructions(&instructions)
             .build();
 
-        let auth_manager = Arc::new(AuthManager::new(frontend.clone(), tool_metadata));
+        let auth = Arc::new(AuthManager::default());
 
         let runner = AgentRunner::with_registry(llm, Arc::new(tool_registry))
-            .with_auth_manager(auth_manager);
+            .with_auth_manager(auth.clone());
 
         Self {
             frontend,
@@ -132,6 +118,7 @@ impl<F: Frontend> Session<F> {
             cumulative_usage: CumulativeUsage::default(),
             model,
             cwd,
+            tool_metadata,
         }
     }
 

@@ -3,6 +3,7 @@
 
 //! Frontend trait and the event vocabulary it consumes.
 
+use agent_rig::auth::ApprovalRequest;
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -105,6 +106,17 @@ pub struct PermissionRequest {
     pub proposal: Value,
 }
 
+impl PermissionRequest {
+    pub(crate) fn from_rig_approval(rig_approval: &ApprovalRequest, kind: ToolKind) -> Self {
+        Self {
+            tool_call_id: rig_approval.tool_id.clone(),
+            tool_name: rig_approval.name.clone(),
+            args: rig_approval.args.clone(),
+            kind,
+            proposal: rig_approval.proposal.clone(),
+        }
+    }
+}
 /// Frontend's verdict on a permission request.
 #[derive(Clone, Debug)]
 pub enum Permission {
