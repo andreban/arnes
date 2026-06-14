@@ -46,8 +46,12 @@ impl<F: Frontend> RigAuthManager for AuthManager<F> {
         true
     }
 
-    async fn authorize(&self, id: &str, name: &str, args: &Value) -> bool {
+    async fn authorize(&self, id: &str, name: &str, args: &Value, _proposal: &Value) -> bool {
         debug!(name, ?args, "AuthManager::authorize");
+        // Every tool arnes registers leaves `propose` at its default, which
+        // returns the args unchanged, so `_proposal` always equals `args`. The
+        // prompt is built from `args`; once a tool resolves a richer proposal
+        // (e.g. an edit diff), surface `_proposal` here instead.
         let permission_request = PermissionRequest {
             tool_call_id: id.to_string(),
             tool_name: name.to_string(),
@@ -107,7 +111,8 @@ mod tests {
     #[tokio::test]
     async fn enriches_known_tool_with_kind() {
         let (auth, frontend) = manager();
-        auth.authorize("call-1", "read_text_file", &json!({ "path": "Cargo.toml" }))
+        let args = json!({ "path": "Cargo.toml" });
+        auth.authorize("call-1", "read_text_file", &args, &args)
             .await;
 
         let req = frontend.last.lock().unwrap().take().unwrap();
@@ -117,7 +122,8 @@ mod tests {
     #[tokio::test]
     async fn unknown_tool_falls_back_to_default_kind() {
         let (auth, frontend) = manager();
-        auth.authorize("call-1", "mystery_tool", &json!({})).await;
+        let args = json!({});
+        auth.authorize("call-1", "mystery_tool", &args, &args).await;
 
         let req = frontend.last.lock().unwrap().take().unwrap();
         assert_eq!(req.kind, ToolKind::Other);

@@ -7,13 +7,14 @@ use crate::{ToolContext, ToolKind};
 
 use super::Tool;
 use agent_rig::error::Error as AgentRigError;
-use agent_rig::tools::{ProgressReporter, SimpleTool, ToolDefinition};
+use agent_rig::tools::{ProgressReporter, Tool as RigTool, ToolDefinition};
 use async_trait::async_trait;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-const NAME: &str = "edit";
+const NAME: &str = "edit_text_file";
 const DESCRIPTION: &str = "Replaces anchor text in an existing file. Each edit names an \
                            `old_text` that must appear exactly once in the current file and \
                            the `new_text` to put in its place. Use this for targeted changes; \
@@ -21,7 +22,7 @@ const DESCRIPTION: &str = "Replaces anchor text in an existing file. Each edit n
 
 /// A single anchor-text replacement.
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct EditOp {
+pub struct EditTextFileOp {
     /// Text to find in the original file. Must match exactly once.
     pub old_text: String,
     /// Text to substitute for `old_text`.
@@ -29,33 +30,39 @@ pub struct EditOp {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct EditParams {
+pub struct EditTextFileParams {
     pub path: PathBuf,
-    pub edits: Vec<EditOp>,
+    pub edits: Vec<EditTextFileOp>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct EditOutput {
-    pub applied: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub edits_applied: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+pub struct EditTextFileOutput {
+    pub edits_applied: usize,
 }
 
-pub struct Edit {
+/// The concrete change [`EditTextFile::propose`] resolved — the target path and the
+/// fully rebuilt file contents — handed verbatim to [`EditTextFile::apply`], so the
+/// authorized change and the written change are one value.
+#[derive(Debug, Serialize, Deserialize)]
+struct EditTextFileProposal {
+    path: PathBuf,
+    new_content: String,
+    edits_applied: usize,
+}
+
+pub struct EditTextFile {
     context: ToolContext,
     definition: ToolDefinition,
 }
 
-impl Edit {
+impl EditTextFile {
     pub fn new(context: ToolContext) -> Self {
         Self {
             context,
             definition: ToolDefinition {
                 name: NAME.to_string(),
                 description: DESCRIPTION.to_string(),
-                parameters: schema_for!(EditParams),
+                parameters: schema_for!(EditTextFileParams),
             },
         }
     }
@@ -65,7 +72,7 @@ impl Edit {
     /// All anchors match the original content, never the text a prior edit
     /// produced. Validation is complete before assembly, so an error means
     /// nothing changed.
-    fn apply_edits(original: &str, edits: &[EditOp]) -> Result<String, String> {
+    fn apply_edits(original: &str, edits: &[EditTextFileOp]) -> Result<String, String> {
         let mut spans: Vec<(usize, usize, &str)> = Vec::with_capacity(edits.len());
         for (i, edit) in edits.iter().enumerate() {
             let n = i + 1;
@@ -122,37 +129,37 @@ fn count_occurrences(haystack: &str, needle: &str) -> usize {
 }
 
 #[async_trait]
-impl SimpleTool for Edit {
-    type Args = EditParams;
-    type Output = EditOutput;
-
+impl RigTool for EditTextFile {
     fn definition(&self) -> &ToolDefinition {
         &self.definition
     }
 
-    fn title(&self, args: &EditParams) -> String {
-        match args.path.to_str() {
+    fn title(&self, args: &Value) -> Result<String, AgentRigError> {
+        let args: EditTextFileParams = serde_json::from_value(args.clone())
+            .map_err(|e| AgentRigError::Agent(format!("invalid tool arguments: {e}")))?;
+        Ok(match args.path.to_str() {
             Some(path) => format!("Edit {}", path),
             None => "Edit".to_string(),
-        }
+        })
     }
 
-    async fn call(
+    /// Resolves the edit without writing: reads the file and computes the new
+    /// contents, returning the [`EditTextFileProposal`] that [`apply`](Self::apply)
+    /// writes and that an [`AuthManager`](agent_rig::auth::AuthManager)
+    /// inspects. A bad anchor or unreadable file fails here, before
+    /// authorization is requested — there is nothing to approve.
+    async fn propose(
         &self,
-        args: EditParams,
+        args: &Value,
         _progress: &dyn ProgressReporter,
-        _cancellation: CancellationToken,
-    ) -> Result<EditOutput, AgentRigError> {
+        _cancel: CancellationToken,
+    ) -> Result<Value, AgentRigError> {
+        let args: EditTextFileParams = serde_json::from_value(args.clone())
+            .map_err(|e| AgentRigError::Agent(format!("invalid tool arguments: {e}")))?;
         let read_host = self
             .context
             .host
             .read_text_file
-            .as_ref()
-            .ok_or(AgentRigError::Agent("Capability unavailable".to_string()))?;
-        let write_host = self
-            .context
-            .host
-            .write_text_file
             .as_ref()
             .ok_or(AgentRigError::Agent("Capability unavailable".to_string()))?;
         let path = if args.path.is_relative() {
@@ -160,50 +167,61 @@ impl SimpleTool for Edit {
         } else {
             args.path.clone()
         };
-
-        // Always return Ok so the model receives a valid JSON object.
-        // (Gemini requires FunctionResponse.response to be an object; a bare
-        // string causes an empty/null candidate and a silent non-response.)
-        let original = match read_host.read_text_file(&path, None, None).await {
-            Ok(content) => content,
-            Err(e) => {
-                return Ok(EditOutput {
-                    applied: false,
-                    edits_applied: None,
-                    error: Some(format!("Failed to read '{}': {}", path.display(), e)),
-                });
-            }
+        let original = read_host
+            .read_text_file(&path, None, None)
+            .await
+            .map_err(|e| {
+                AgentRigError::Agent(format!("Failed to read '{}': {}", path.display(), e))
+            })?;
+        let new_content =
+            Self::apply_edits(&original, &args.edits).map_err(AgentRigError::Agent)?;
+        let proposal = EditTextFileProposal {
+            edits_applied: args.edits.len(),
+            path,
+            new_content,
         };
+        serde_json::to_value(proposal)
+            .map_err(|e| AgentRigError::Agent(format!("failed to serialize proposal: {e}")))
+    }
 
-        let new_content = match Self::apply_edits(&original, &args.edits) {
-            Ok(content) => content,
-            Err(error) => {
-                return Ok(EditOutput {
-                    applied: false,
-                    edits_applied: None,
-                    error: Some(error),
-                });
-            }
+    /// Writes the contents [`propose`](Self::propose) resolved. Receives the
+    /// approved [`EditTextFileProposal`] verbatim, so it neither re-reads the file nor
+    /// re-applies the edits — what was approved is exactly what is written.
+    async fn apply(
+        &self,
+        proposal: Value,
+        _progress: &dyn ProgressReporter,
+        _cancel: CancellationToken,
+    ) -> Result<Value, AgentRigError> {
+        let proposal: EditTextFileProposal = serde_json::from_value(proposal)
+            .map_err(|e| AgentRigError::Agent(format!("invalid edit proposal: {e}")))?;
+        let write_host = self
+            .context
+            .host
+            .write_text_file
+            .as_ref()
+            .ok_or(AgentRigError::Agent("Capability unavailable".to_string()))?;
+        write_host
+            .write_text_file(&proposal.path, &proposal.new_content)
+            .await
+            .map_err(|e| {
+                AgentRigError::Agent(format!(
+                    "Failed to write '{}': {}",
+                    proposal.path.display(),
+                    e
+                ))
+            })?;
+        let output = EditTextFileOutput {
+            edits_applied: proposal.edits_applied,
         };
-
-        match write_host.write_text_file(&path, &new_content).await {
-            Ok(()) => Ok(EditOutput {
-                applied: true,
-                edits_applied: Some(args.edits.len()),
-                error: None,
-            }),
-            Err(e) => Ok(EditOutput {
-                applied: false,
-                edits_applied: None,
-                error: Some(format!("Failed to write '{}': {}", path.display(), e)),
-            }),
-        }
+        serde_json::to_value(output)
+            .map_err(|e| AgentRigError::Agent(format!("failed to serialize tool result: {e}")))
     }
 }
 
-impl Tool for Edit {
+impl Tool for EditTextFile {
     fn prompt_guidelines(&self) -> &str {
-        "Use `edit` to change part of an existing file by anchor text. Each edit's \
+        "Use `edit_text_file` to change part of an existing file by anchor text. Each edit's \
          `old_text` must appear exactly once in the current file; pick an anchor with \
          enough surrounding context to be unique. All edits match the original file, \
          not the text earlier edits produce, and the whole batch is applied together or \
@@ -211,7 +229,7 @@ impl Tool for Edit {
     }
 
     fn prompt_snippet(&self) -> &str {
-        "edit(path, edits: [{old_text, new_text}]) -> applied status"
+        "edit_text_file(path, edits: [{old_text, new_text}]) -> edits applied"
     }
 
     fn permission_required(&self) -> bool {
@@ -242,6 +260,23 @@ mod tests {
         tools::test_support::NoopProgress,
     };
 
+    /// Drives the tool through its real two-phase flow — `propose` then
+    /// `apply` — with typed args, decoding the typed output. A failure in
+    /// either phase short-circuits, mirroring what the runner does.
+    async fn run(
+        tool: &EditTextFile,
+        args: EditTextFileParams,
+    ) -> Result<EditTextFileOutput, AgentRigError> {
+        let args = serde_json::to_value(args).unwrap();
+        let proposal = tool
+            .propose(&args, &NoopProgress, CancellationToken::new())
+            .await?;
+        let output = tool
+            .apply(proposal, &NoopProgress, CancellationToken::new())
+            .await?;
+        Ok(serde_json::from_value(output).unwrap())
+    }
+
     /// Serves file contents from an in-memory map and captures the single
     /// write a successful edit performs.
     struct MapHost {
@@ -271,7 +306,7 @@ mod tests {
         }
     }
 
-    fn tool_with(cwd: &str, files: &[(&str, &str)]) -> (Edit, Arc<MapHost>) {
+    fn tool_with(cwd: &str, files: &[(&str, &str)]) -> (EditTextFile, Arc<MapHost>) {
         let files = files
             .iter()
             .map(|(p, c)| (PathBuf::from(p), (*c).to_string()))
@@ -290,11 +325,11 @@ mod tests {
             agent_id: AgentId::Root,
             cwd: PathBuf::from(cwd),
         };
-        (Edit::new(context), host)
+        (EditTextFile::new(context), host)
     }
 
-    fn op(old_text: &str, new_text: &str) -> EditOp {
-        EditOp {
+    fn op(old_text: &str, new_text: &str) -> EditTextFileOp {
+        EditTextFileOp {
             old_text: old_text.to_string(),
             new_text: new_text.to_string(),
         }
@@ -303,97 +338,71 @@ mod tests {
     #[tokio::test]
     async fn zero_match_errors_and_writes_nothing() {
         let (tool, host) = tool_with("/", &[("/f.txt", "hello world")]);
-        let args = EditParams {
+        let args = EditTextFileParams {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("absent", "x")],
         };
-        let out = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
-        assert!(!out.applied);
-        assert!(out.error.is_some());
+        assert!(run(&tool, args).await.is_err());
         assert!(host.written.lock().unwrap().is_none());
     }
 
     #[tokio::test]
     async fn multi_match_errors_and_writes_nothing() {
         let (tool, host) = tool_with("/", &[("/f.txt", "ab ab")]);
-        let args = EditParams {
+        let args = EditTextFileParams {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("ab", "x")],
         };
-        let out = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
-        assert!(!out.applied);
-        assert!(out.error.unwrap().contains("matched 2 times"));
+        let err = run(&tool, args).await.unwrap_err();
+        assert!(err.to_string().contains("matched 2 times"));
         assert!(host.written.lock().unwrap().is_none());
     }
 
     #[tokio::test]
     async fn empty_old_text_errors() {
         let (tool, host) = tool_with("/", &[("/f.txt", "content")]);
-        let args = EditParams {
+        let args = EditTextFileParams {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("", "x")],
         };
-        let out = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
-        assert!(!out.applied);
-        assert!(out.error.is_some());
+        assert!(run(&tool, args).await.is_err());
         assert!(host.written.lock().unwrap().is_none());
     }
 
     #[tokio::test]
     async fn overlapping_edits_error() {
         let (tool, host) = tool_with("/", &[("/f.txt", "abcdef")]);
-        let args = EditParams {
+        let args = EditTextFileParams {
             path: PathBuf::from("/f.txt"),
             // "abc" spans [0,3); "cde" spans [2,5) — they intersect.
             edits: vec![op("abc", "X"), op("cde", "Y")],
         };
-        let out = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
-        assert!(!out.applied);
-        assert!(out.error.unwrap().contains("overlap"));
+        let err = run(&tool, args).await.unwrap_err();
+        assert!(err.to_string().contains("overlap"));
         assert!(host.written.lock().unwrap().is_none());
     }
 
     #[tokio::test]
     async fn nested_edits_error() {
         let (tool, host) = tool_with("/", &[("/f.txt", "abcdef")]);
-        let args = EditParams {
+        let args = EditTextFileParams {
             path: PathBuf::from("/f.txt"),
             // "cd" spans [2,4), nested inside "bcde" spanning [1,5).
             edits: vec![op("bcde", "X"), op("cd", "Y")],
         };
-        let out = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
-        assert!(!out.applied);
+        assert!(run(&tool, args).await.is_err());
         assert!(host.written.lock().unwrap().is_none());
     }
 
     #[tokio::test]
     async fn multi_edit_happy_path_applies_all() {
         let (tool, host) = tool_with("/", &[("/f.txt", "hello world")]);
-        let args = EditParams {
+        let args = EditTextFileParams {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("hello", "hi"), op("world", "earth")],
         };
-        let out = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
-        assert!(out.applied);
-        assert_eq!(out.edits_applied, Some(2));
+        let out = run(&tool, args).await.unwrap();
+        assert_eq!(out.edits_applied, 2);
         let (_, content) = host.written.lock().unwrap().clone().unwrap();
         assert_eq!(content, "hi earth");
     }
@@ -404,45 +413,33 @@ mod tests {
         // because matching is against the original ("foo baz"), which has no
         // "bar". The batch fails and nothing is written.
         let (tool, host) = tool_with("/", &[("/f.txt", "foo baz")]);
-        let args = EditParams {
+        let args = EditTextFileParams {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("foo", "bar"), op("bar", "qux")],
         };
-        let out = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
-        assert!(!out.applied);
+        assert!(run(&tool, args).await.is_err());
         assert!(host.written.lock().unwrap().is_none());
     }
 
     #[tokio::test]
     async fn one_failing_edit_leaves_write_uncalled() {
         let (tool, host) = tool_with("/", &[("/f.txt", "hello world")]);
-        let args = EditParams {
+        let args = EditTextFileParams {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("hello", "hi"), op("absent", "x")],
         };
-        let out = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
-        assert!(!out.applied);
+        assert!(run(&tool, args).await.is_err());
         assert!(host.written.lock().unwrap().is_none());
     }
 
     #[tokio::test]
     async fn relative_path_resolves_against_cwd() {
         let (tool, host) = tool_with("/base", &[("/base/sub/f.txt", "abc")]);
-        let args = EditParams {
+        let args = EditTextFileParams {
             path: PathBuf::from("sub/f.txt"),
             edits: vec![op("abc", "xyz")],
         };
-        let out = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
-        assert!(out.applied);
+        run(&tool, args).await.unwrap();
         let (called_path, _) = host.written.lock().unwrap().clone().unwrap();
         assert_eq!(called_path, PathBuf::from("/base/sub/f.txt"));
     }
@@ -450,15 +447,11 @@ mod tests {
     #[tokio::test]
     async fn absolute_path_is_not_rebased() {
         let (tool, host) = tool_with("/base", &[("/elsewhere/f.txt", "abc")]);
-        let args = EditParams {
+        let args = EditTextFileParams {
             path: PathBuf::from("/elsewhere/f.txt"),
             edits: vec![op("abc", "xyz")],
         };
-        let out = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
-        assert!(out.applied);
+        run(&tool, args).await.unwrap();
         let (called_path, _) = host.written.lock().unwrap().clone().unwrap();
         assert_eq!(called_path, PathBuf::from("/elsewhere/f.txt"));
     }
@@ -471,25 +464,22 @@ mod tests {
             agent_id: AgentId::Root,
             cwd: PathBuf::from("/"),
         };
-        let tool = Edit::new(context);
-        let args = EditParams {
+        let tool = EditTextFile::new(context);
+        let args = EditTextFileParams {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("a", "b")],
         };
-        assert!(
-            tool.call(args, &NoopProgress, CancellationToken::new())
-                .await
-                .is_err()
-        );
+        assert!(run(&tool, args).await.is_err());
     }
 
     #[test]
     fn title_includes_the_path() {
         let (tool, _) = tool_with("/", &[]);
-        let args = EditParams {
+        let args = EditTextFileParams {
             path: PathBuf::from("/f.txt"),
             edits: Vec::new(),
         };
-        assert_eq!(tool.title(&args), "Edit /f.txt");
+        let title = tool.title(&serde_json::to_value(args).unwrap()).unwrap();
+        assert_eq!(title, "Edit /f.txt");
     }
 }

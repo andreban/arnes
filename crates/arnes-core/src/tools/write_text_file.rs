@@ -7,10 +7,11 @@ use crate::{ToolContext, ToolKind};
 
 use super::Tool;
 use agent_rig::error::Error as AgentRigError;
-use agent_rig::tools::{ProgressReporter, SimpleTool, ToolDefinition};
+use agent_rig::tools::{ProgressReporter, Tool as RigTool, ToolDefinition};
 use async_trait::async_trait;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 const NAME: &str = "write_text_file";
@@ -50,27 +51,30 @@ impl WriteTextFile {
 }
 
 #[async_trait]
-impl SimpleTool for WriteTextFile {
-    type Args = WriteTextFileParams;
-    type Output = WriteTextFileOutput;
-
+impl RigTool for WriteTextFile {
     fn definition(&self) -> &ToolDefinition {
         &self.definition
     }
 
-    fn title(&self, args: &WriteTextFileParams) -> String {
-        match args.path.to_str() {
+    fn title(&self, args: &Value) -> Result<String, AgentRigError> {
+        let args: WriteTextFileParams = serde_json::from_value(args.clone())
+            .map_err(|e| AgentRigError::Agent(format!("invalid tool arguments: {e}")))?;
+        Ok(match args.path.to_str() {
             Some(path) => format!("Write {}", path),
             None => "Write".to_string(),
-        }
+        })
     }
 
-    async fn call(
+    // `propose` is left as the default — the proposal is the raw args — so
+    // `apply` decodes straight into `WriteTextFileParams`.
+    async fn apply(
         &self,
-        args: WriteTextFileParams,
+        proposal: Value,
         _progress: &dyn ProgressReporter,
-        _cancellation: CancellationToken,
-    ) -> Result<WriteTextFileOutput, AgentRigError> {
+        _cancel: CancellationToken,
+    ) -> Result<Value, AgentRigError> {
+        let args: WriteTextFileParams = serde_json::from_value(proposal)
+            .map_err(|e| AgentRigError::Agent(format!("invalid tool arguments: {e}")))?;
         let host = self
             .context
             .host
@@ -85,16 +89,18 @@ impl SimpleTool for WriteTextFile {
         // Always return Ok so the model receives a valid JSON object.
         // (Gemini requires FunctionResponse.response to be an object; a bare
         // string causes an empty/null candidate and a silent non-response.)
-        match host.write_text_file(&path, &args.content).await {
-            Ok(()) => Ok(WriteTextFileOutput {
+        let output = match host.write_text_file(&path, &args.content).await {
+            Ok(()) => WriteTextFileOutput {
                 written: true,
                 error: None,
-            }),
-            Err(e) => Ok(WriteTextFileOutput {
+            },
+            Err(e) => WriteTextFileOutput {
                 written: false,
                 error: Some(format!("Failed to write '{}': {}", path.display(), e)),
-            }),
-        }
+            },
+        };
+        serde_json::to_value(output)
+            .map_err(|e| AgentRigError::Agent(format!("failed to serialize tool result: {e}")))
     }
 }
 
@@ -133,6 +139,19 @@ mod tests {
         AgentId, Host, ToolContext, host::WriteTextFile as WriteTextFileTrait,
         tools::test_support::NoopProgress,
     };
+
+    /// Drives the tool through its JSON `apply` surface with typed args,
+    /// decoding the typed output — the path a real tool call takes.
+    async fn run(
+        tool: &WriteTextFile,
+        args: WriteTextFileParams,
+    ) -> Result<WriteTextFileOutput, AgentRigError> {
+        let proposal = serde_json::to_value(args).unwrap();
+        let output = tool
+            .apply(proposal, &NoopProgress, CancellationToken::new())
+            .await?;
+        Ok(serde_json::from_value(output).unwrap())
+    }
 
     struct CapturingHost {
         called_with: Mutex<Option<(PathBuf, String)>>,
@@ -202,10 +221,7 @@ mod tests {
             path: PathBuf::from("/output.txt"),
             content: "hello world".to_string(),
         };
-        let out = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
+        let out = run(&tool, args).await.unwrap();
         assert!(out.written);
         assert!(out.error.is_none());
     }
@@ -217,10 +233,7 @@ mod tests {
             path: PathBuf::from("/protected.txt"),
             content: "content".to_string(),
         };
-        let out = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
+        let out = run(&tool, args).await.unwrap();
         assert!(!out.written);
         assert!(
             out.error.is_some(),
@@ -241,9 +254,7 @@ mod tests {
             path: PathBuf::from("/anything.txt"),
             content: "content".to_string(),
         };
-        let result = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await;
+        let result = run(&tool, args).await;
         assert!(
             result.is_err(),
             "tool should error when the capability is absent"
@@ -262,7 +273,8 @@ mod tests {
             path: PathBuf::from("/output.txt"),
             content: String::new(),
         };
-        assert_eq!(tool.title(&args), "Write /output.txt");
+        let title = tool.title(&serde_json::to_value(args).unwrap()).unwrap();
+        assert_eq!(title, "Write /output.txt");
     }
 
     #[tokio::test]
@@ -273,10 +285,7 @@ mod tests {
             path: PathBuf::from("subdir/out.txt"),
             content: "data".to_string(),
         };
-        let _ = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
+        let _ = run(&tool, args).await.unwrap();
         let (called_path, _) = capturing.called_with.lock().unwrap().clone().unwrap();
         assert_eq!(called_path, cwd.join("subdir/out.txt"));
     }
@@ -290,10 +299,7 @@ mod tests {
             path: abs_path.clone(),
             content: "data".to_string(),
         };
-        let _ = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
+        let _ = run(&tool, args).await.unwrap();
         let (called_path, _) = capturing.called_with.lock().unwrap().clone().unwrap();
         assert_eq!(called_path, abs_path);
     }
@@ -306,10 +312,7 @@ mod tests {
             path: PathBuf::from("/out.txt"),
             content: "line1\nline2\n".to_string(),
         };
-        let _ = tool
-            .call(args, &NoopProgress, CancellationToken::new())
-            .await
-            .unwrap();
+        let _ = run(&tool, args).await.unwrap();
         let (_, written_content) = capturing.called_with.lock().unwrap().clone().unwrap();
         assert_eq!(written_content, "line1\nline2\n");
     }
