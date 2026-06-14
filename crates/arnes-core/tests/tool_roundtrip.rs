@@ -88,7 +88,7 @@ async fn edit_tool_roundtrip() {
     let host = env.build_host();
 
     let llm = ScriptedLlm::new(vec![ScriptedTurn::ToolCallThenText {
-        name: "edit".into(),
+        name: "edit_text_file".into(),
         args: serde_json::json!({
             "path": "greeting.txt",
             "edits": [{ "old_text": "world", "new_text": "agent" }],
@@ -105,21 +105,21 @@ async fn edit_tool_roundtrip() {
 
     let events = frontend.events();
 
-    let started = events
-        .iter()
-        .any(|e| matches!(&e.kind, EventKind::ToolCallStarted { name, .. } if name == "edit"));
-    assert!(started, "expected a ToolCallStarted for edit");
+    let started = events.iter().any(
+        |e| matches!(&e.kind, EventKind::ToolCallStarted { name, .. } if name == "edit_text_file"),
+    );
+    assert!(started, "expected a ToolCallStarted for edit_text_file");
 
     let finished_ok = events.iter().any(|e| {
         matches!(
             &e.kind,
             EventKind::ToolCallFinished { name, outcome: ToolCallOutcome::Ok(_), .. }
-                if name == "edit"
+                if name == "edit_text_file"
         )
     });
     assert!(
         finished_ok,
-        "expected a successful ToolCallFinished for edit"
+        "expected a successful ToolCallFinished for edit_text_file"
     );
 
     assert_eq!(

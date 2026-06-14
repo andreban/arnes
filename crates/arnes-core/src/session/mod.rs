@@ -11,13 +11,13 @@ use agent_rig::{
     Agent,
     model::{LlmModel, Message as RigMessage},
     runner::AgentRunner,
-    tools::{SimpleTool, ToolRegistry},
+    tools::{Tool as RigTool, ToolRegistry},
 };
 
 use crate::{
     AgentId, CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext,
     auth::{AuthManager, ToolPermissionMeta},
-    tools::{Edit, ReadTextFile, Tool, WriteTextFile},
+    tools::{EditTextFile, ReadTextFile, Tool, WriteTextFile},
 };
 
 mod prompt;
@@ -86,7 +86,7 @@ impl<F: Frontend> Session<F> {
             tool_registry = tool_registry.register(tool);
         }
 
-        // `edit` composes the read and write capabilities, so it is only
+        // `edit_text_file` composes the read and write capabilities, so it is only
         // available when the host provides both.
         if host.read_text_file.is_some() && host.write_text_file.is_some() {
             let tool_context = ToolContext {
@@ -95,7 +95,7 @@ impl<F: Frontend> Session<F> {
                 agent_id: AgentId::Root,
                 cwd: cwd.clone(),
             };
-            let tool = Edit::new(tool_context);
+            let tool = EditTextFile::new(tool_context);
             tool_guidelines.push(tool.prompt_guidelines().to_string());
             tool_metadata.insert(
                 tool.definition().name.clone(),
