@@ -9,8 +9,8 @@ use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AgentId, ContentBlock, CoreError, EventKind, Frontend, Message, Result, SessionEvent,
-    StopReason, TokenCounts, ToolCallOutcome, TurnUsage,
+    AgentId, ContentBlock, CoreError, EventKind, Frontend, Message, Permission, PermissionRequest,
+    Result, SessionEvent, StopReason, TokenCounts, ToolCallOutcome, TurnUsage,
 };
 
 use super::Session;
@@ -65,9 +65,6 @@ impl<F: Frontend> Session<F> {
                 AgentEvent::Usage(u) => {
                     tokens += to_counts(u);
                 }
-                // The runner emits StartTurn as its first event, but arnes
-                // already emitted its own TurnStart before draining the stream,
-                // so this is dropped to avoid a duplicate.
                 AgentEvent::StartTurn => {}
                 AgentEvent::Cancelled => {
                     tracing::debug!("prompt: stream cancelled");
@@ -99,8 +96,21 @@ impl<F: Frontend> Session<F> {
                         }))
                         .await;
                 }
-                // arnes does not surface mid-call tool progress; none of the
-                // tools it registers report any.
+                AgentEvent::ApprovalRequest(req) => {
+                    tracing::debug!(tool = %req.name, "prompt: approval requested");
+                    let kind = self
+                        .tool_metadata
+                        .get(&req.name)
+                        .copied()
+                        .unwrap_or_default();
+                    let permission = PermissionRequest::from_rig_approval(&req, kind);
+
+                    let allowed = matches!(
+                        self.frontend.request_permission(permission).await,
+                        Permission::AllowOnce
+                    );
+                    req.respond(allowed);
+                }
                 AgentEvent::ToolCallUpdate { .. } => {}
                 AgentEvent::ToolCallFinished {
                     tool_id,
