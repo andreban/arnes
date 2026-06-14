@@ -97,7 +97,7 @@ pub enum SessionUpdate {
         title: Option<String>,
         status: &'static str,
         #[serde(skip_serializing_if = "Option::is_none")]
-        content: Option<MessageContent>,
+        content: Option<Vec<ToolCallContent>>,
     },
 }
 
@@ -106,6 +106,28 @@ pub struct MessageContent {
     #[serde(rename = "type")]
     pub kind: &'static str,
     pub text: String,
+}
+
+/// One block of a tool call's content. Tool output is a [`Content`] block; a
+/// proposed file edit is a [`Diff`] block, which clients render as a
+/// before/after view in the tool-call card and its approval prompt.
+///
+/// [`Content`]: ToolCallContent::Content
+/// [`Diff`]: ToolCallContent::Diff
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+pub enum ToolCallContent {
+    #[serde(rename = "content")]
+    Content { content: MessageContent },
+    #[serde(rename = "diff")]
+    Diff {
+        path: String,
+        /// The file's contents before the edit; `None` for a new file.
+        #[serde(rename = "oldText", skip_serializing_if = "Option::is_none")]
+        old_text: Option<String>,
+        #[serde(rename = "newText")]
+        new_text: String,
+    },
 }
 
 #[cfg(test)]
@@ -178,15 +200,38 @@ mod tests {
                 tool_call_id: "tc-1".into(),
                 status: "completed",
                 title: None,
-                content: Some(MessageContent {
-                    kind: "text",
-                    text: "file content".into(),
-                }),
+                content: Some(vec![ToolCallContent::Content {
+                    content: MessageContent {
+                        kind: "text",
+                        text: "file content".into(),
+                    },
+                }]),
             },
         };
         assert_eq!(
             serde_json::to_string(&update).unwrap(),
-            r#"{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"completed","content":{"type":"text","text":"file content"}}}"#,
+            r#"{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"file content"}}]}}"#,
+        );
+    }
+
+    #[test]
+    fn tool_call_update_diff_wire_shape() {
+        let update = SessionUpdateParams {
+            session_id: "sess-1".into(),
+            update: SessionUpdate::ToolCallUpdate {
+                tool_call_id: "tc-1".into(),
+                status: "in_progress",
+                title: None,
+                content: Some(vec![ToolCallContent::Diff {
+                    path: "/home/user/f.txt".into(),
+                    old_text: Some("hello world".into()),
+                    new_text: "hi world".into(),
+                }]),
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&update).unwrap(),
+            r#"{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"in_progress","content":[{"type":"diff","path":"/home/user/f.txt","oldText":"hello world","newText":"hi world"}]}}"#,
         );
     }
 
