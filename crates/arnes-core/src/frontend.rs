@@ -97,6 +97,12 @@ pub struct PermissionRequest {
     pub args: Value,
     /// Semantic category of the tool, for labelling the prompt.
     pub kind: ToolKind,
+    /// The change the tool resolved before asking for approval, opaque here and
+    /// interpreted by the frontend (e.g. via
+    /// [`EditTextFileProposal`](crate::EditTextFileProposal)). Defaults to
+    /// [`Value::Null`] for tools that resolve nothing richer than their
+    /// arguments.
+    pub proposal: Value,
 }
 
 /// Frontend's verdict on a permission request.

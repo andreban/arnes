@@ -6,7 +6,7 @@ use agent_rig::tools::Tool as RigTool;
 
 use crate::ToolKind;
 
-pub use edit_text_file::EditTextFile;
+pub use edit_text_file::{EditTextFile, EditTextFileProposal};
 pub use read_text_file::ReadTextFile;
 pub use write_text_file::WriteTextFile;
 

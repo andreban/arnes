@@ -46,17 +46,17 @@ impl<F: Frontend> RigAuthManager for AuthManager<F> {
         true
     }
 
-    async fn authorize(&self, id: &str, name: &str, args: &Value, _proposal: &Value) -> bool {
+    async fn authorize(&self, id: &str, name: &str, args: &Value, proposal: &Value) -> bool {
         debug!(name, ?args, "AuthManager::authorize");
-        // Every tool arnes registers leaves `propose` at its default, which
-        // returns the args unchanged, so `_proposal` always equals `args`. The
-        // prompt is built from `args`; once a tool resolves a richer proposal
-        // (e.g. an edit diff), surface `_proposal` here instead.
+        // The proposal is opaque here; the frontend interprets it (e.g. an edit
+        // tool's proposal becomes a before/after diff). Tools that resolve
+        // nothing richer than their arguments leave it equal to `args`.
         let permission_request = PermissionRequest {
             tool_call_id: id.to_string(),
             tool_name: name.to_string(),
             args: args.clone(),
             kind: self.kind(name),
+            proposal: proposal.clone(),
         };
         match self.frontend.request_permission(permission_request).await {
             AllowOnce => true,

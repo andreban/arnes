@@ -3,7 +3,7 @@
 
 use std::io;
 
-use arnes_core::{EventKind, Permission, SessionEvent, ToolCallOutcome};
+use arnes_core::{EditTextFileProposal, EventKind, Permission, SessionEvent, ToolCallOutcome};
 use crossterm::event::{
     Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
@@ -16,6 +16,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
+use similar::{ChangeTag, TextDiff};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -47,7 +48,29 @@ enum RenderedOutcome {
 struct PendingPermission {
     tool_name: String,
     args: String,
+    // The edited file's path and the rendered before/after diff, when the
+    // proposal describes a file edit. `None` falls back to the args summary.
+    path: Option<String>,
+    diff: Option<Vec<Line<'static>>>,
+    // Lines of the diff scrolled past the top. 0 shows the start.
+    scroll: u16,
+    // Height of the diff viewport at the last render, for paging.
+    view_height: u16,
     responder: oneshot::Sender<Permission>,
+}
+
+impl PendingPermission {
+    fn scroll_up(&mut self, by: u16) {
+        self.scroll = self.scroll.saturating_sub(by);
+    }
+
+    fn scroll_down(&mut self, by: u16) {
+        self.scroll = self.scroll.saturating_add(by);
+    }
+
+    fn page(&self) -> u16 {
+        self.view_height.saturating_sub(1).max(1)
+    }
 }
 
 pub struct AppState {
@@ -267,24 +290,78 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     }
 }
 
-fn render_permission_prompt(f: &mut Frame, area: Rect, pending: &PendingPermission) {
+fn centered_rect_pct(pct_x: u16, pct_y: u16, area: Rect) -> Rect {
+    centered_rect(area.width * pct_x / 100, area.height * pct_y / 100, area)
+}
+
+/// Builds a unified-style diff between `old` and `new`: only the changed regions
+/// with a few lines of context, deletions in red and insertions in green, with a
+/// marker between hunks. Within a changed line the segments that actually differ
+/// are reversed, so a small change in a long line stands out. Returns a single
+/// line when there is nothing to show.
+fn build_diff_lines(old: &str, new: &str) -> Vec<Line<'static>> {
+    let dim = Style::default().fg(Color::DarkGray);
+    let diff = TextDiff::from_lines(old, new);
+    let groups = diff.grouped_ops(3);
+    if groups.is_empty() {
+        return vec![Line::from(Span::styled("(no changes)", dim))];
+    }
+    let mut lines = Vec::new();
+    for (i, group) in groups.iter().enumerate() {
+        if i > 0 {
+            lines.push(Line::from(Span::styled("  ⋯", dim)));
+        }
+        for op in group {
+            for change in diff.iter_inline_changes(op) {
+                let (sign, base) = match change.tag() {
+                    ChangeTag::Delete => ("-", Style::default().fg(Color::Red)),
+                    ChangeTag::Insert => ("+", Style::default().fg(Color::Green)),
+                    ChangeTag::Equal => (" ", dim),
+                };
+                let mut spans = vec![Span::styled(format!("{sign} "), base)];
+                for (emphasized, value) in change.iter_strings_lossy() {
+                    let value = value.strip_suffix('\n').unwrap_or(&value);
+                    let value = value.strip_suffix('\r').unwrap_or(value);
+                    let style = if emphasized {
+                        base.add_modifier(Modifier::REVERSED)
+                    } else {
+                        base
+                    };
+                    spans.push(Span::styled(value.to_owned(), style));
+                }
+                lines.push(Line::from(spans));
+            }
+        }
+    }
+    lines
+}
+
+fn prompt_border() -> Style {
+    Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn render_permission_prompt(f: &mut Frame, area: Rect, pending: &mut PendingPermission) {
+    if pending.diff.is_some() {
+        render_edit_prompt(f, area, pending);
+    } else {
+        render_simple_prompt(f, area, pending);
+    }
+}
+
+/// The compact allow/deny popup for tools without a diff to preview.
+fn render_simple_prompt(f: &mut Frame, area: Rect, pending: &PendingPermission) {
     let popup = centered_rect(60, 9, area);
     f.render_widget(Clear, popup);
 
-    let block = Block::default().borders(Borders::ALL).border_style(
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
-    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(prompt_border());
     let mut lines = vec![
         Line::from("The agent wants to run this tool:"),
         Line::from(""),
-        Line::from(Span::styled(
-            pending.tool_name.clone(),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
+        Line::from(Span::styled(pending.tool_name.clone(), prompt_border())),
     ];
     if !pending.args.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -293,7 +370,69 @@ fn render_permission_prompt(f: &mut Frame, area: Rect, pending: &PendingPermissi
         )));
     }
     lines.push(Line::from(""));
-    lines.push(Line::from(vec![
+    lines.push(allow_deny_line());
+    let prompt = Paragraph::new(Text::from(lines))
+        .block(block.title(Span::styled(" Permission required ", prompt_border())))
+        .wrap(Wrap { trim: false });
+    f.render_widget(prompt, popup);
+}
+
+/// The roomy popup that previews an edit as a scrollable before/after diff.
+fn render_edit_prompt(f: &mut Frame, area: Rect, pending: &mut PendingPermission) {
+    let popup = centered_rect_pct(80, 80, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(prompt_border())
+        .title(Span::styled(" Approve edit ", prompt_border()));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let path = pending.path.as_deref().unwrap_or_default();
+    let header = Paragraph::new(Text::from(vec![
+        Line::from(vec![
+            Span::raw("The agent wants to edit "),
+            Span::styled(path.to_owned(), prompt_border()),
+        ]),
+        Line::from(""),
+    ]));
+    f.render_widget(header, chunks[0]);
+
+    let body_area = chunks[1];
+    pending.view_height = body_area.height;
+    let lines = pending.diff.clone().unwrap_or_default();
+    let body = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+    let total = body.line_count(body_area.width);
+    let max_scroll = total
+        .saturating_sub(body_area.height as usize)
+        .min(u16::MAX as usize) as u16;
+    if pending.scroll > max_scroll {
+        pending.scroll = max_scroll;
+    }
+    f.render_widget(body.scroll((pending.scroll, 0)), body_area);
+
+    let mut footer = allow_deny_line();
+    if max_scroll > 0 {
+        footer.spans.push(Span::styled(
+            "    PgUp/PgDn scroll",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    f.render_widget(Paragraph::new(footer), chunks[2]);
+}
+
+fn allow_deny_line() -> Line<'static> {
+    Line::from(vec![
         Span::styled(
             "[y]",
             Style::default()
@@ -306,19 +445,7 @@ fn render_permission_prompt(f: &mut Frame, area: Rect, pending: &PendingPermissi
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" deny"),
-    ]));
-    let body = Text::from(lines);
-    let prompt = Paragraph::new(body)
-        .block(
-            block.title(Span::styled(
-                " Permission required ",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )),
-        )
-        .wrap(Wrap { trim: false });
-    f.render_widget(prompt, popup);
+    ])
 }
 
 fn render(f: &mut Frame, state: &mut AppState) {
@@ -445,7 +572,7 @@ fn render(f: &mut Frame, state: &mut AppState) {
     }
 
     // Modal permission prompt, drawn last so it sits above the transcript.
-    if let Some(pending) = &state.pending_permission {
+    if let Some(pending) = state.pending_permission.as_mut() {
         render_permission_prompt(f, area, pending);
     }
 }
@@ -481,6 +608,26 @@ pub async fn run(
                                 (KeyCode::Char('n') | KeyCode::Char('N'), _)
                                 | (KeyCode::Esc, _) => {
                                     state.respond_permission(Permission::Deny);
+                                }
+                                (KeyCode::Up, _) => {
+                                    if let Some(p) = state.pending_permission.as_mut() {
+                                        p.scroll_up(1);
+                                    }
+                                }
+                                (KeyCode::Down, _) => {
+                                    if let Some(p) = state.pending_permission.as_mut() {
+                                        p.scroll_down(1);
+                                    }
+                                }
+                                (KeyCode::PageUp, _) => {
+                                    if let Some(p) = state.pending_permission.as_mut() {
+                                        p.scroll_up(p.page());
+                                    }
+                                }
+                                (KeyCode::PageDown, _) => {
+                                    if let Some(p) = state.pending_permission.as_mut() {
+                                        p.scroll_down(p.page());
+                                    }
                                 }
                                 _ => {}
                             }
@@ -536,8 +683,18 @@ pub async fn run(
                     }
                     Event::Mouse(MouseEvent { kind, .. }) => {
                         match kind {
-                            MouseEventKind::ScrollUp => state.scroll_up(3),
-                            MouseEventKind::ScrollDown => state.scroll_down(3),
+                            MouseEventKind::ScrollUp => {
+                                match state.pending_permission.as_mut() {
+                                    Some(p) => p.scroll_up(3),
+                                    None => state.scroll_up(3),
+                                }
+                            }
+                            MouseEventKind::ScrollDown => {
+                                match state.pending_permission.as_mut() {
+                                    Some(p) => p.scroll_down(3),
+                                    None => state.scroll_down(3),
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -550,9 +707,21 @@ pub async fn run(
                 match maybe_cmd {
                     Some(UiCommand::Event(ev)) => state.handle_session_event(ev),
                     Some(UiCommand::PermissionRequest { request, responder }) => {
+                        let edit = EditTextFileProposal::from_proposal(&request.proposal);
+                        let (path, diff) = match edit {
+                            Some(edit) => (
+                                Some(edit.path.display().to_string()),
+                                Some(build_diff_lines(&edit.old_content, &edit.new_content)),
+                            ),
+                            None => (None, None),
+                        };
                         state.pending_permission = Some(PendingPermission {
                             tool_name: request.tool_name,
                             args: summarize_json(&request.args),
+                            path,
+                            diff,
+                            scroll: 0,
+                            view_height: 0,
                             responder,
                         });
                     }

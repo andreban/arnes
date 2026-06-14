@@ -40,14 +40,28 @@ pub struct EditTextFileOutput {
     pub edits_applied: usize,
 }
 
-/// The concrete change [`EditTextFile::propose`] resolved — the target path and the
-/// fully rebuilt file contents — handed verbatim to [`EditTextFile::apply`], so the
-/// authorized change and the written change are one value.
-#[derive(Debug, Serialize, Deserialize)]
-struct EditTextFileProposal {
-    path: PathBuf,
-    new_content: String,
+/// The concrete change [`EditTextFile::propose`] resolved — the target path and
+/// the file's contents before and after — handed verbatim to
+/// [`EditTextFile::apply`], so the authorized change and the written change are
+/// one value. The same proposal feeds the approval prompt: a frontend reads it
+/// back with [`from_proposal`](Self::from_proposal) to render a before/after
+/// diff.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EditTextFileProposal {
+    pub path: PathBuf,
+    pub old_content: String,
+    pub new_content: String,
+    /// How many edits [`apply`](EditTextFile::apply) reports; not part of the
+    /// diff a frontend shows.
     edits_applied: usize,
+}
+
+impl EditTextFileProposal {
+    /// Reads an [`EditTextFileProposal`] out of a tool's opaque proposal,
+    /// returning `None` when the proposal does not describe a file edit.
+    pub fn from_proposal(proposal: &Value) -> Option<Self> {
+        serde_json::from_value(proposal.clone()).ok()
+    }
 }
 
 pub struct EditTextFile {
@@ -178,6 +192,7 @@ impl RigTool for EditTextFile {
         let proposal = EditTextFileProposal {
             edits_applied: args.edits.len(),
             path,
+            old_content: original,
             new_content,
         };
         serde_json::to_value(proposal)
@@ -470,6 +485,28 @@ mod tests {
             edits: vec![op("a", "b")],
         };
         assert!(run(&tool, args).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn proposal_exposes_before_and_after_for_diff() {
+        let (tool, _) = tool_with("/", &[("/f.txt", "hello world")]);
+        let args = EditTextFileParams {
+            path: PathBuf::from("/f.txt"),
+            edits: vec![op("hello", "hi")],
+        };
+        let value = tool
+            .propose(
+                &serde_json::to_value(args).unwrap(),
+                &NoopProgress,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let proposal =
+            EditTextFileProposal::from_proposal(&value).expect("proposal describes a file edit");
+        assert_eq!(proposal.path, PathBuf::from("/f.txt"));
+        assert_eq!(proposal.old_content, "hello world");
+        assert_eq!(proposal.new_content, "hi world");
     }
 
     #[test]
