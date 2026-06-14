@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use tokio_util::codec::{FramedRead, LinesCodec};
 
 use arnes_acp::handler::Handler;
-use arnes_acp::types::jsonrpc::{Request, Response};
+use arnes_acp::types::jsonrpc::{Request, Response, error_code};
 
 #[derive(Parser)]
 #[command(about = "arnes ACP server — JSON-RPC 2.0 over stdio")]
@@ -103,7 +103,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let response: Option<Response> = match serde_json::from_value::<Request>(value) {
-            Err(_) => Some(Response::err(Value::Null, -32600, "invalid request")),
+            Err(_) => Some(Response::err(
+                Value::Null,
+                error_code::INVALID_REQUEST,
+                "invalid request",
+            )),
             Ok(req) => {
                 let id = req.id.unwrap_or(Value::Null);
                 let params = req.params.unwrap_or(Value::Null);
@@ -129,7 +133,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     _ => {
                         if id != Value::Null {
-                            Some(Response::err(id, -32601, "method not found"))
+                            Some(Response::err(
+                                id,
+                                error_code::METHOD_NOT_FOUND,
+                                "method not found",
+                            ))
                         } else {
                             None
                         }

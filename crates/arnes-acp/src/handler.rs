@@ -22,7 +22,7 @@ use crate::{
     host::{AcpReadTextFile, AcpWriteTextFile, PendingRequests},
     types::{
         initialize::{AgentCapabilities, AgentInfo, InitializeParams, InitializeResult},
-        jsonrpc::Response,
+        jsonrpc::{Response, error_code},
         session::{
             SessionCancelParams, SessionNewParams, SessionNewResult, SessionPromptParams,
             SessionPromptResult,
@@ -67,7 +67,7 @@ impl Handler {
 
     pub async fn handle_initialize(&self, id: Value, params: Value) -> Response {
         let Ok(p) = serde_json::from_value::<InitializeParams>(params) else {
-            return Response::err(id, -32602, "invalid params");
+            return Response::err(id, error_code::INVALID_PARAMS, "invalid params");
         };
         self.fs_read_text_file
             .store(p.client_capabilities.fs.read_text_file, Ordering::Relaxed);
@@ -141,7 +141,7 @@ impl Handler {
 
     pub async fn handle_session_prompt(&self, id: Value, params: Value) -> Response {
         let Ok(p) = serde_json::from_value::<SessionPromptParams>(params) else {
-            return Response::err(id, -32602, "invalid params");
+            return Response::err(id, error_code::INVALID_PARAMS, "invalid params");
         };
         let text = p.text();
         let cancel = CancellationToken::new();
@@ -152,16 +152,26 @@ impl Handler {
         let result = {
             let mut sessions = self.sessions.lock().await;
             let Some(session) = sessions.get_mut(&p.session_id) else {
-                return Response::err(id, -32602, "unknown session_id");
+                return Response::err(id, error_code::INVALID_PARAMS, "unknown session_id");
             };
             session.prompt(text, cancel).await
         };
         self.cancel_tokens.lock().await.remove(&p.session_id);
-        let stop_reason = match result {
-            Ok(()) => "end_turn",
-            Err(_) => "error",
-        };
-        Response::ok(id, SessionPromptResult { stop_reason })
+        // A completed turn reports `end_turn`; a failed one is a JSON-RPC error,
+        // since ACP defines no stop reason for failure.
+        match result {
+            Ok(()) => Response::ok(
+                id,
+                SessionPromptResult {
+                    stop_reason: "end_turn",
+                },
+            ),
+            Err(e) => Response::err(
+                id,
+                error_code::INTERNAL_ERROR,
+                format!("prompt failed: {e}"),
+            ),
+        }
     }
 
     pub async fn handle_session_cancel(&self, params: Value) {
