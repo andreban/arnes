@@ -65,7 +65,7 @@ impl<F: Frontend> Session<F> {
                 AgentEvent::Usage(u) => {
                     tokens += to_counts(u);
                 }
-                AgentEvent::StartTurn => {}
+                AgentEvent::TurnStart => {}
                 AgentEvent::Cancelled => {
                     tracing::debug!("prompt: stream cancelled");
                     stop_reason = StopReason::Cancelled;
@@ -80,27 +80,27 @@ impl<F: Frontend> Session<F> {
                         .await;
                     return Err(CoreError::Session(e.to_string()));
                 }
-                AgentEvent::ToolCallStarted {
-                    tool_id,
-                    name,
+                AgentEvent::ToolCallStart {
+                    tool_call_id,
+                    tool_name,
                     args,
                     title,
                 } => {
-                    tracing::debug!(tool = %name, "prompt: tool call started");
+                    tracing::debug!(tool = %tool_name, "prompt: tool call started");
                     self.frontend
                         .on_event(mk_event(EventKind::ToolCallStarted {
-                            id: tool_id,
-                            name,
+                            id: tool_call_id,
+                            name: tool_name,
                             args,
                             title,
                         }))
                         .await;
                 }
                 AgentEvent::ApprovalRequest(req) => {
-                    tracing::debug!(tool = %req.name, "prompt: approval requested");
+                    tracing::debug!(tool = %&req.tool_name, "prompt: approval requested");
                     let kind = self
                         .tool_metadata
-                        .get(&req.name)
+                        .get(&req.tool_name)
                         .copied()
                         .unwrap_or_default();
                     let permission = PermissionRequest::from_rig_approval(&req, kind);
@@ -112,21 +112,21 @@ impl<F: Frontend> Session<F> {
                     req.respond(allowed);
                 }
                 AgentEvent::ToolCallUpdate { .. } => {}
-                AgentEvent::ToolCallFinished {
-                    tool_id,
-                    name,
+                AgentEvent::ToolCallFinish {
+                    tool_call_id,
+                    tool_name,
                     result,
                 } => {
-                    tracing::debug!(tool = %name, result = ?result, "prompt: tool call finished");
+                    tracing::debug!(tool = %tool_name, result = ?result, "prompt: tool call finished");
                     self.frontend
                         .on_event(mk_event(EventKind::ToolCallFinished {
-                            id: tool_id,
-                            name,
+                            id: tool_call_id,
+                            name: tool_name,
                             outcome: to_outcome(result),
                         }))
                         .await;
                 }
-                AgentEvent::EndTurn { thread } => {
+                AgentEvent::TurnFinish { thread } => {
                     tracing::debug!(
                         thread_len = thread.len(),
                         "prompt: EndTurn received, persisting thread"
