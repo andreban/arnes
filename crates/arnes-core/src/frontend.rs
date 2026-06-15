@@ -109,8 +109,8 @@ pub struct PermissionRequest {
 impl PermissionRequest {
     pub(crate) fn from_rig_approval(rig_approval: &ApprovalRequest, kind: ToolKind) -> Self {
         Self {
-            tool_call_id: rig_approval.tool_id.clone(),
-            tool_name: rig_approval.name.clone(),
+            tool_call_id: rig_approval.tool_call_id.clone(),
+            tool_name: rig_approval.tool_name.clone(),
             args: rig_approval.args.clone(),
             kind,
             proposal: rig_approval.proposal.clone(),

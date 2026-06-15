@@ -11,7 +11,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 [[package]]
 name = "agent-rig"
 version = "0.1.0"
-source = "git+https://github.com/andreban/agent-rig?branch=main#6062c6b5c937ba16078c739acc3b1ac68bc28ff3"
+source = "git+https://github.com/andreban/agent-rig?branch=main#06fe476c5eb768b7e0051b566946391c7d05c162"
 dependencies = [
  "async-stream",
  "async-trait",
