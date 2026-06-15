@@ -172,6 +172,20 @@ impl RigTool for EditTextFile {
     ) -> Result<Value, AgentRigError> {
         let args: EditTextFileParams = serde_json::from_value(args.clone())
             .map_err(|e| AgentRigError::Agent(format!("invalid tool arguments: {e}")))?;
+
+        if !self
+            .context
+            .read_grants
+            .lock()
+            .map_err(|e| AgentRigError::Agent(format!("Error reading grants: {e}")))?
+            .contains(&args.path)
+        {
+            return Err(AgentRigError::Agent(format!(
+                "File {} must be read before it can be edited",
+                args.path.to_string_lossy()
+            )));
+        }
+
         let read_host = self
             .context
             .host
@@ -256,7 +270,7 @@ impl Tool for EditTextFile {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         io,
         path::{Path, PathBuf},
         sync::{Arc, Mutex},
@@ -278,6 +292,13 @@ mod tests {
         tool: &EditTextFile,
         args: EditTextFileParams,
     ) -> Result<EditTextFileOutput, AgentRigError> {
+        // Editing requires the file to have been read first; grant that here so
+        // these tests exercise the edit logic, not the read-before-edit guard.
+        tool.context
+            .read_grants
+            .lock()
+            .unwrap()
+            .insert(args.path.clone());
         let args = serde_json::to_value(args).unwrap();
         let proposal = tool.propose(&args, CancellationToken::new()).await?;
         let output = tool.apply(proposal, CancellationToken::new()).await?;
@@ -331,6 +352,7 @@ mod tests {
             progress: None,
             agent_id: AgentId::Root,
             cwd: PathBuf::from(cwd),
+            read_grants: Arc::new(Mutex::new(HashSet::new())),
         };
         (EditTextFile::new(context), host)
     }
@@ -470,6 +492,7 @@ mod tests {
             progress: None,
             agent_id: AgentId::Root,
             cwd: PathBuf::from("/"),
+            read_grants: Arc::new(Mutex::new(HashSet::new())),
         };
         let tool = EditTextFile::new(context);
         let args = EditTextFileParams {
@@ -486,6 +509,11 @@ mod tests {
             path: PathBuf::from("/f.txt"),
             edits: vec![op("hello", "hi")],
         };
+        tool.context
+            .read_grants
+            .lock()
+            .unwrap()
+            .insert(args.path.clone());
         let value = tool
             .propose(
                 &serde_json::to_value(args).unwrap(),
@@ -498,6 +526,26 @@ mod tests {
         assert_eq!(proposal.path, PathBuf::from("/f.txt"));
         assert_eq!(proposal.old_content, "hello world");
         assert_eq!(proposal.new_content, "hi world");
+    }
+
+    #[tokio::test]
+    async fn unread_file_cannot_be_edited() {
+        let (tool, host) = tool_with("/", &[("/f.txt", "hello world")]);
+        let args = EditTextFileParams {
+            path: PathBuf::from("/f.txt"),
+            edits: vec![op("hello", "hi")],
+        };
+        // The path holds no read grant, so propose must refuse before touching
+        // the file, and nothing is written.
+        let err = tool
+            .propose(
+                &serde_json::to_value(args).unwrap(),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("must be read"));
+        assert!(host.written.lock().unwrap().is_none());
     }
 
     #[test]

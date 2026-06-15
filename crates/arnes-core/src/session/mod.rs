@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use agent_rig::{
@@ -52,28 +52,23 @@ impl<F: Frontend> Session<F> {
         let mut tool_registry = ToolRegistry::new();
         let mut tool_guidelines: Vec<String> = Vec::new();
         let mut tool_metadata: HashMap<String, ToolKind> = HashMap::new();
+        let tool_context = ToolContext {
+            host: host.clone(),
+            progress: None,
+            agent_id: AgentId::Root,
+            cwd: cwd.clone(),
+            read_grants: Arc::new(Mutex::new(HashSet::new())),
+        };
 
         if host.read_text_file.is_some() {
-            let tool_context = ToolContext {
-                host: host.clone(),
-                progress: None,
-                agent_id: AgentId::Root,
-                cwd: cwd.clone(),
-            };
-            let tool = ReadTextFile::new(tool_context);
+            let tool = ReadTextFile::new(tool_context.clone());
             tool_guidelines.push(tool.prompt_guidelines().to_string());
             tool_metadata.insert(tool.definition().name.clone(), tool.tool_kind());
             tool_registry = tool_registry.register(tool);
         }
 
         if host.write_text_file.is_some() {
-            let tool_context = ToolContext {
-                host: host.clone(),
-                progress: None,
-                agent_id: AgentId::Root,
-                cwd: cwd.clone(),
-            };
-            let tool = WriteTextFile::new(tool_context);
+            let tool = WriteTextFile::new(tool_context.clone());
             tool_guidelines.push(tool.prompt_guidelines().to_string());
             tool_metadata.insert(tool.definition().name.clone(), tool.tool_kind());
             tool_registry = tool_registry.register(tool);
@@ -82,13 +77,7 @@ impl<F: Frontend> Session<F> {
         // `edit_text_file` composes the read and write capabilities, so it is only
         // available when the host provides both.
         if host.read_text_file.is_some() && host.write_text_file.is_some() {
-            let tool_context = ToolContext {
-                host: host.clone(),
-                progress: None,
-                agent_id: AgentId::Root,
-                cwd: cwd.clone(),
-            };
-            let tool = EditTextFile::new(tool_context);
+            let tool = EditTextFile::new(tool_context.clone());
             tool_guidelines.push(tool.prompt_guidelines().to_string());
             tool_metadata.insert(tool.definition().name.clone(), tool.tool_kind());
             tool_registry = tool_registry.register(tool);
