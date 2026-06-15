@@ -125,6 +125,7 @@ impl Tool for WriteTextFile {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::HashSet,
         io,
         path::{Path, PathBuf},
         sync::{Arc, Mutex},
@@ -183,6 +184,7 @@ mod tests {
             progress: None,
             agent_id: AgentId::Root,
             cwd,
+            read_grants: Arc::new(Mutex::new(HashSet::new())),
         };
         WriteTextFile::new(context)
     }
@@ -199,6 +201,7 @@ mod tests {
             progress: None,
             agent_id: AgentId::Root,
             cwd,
+            read_grants: Arc::new(Mutex::new(HashSet::new())),
         };
         (WriteTextFile::new(context), host)
     }
@@ -242,6 +245,7 @@ mod tests {
             progress: None,
             agent_id: AgentId::Root,
             cwd: PathBuf::from("/"),
+            read_grants: Arc::new(Mutex::new(HashSet::new())),
         };
         let tool = WriteTextFile::new(context);
         let args = WriteTextFileParams {

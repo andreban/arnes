@@ -81,6 +81,11 @@ impl RigTool for ReadTextFile {
     ) -> Result<Value, AgentRigError> {
         let args: ReadTextFileParams = serde_json::from_value(proposal)
             .map_err(|e| AgentRigError::Agent(format!("invalid tool arguments: {e}")))?;
+
+        if let Ok(mut read_grants) = self.context.read_grants.lock() {
+            read_grants.insert(args.path.clone());
+        }
+
         let host = self
             .context
             .host
@@ -129,6 +134,7 @@ impl Tool for ReadTextFile {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::HashSet,
         io,
         path::{Path, PathBuf},
         sync::{Arc, Mutex},
@@ -212,6 +218,7 @@ mod tests {
             progress: None,
             agent_id: AgentId::Root,
             cwd: PathBuf::from("/"),
+            read_grants: Arc::new(Mutex::new(HashSet::new())),
         };
         ReadTextFile::new(context)
     }
@@ -249,6 +256,7 @@ mod tests {
             progress: None,
             agent_id: AgentId::Root,
             cwd: PathBuf::from("/"),
+            read_grants: Arc::new(Mutex::new(HashSet::new())),
         };
         let tool = ReadTextFile::new(context);
         let args = ReadTextFileParams {
@@ -276,6 +284,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_grants_the_path_for_editing() {
+        let tool = map_tool(&[("/notes.txt", "hello world")]);
+        let args = ReadTextFileParams {
+            path: PathBuf::from("/notes.txt"),
+            line: None,
+            limit: None,
+        };
+        run(&tool, args).await.unwrap();
+        // A successful read authorizes a later edit of the same path.
+        assert!(
+            tool.context
+                .read_grants
+                .lock()
+                .unwrap()
+                .contains(&PathBuf::from("/notes.txt"))
+        );
+    }
+
+    #[tokio::test]
     async fn line_and_limit_slice_the_file() {
         let tool = map_tool(&[("/multi.txt", "one\ntwo\nthree\nfour\nfive")]);
         let args = ReadTextFileParams {
@@ -299,6 +326,7 @@ mod tests {
             progress: None,
             agent_id: AgentId::Root,
             cwd,
+            read_grants: Arc::new(Mutex::new(HashSet::new())),
         };
         (ReadTextFile::new(context), capturing)
     }

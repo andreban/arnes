@@ -87,14 +87,22 @@ async fn edit_tool_roundtrip() {
     env.add_file(target_path.clone(), "hello world");
     let host = env.build_host();
 
-    let llm = ScriptedLlm::new(vec![ScriptedTurn::ToolCallThenText {
-        name: "edit_text_file".into(),
-        args: serde_json::json!({
-            "path": "greeting.txt",
-            "edits": [{ "old_text": "world", "new_text": "agent" }],
-        }),
-        follow_up: "File edited successfully.".into(),
-    }]);
+    // The agent must read a file before it may edit it, so the read-then-edit
+    // sequence mirrors the real flow: the read grants the path, the edit uses it.
+    let llm = ScriptedLlm::new(vec![
+        ScriptedTurn::ToolCall {
+            name: "read_text_file".into(),
+            args: serde_json::json!({ "path": "greeting.txt" }),
+        },
+        ScriptedTurn::ToolCallThenText {
+            name: "edit_text_file".into(),
+            args: serde_json::json!({
+                "path": "greeting.txt",
+                "edits": [{ "old_text": "world", "new_text": "agent" }],
+            }),
+            follow_up: "File edited successfully.".into(),
+        },
+    ]);
 
     let frontend = RecordingFrontend::new();
     let mut session = Session::new(Arc::clone(&frontend), host, llm, model_key(), cwd);
