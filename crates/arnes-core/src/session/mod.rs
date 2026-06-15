@@ -35,6 +35,9 @@ pub struct Session<F: Frontend> {
     pub(super) cumulative_usage: CumulativeUsage,
     pub(super) model: ModelKey,
     pub(super) cwd: PathBuf,
+    /// The tool implementations arnes resolves each call against — propose,
+    /// approval, then apply.
+    tools: Arc<ToolRegistry>,
     tool_metadata: HashMap<String, ToolKind>,
 }
 
@@ -102,7 +105,8 @@ impl<F: Frontend> Session<F> {
             .instructions(&instructions)
             .build();
 
-        let runner = AgentRunner::with_registry(llm, Arc::new(tool_registry));
+        let tools = Arc::new(tool_registry);
+        let runner = AgentRunner::with_tools(llm, tools.definitions());
 
         Self {
             frontend,
@@ -114,6 +118,7 @@ impl<F: Frontend> Session<F> {
             cumulative_usage: CumulativeUsage::default(),
             model,
             cwd,
+            tools,
             tool_metadata,
         }
     }

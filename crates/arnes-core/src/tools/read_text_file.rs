@@ -7,7 +7,7 @@ use crate::{ToolContext, ToolKind};
 
 use super::Tool;
 use agent_rig::error::Error as AgentRigError;
-use agent_rig::tools::{ProgressReporter, Tool as RigTool, ToolDefinition};
+use agent_rig::tools::{Tool as RigTool, ToolDefinition};
 use async_trait::async_trait;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -77,7 +77,6 @@ impl RigTool for ReadTextFile {
     async fn apply(
         &self,
         proposal: Value,
-        _progress: &dyn ProgressReporter,
         _cancel: CancellationToken,
     ) -> Result<Value, AgentRigError> {
         let args: ReadTextFileParams = serde_json::from_value(proposal)
@@ -139,10 +138,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::{
-        AgentId, Host, ToolContext, host::ReadTextFile as ReadTextFileTrait,
-        tools::test_support::NoopProgress,
-    };
+    use crate::{AgentId, Host, ToolContext, host::ReadTextFile as ReadTextFileTrait};
 
     /// Drives the tool through its JSON `apply` surface with typed args,
     /// decoding the typed output — the path a real tool call takes.
@@ -151,9 +147,7 @@ mod tests {
         args: ReadTextFileParams,
     ) -> Result<ReadTextFileOutput, AgentRigError> {
         let proposal = serde_json::to_value(args).unwrap();
-        let output = tool
-            .apply(proposal, &NoopProgress, CancellationToken::new())
-            .await?;
+        let output = tool.apply(proposal, CancellationToken::new()).await?;
         Ok(serde_json::from_value(output).unwrap())
     }
 

@@ -22,18 +22,3 @@ pub trait Tool: RigTool {
         ToolKind::Other
     }
 }
-
-#[cfg(test)]
-pub(crate) mod test_support {
-    use agent_rig::tools::{ProgressDetails, ProgressReporter};
-    use async_trait::async_trait;
-
-    /// A [`ProgressReporter`] that drops every update, for tool tests that do
-    /// not exercise mid-call progress reporting.
-    pub(crate) struct NoopProgress;
-
-    #[async_trait]
-    impl ProgressReporter for NoopProgress {
-        async fn update(&self, _details: ProgressDetails) {}
-    }
-}

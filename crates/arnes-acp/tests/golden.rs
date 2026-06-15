@@ -232,9 +232,9 @@ async fn m2_tool_call_golden() {
     // The agent reaches out to the client over `fs/read_text_file`.
     //
     // Note: this request is observed *before* the `tool_call` update above.
-    // The runner emits `ToolCallStarted` and then runs the tool concurrently
-    // with the consumer that forwards the event to the frontend, so the tool's
-    // outbound request can win the race onto the wire. We therefore assert
+    // The session emits `ToolCallStarted` (forwarded to the frontend as a
+    // notification) and then resolves the tool, whose outbound requests are
+    // queued onto the same wire; either can win the race. We therefore assert
     // presence and the post-response ordering rather than tool_call-first.
     let read_request_idx = outbound
         .iter()
