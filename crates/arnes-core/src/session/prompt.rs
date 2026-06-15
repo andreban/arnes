@@ -3,9 +3,11 @@
 
 use agent_rig::{
     model::TokenUsage,
-    runner::{AgentEvent, ToolCallResult},
+    runner::AgentEvent,
+    tools::{ToolCallRequest, ToolRegistry},
 };
 use futures_util::StreamExt;
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -44,6 +46,11 @@ impl<F: Frontend> Session<F> {
             .runner
             .run_with_cancellation(&self.agent, thread, cancel);
 
+        // The runner now only announces tool calls; arnes resolves them against
+        // its own registry. Clone the `Arc` so the borrows below are
+        // independent of `&self`.
+        let registry = self.tools.clone();
+
         let mut blocks: Vec<ContentBlock> = Vec::new();
         let mut tokens = TokenCounts::default();
         let mut stop_reason = StopReason::EndTurn;
@@ -63,7 +70,7 @@ impl<F: Frontend> Session<F> {
                     append_block(&mut blocks, text, true);
                 }
                 AgentEvent::Usage(u) => {
-                    tokens += to_counts(u);
+                    tokens += u.into();
                 }
                 AgentEvent::TurnStart => {}
                 AgentEvent::Cancelled => {
@@ -80,51 +87,18 @@ impl<F: Frontend> Session<F> {
                         .await;
                     return Err(CoreError::Session(e.to_string()));
                 }
-                AgentEvent::ToolCallStart {
-                    tool_call_id,
-                    tool_name,
-                    args,
-                    title,
-                } => {
-                    tracing::debug!(tool = %tool_name, "prompt: tool call started");
-                    self.frontend
-                        .on_event(mk_event(EventKind::ToolCallStarted {
-                            id: tool_call_id,
-                            name: tool_name,
-                            args,
-                            title,
-                        }))
-                        .await;
-                }
-                AgentEvent::ApprovalRequest(req) => {
-                    tracing::debug!(tool = %&req.tool_name, "prompt: approval requested");
-                    let kind = self
-                        .tool_metadata
-                        .get(&req.tool_name)
-                        .copied()
-                        .unwrap_or_default();
-                    let permission = PermissionRequest::from_rig_approval(&req, kind);
-
-                    let allowed = matches!(
-                        self.frontend.request_permission(permission).await,
-                        Permission::AllowOnce
-                    );
-                    req.respond(allowed);
-                }
-                AgentEvent::ToolCallUpdate { .. } => {}
-                AgentEvent::ToolCallFinish {
-                    tool_call_id,
-                    tool_name,
-                    result,
-                } => {
-                    tracing::debug!(tool = %tool_name, result = ?result, "prompt: tool call finished");
+                AgentEvent::ToolCall(req) => {
+                    tracing::debug!(tool = %req.tool_name, "prompt: tool call");
+                    let outcome = self.resolve_tool_call(&registry, &req).await;
+                    tracing::debug!(tool = %req.tool_name, outcome = ?outcome, "prompt: tool call finished");
                     self.frontend
                         .on_event(mk_event(EventKind::ToolCallFinished {
-                            id: tool_call_id,
-                            name: tool_name,
-                            outcome: to_outcome(result),
+                            id: req.tool_call_id.clone(),
+                            name: req.tool_name.clone(),
+                            outcome: outcome.clone(),
                         }))
                         .await;
+                    req.resolve(outcome);
                 }
                 AgentEvent::TurnFinish { thread } => {
                     tracing::debug!(
@@ -148,6 +122,72 @@ impl<F: Frontend> Session<F> {
             .on_event(mk_event(EventKind::TurnEnd { stop_reason, usage }))
             .await;
         Ok(())
+    }
+
+    /// Resolves one tool call the runner announced: looks the tool up, emits
+    /// [`EventKind::ToolCallStarted`], then runs the propose / approval / apply
+    /// flow that agent-rig used to drive internally. The returned outcome is
+    /// what the caller reports as finished and hands back to the runner.
+    async fn resolve_tool_call(
+        &self,
+        registry: &ToolRegistry,
+        req: &ToolCallRequest,
+    ) -> ToolCallOutcome {
+        let tool = registry.get(&req.tool_name);
+
+        // A descriptive title for the start event; fall back to the tool name
+        // when the tool is unknown or can't interpret its arguments.
+        let title = tool
+            .and_then(|t| t.title(&req.args).ok())
+            .unwrap_or_else(|| req.tool_name.clone());
+        self.frontend
+            .on_event(mk_event(EventKind::ToolCallStarted {
+                id: req.tool_call_id.clone(),
+                name: req.tool_name.clone(),
+                args: req.args.clone(),
+                title,
+            }))
+            .await;
+
+        let Some(tool) = tool else {
+            return ToolCallOutcome::Unknown;
+        };
+
+        // `propose` is side-effect-free and resolves the raw args into the
+        // value both the approval prompt and `apply` read from.
+        let proposal = match tool
+            .propose(&req.args, req.cancellation_token.clone())
+            .await
+        {
+            Ok(proposal) => proposal,
+            Err(e) => return ToolCallOutcome::Err(e.to_string()),
+        };
+
+        if tool.requires_approval(&req.args) {
+            let kind = self
+                .tool_metadata
+                .get(&req.tool_name)
+                .copied()
+                .unwrap_or_default();
+            let permission = PermissionRequest {
+                tool_call_id: req.tool_call_id.clone(),
+                tool_name: req.tool_name.clone(),
+                args: req.args.clone(),
+                kind,
+                proposal: proposal.clone(),
+            };
+            if !matches!(
+                self.frontend.request_permission(permission).await,
+                Permission::AllowOnce
+            ) {
+                return ToolCallOutcome::Denied;
+            }
+        }
+
+        match tool.apply(proposal, req.cancellation_token.clone()).await {
+            Ok(value) => ToolCallOutcome::Ok(value),
+            Err(e) => ToolCallOutcome::Err(e.to_string()),
+        }
     }
 }
 
@@ -180,20 +220,24 @@ fn append_block(blocks: &mut Vec<ContentBlock>, text: String, thinking: bool) {
     }
 }
 
-fn to_outcome(result: ToolCallResult) -> ToolCallOutcome {
-    match result {
-        ToolCallResult::Ok(value) => ToolCallOutcome::Ok(value),
-        ToolCallResult::Err(err) => ToolCallOutcome::Err(err.to_string()),
-        ToolCallResult::Denied => ToolCallOutcome::Denied,
-        ToolCallResult::Unknown => ToolCallOutcome::Unknown,
+impl From<ToolCallOutcome> for Value {
+    fn from(value: ToolCallOutcome) -> Self {
+        match value {
+            ToolCallOutcome::Ok(value) => value,
+            ToolCallOutcome::Err(err) => Value::from(format!("Tool call error: {err}")),
+            ToolCallOutcome::Denied => Value::from("User rejected the tool call"),
+            ToolCallOutcome::Unknown => Value::from("Unknown tool"),
+        }
     }
 }
 
-fn to_counts(u: TokenUsage) -> TokenCounts {
-    TokenCounts {
-        total: u64::from(u.input_tokens.unwrap_or(0))
-            + u64::from(u.output_tokens.unwrap_or(0))
-            + u64::from(u.thinking_tokens.unwrap_or(0))
-            + u64::from(u.tool_use_prompt_tokens.unwrap_or(0)),
+impl From<TokenUsage> for TokenCounts {
+    fn from(value: TokenUsage) -> Self {
+        TokenCounts {
+            total: u64::from(value.input_tokens.unwrap_or(0))
+                + u64::from(value.output_tokens.unwrap_or(0))
+                + u64::from(value.thinking_tokens.unwrap_or(0))
+                + u64::from(value.tool_use_prompt_tokens.unwrap_or(0)),
+        }
     }
 }

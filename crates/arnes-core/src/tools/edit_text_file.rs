@@ -7,7 +7,7 @@ use crate::{ToolContext, ToolKind};
 
 use super::Tool;
 use agent_rig::error::Error as AgentRigError;
-use agent_rig::tools::{ProgressReporter, Tool as RigTool, ToolDefinition};
+use agent_rig::tools::{Tool as RigTool, ToolDefinition};
 use async_trait::async_trait;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -168,7 +168,6 @@ impl RigTool for EditTextFile {
     async fn propose(
         &self,
         args: &Value,
-        _progress: &dyn ProgressReporter,
         _cancel: CancellationToken,
     ) -> Result<Value, AgentRigError> {
         let args: EditTextFileParams = serde_json::from_value(args.clone())
@@ -208,7 +207,6 @@ impl RigTool for EditTextFile {
     async fn apply(
         &self,
         proposal: Value,
-        _progress: &dyn ProgressReporter,
         _cancel: CancellationToken,
     ) -> Result<Value, AgentRigError> {
         let proposal: EditTextFileProposal = serde_json::from_value(proposal)
@@ -271,7 +269,6 @@ mod tests {
     use crate::{
         AgentId, Host, ToolContext,
         host::{ReadTextFile as ReadTextFileTrait, WriteTextFile as WriteTextFileTrait},
-        tools::test_support::NoopProgress,
     };
 
     /// Drives the tool through its real two-phase flow — `propose` then
@@ -282,12 +279,8 @@ mod tests {
         args: EditTextFileParams,
     ) -> Result<EditTextFileOutput, AgentRigError> {
         let args = serde_json::to_value(args).unwrap();
-        let proposal = tool
-            .propose(&args, &NoopProgress, CancellationToken::new())
-            .await?;
-        let output = tool
-            .apply(proposal, &NoopProgress, CancellationToken::new())
-            .await?;
+        let proposal = tool.propose(&args, CancellationToken::new()).await?;
+        let output = tool.apply(proposal, CancellationToken::new()).await?;
         Ok(serde_json::from_value(output).unwrap())
     }
 
@@ -496,7 +489,6 @@ mod tests {
         let value = tool
             .propose(
                 &serde_json::to_value(args).unwrap(),
-                &NoopProgress,
                 CancellationToken::new(),
             )
             .await
