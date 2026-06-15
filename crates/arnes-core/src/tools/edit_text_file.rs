@@ -157,11 +157,14 @@ impl RigTool for EditTextFile {
         })
     }
 
+    fn requires_approval(&self, _args: &Value) -> bool {
+        true
+    }
+
     /// Resolves the edit without writing: reads the file and computes the new
     /// contents, returning the [`EditTextFileProposal`] that [`apply`](Self::apply)
-    /// writes and that an [`AuthManager`](agent_rig::auth::AuthManager)
-    /// inspects. A bad anchor or unreadable file fails here, before
-    /// authorization is requested — there is nothing to approve.
+    /// writes. A bad anchor or unreadable file fails here, before
+    /// approval is requested — there is nothing to approve.
     async fn propose(
         &self,
         args: &Value,
@@ -245,10 +248,6 @@ impl Tool for EditTextFile {
 
     fn prompt_snippet(&self) -> &str {
         "edit_text_file(path, edits: [{old_text, new_text}]) -> edits applied"
-    }
-
-    fn permission_required(&self) -> bool {
-        true
     }
 
     fn tool_kind(&self) -> ToolKind {

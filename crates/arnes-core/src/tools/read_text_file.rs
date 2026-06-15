@@ -68,6 +68,10 @@ impl RigTool for ReadTextFile {
         })
     }
 
+    fn requires_approval(&self, _args: &Value) -> bool {
+        true
+    }
+
     // `propose` is left as the default — the proposal is the raw args — so
     // `apply` decodes straight into `ReadTextFileParams`.
     async fn apply(
@@ -116,10 +120,6 @@ impl Tool for ReadTextFile {
 
     fn prompt_snippet(&self) -> &str {
         "read_text_file(path, line?, limit?) -> file contents"
-    }
-
-    fn permission_required(&self) -> bool {
-        true
     }
 
     fn tool_kind(&self) -> ToolKind {

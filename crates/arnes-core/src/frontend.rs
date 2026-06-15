@@ -3,7 +3,7 @@
 
 //! Frontend trait and the event vocabulary it consumes.
 
-use agent_rig::auth::ApprovalRequest;
+use agent_rig::tools::ApprovalRequest;
 use async_trait::async_trait;
 use serde_json::Value;
 

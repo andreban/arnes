@@ -16,8 +16,6 @@ pub trait Tool: RigTool {
     fn prompt_guidelines(&self) -> &str;
     #[allow(dead_code)]
     fn prompt_snippet(&self) -> &str;
-    #[allow(dead_code)]
-    fn permission_required(&self) -> bool;
 
     /// Semantic category the permission prompt shows for this tool.
     fn tool_kind(&self) -> ToolKind {

@@ -65,6 +65,10 @@ impl RigTool for WriteTextFile {
         })
     }
 
+    fn requires_approval(&self, _args: &Value) -> bool {
+        true
+    }
+
     // `propose` is left as the default — the proposal is the raw args — so
     // `apply` decodes straight into `WriteTextFileParams`.
     async fn apply(
@@ -112,10 +116,6 @@ impl Tool for WriteTextFile {
 
     fn prompt_snippet(&self) -> &str {
         "write_text_file(path, content) -> written status"
-    }
-
-    fn permission_required(&self) -> bool {
-        true
     }
 
     fn tool_kind(&self) -> ToolKind {
