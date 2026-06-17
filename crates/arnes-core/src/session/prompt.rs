@@ -4,7 +4,7 @@
 use agent_rig::{
     model::TokenUsage,
     runner::AgentEvent,
-    tools::{ToolCallRequest, ToolRegistry},
+    tools::{ToolCallRequest, ToolRegistry, ToolResult},
 };
 use futures_util::StreamExt;
 use serde_json::Value;
@@ -136,9 +136,10 @@ impl<F: Frontend> Session<F> {
         let tool = registry.get(&req.tool_name);
 
         // A descriptive title for the start event; fall back to the tool name
-        // when the tool is unknown or can't interpret its arguments.
+        // when the tool is unknown. A tool that can't interpret its arguments
+        // falls back to its own name inside `title`.
         let title = tool
-            .and_then(|t| t.title(&req.args).ok())
+            .map(|t| t.title(&req.args))
             .unwrap_or_else(|| req.tool_name.clone());
         self.frontend
             .on_event(mk_event(EventKind::ToolCallStarted {
@@ -159,8 +160,8 @@ impl<F: Frontend> Session<F> {
             .propose(&req.args, req.cancellation_token.clone())
             .await
         {
-            Ok(proposal) => proposal,
-            Err(e) => return ToolCallOutcome::Err(e.to_string()),
+            ToolResult::Ok(proposal) => proposal,
+            ToolResult::Err(error) => return ToolCallOutcome::Err(error.to_string()),
         };
 
         if tool.requires_approval(&req.args) {
@@ -185,8 +186,8 @@ impl<F: Frontend> Session<F> {
         }
 
         match tool.apply(proposal, req.cancellation_token.clone()).await {
-            Ok(value) => ToolCallOutcome::Ok(value),
-            Err(e) => ToolCallOutcome::Err(e.to_string()),
+            ToolResult::Ok(value) => ToolCallOutcome::Ok(value),
+            ToolResult::Err(error) => ToolCallOutcome::Err(error.to_string()),
         }
     }
 }

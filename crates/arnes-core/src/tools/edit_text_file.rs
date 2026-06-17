@@ -6,8 +6,7 @@ use std::path::PathBuf;
 use crate::{ToolContext, ToolKind};
 
 use super::Tool;
-use agent_rig::error::Error as AgentRigError;
-use agent_rig::tools::{Tool as RigTool, ToolDefinition};
+use agent_rig::tools::{Tool as RigTool, ToolDefinition, ToolResult};
 use async_trait::async_trait;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -148,13 +147,15 @@ impl RigTool for EditTextFile {
         &self.definition
     }
 
-    fn title(&self, args: &Value) -> Result<String, AgentRigError> {
-        let args: EditTextFileParams = serde_json::from_value(args.clone())
-            .map_err(|e| AgentRigError::Agent(format!("invalid tool arguments: {e}")))?;
-        Ok(match args.path.to_str() {
-            Some(path) => format!("Edit {}", path),
-            None => "Edit".to_string(),
-        })
+    fn title(&self, args: &Value) -> String {
+        match serde_json::from_value::<EditTextFileParams>(args.clone()) {
+            Ok(args) => match args.path.to_str() {
+                Some(path) => format!("Edit {}", path),
+                None => "Edit".to_string(),
+            },
+            // Unparseable args: fall back to the tool name.
+            Err(_) => NAME.to_string(),
+        }
     }
 
     fn requires_approval(&self, _args: &Value) -> bool {
@@ -165,87 +166,82 @@ impl RigTool for EditTextFile {
     /// contents, returning the [`EditTextFileProposal`] that [`apply`](Self::apply)
     /// writes. A bad anchor or unreadable file fails here, before
     /// approval is requested — there is nothing to approve.
-    async fn propose(
-        &self,
-        args: &Value,
-        _cancel: CancellationToken,
-    ) -> Result<Value, AgentRigError> {
-        let args: EditTextFileParams = serde_json::from_value(args.clone())
-            .map_err(|e| AgentRigError::Agent(format!("invalid tool arguments: {e}")))?;
+    async fn propose(&self, args: &Value, _cancel: CancellationToken) -> ToolResult {
+        let args: EditTextFileParams = match serde_json::from_value(args.clone()) {
+            Ok(args) => args,
+            Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
+        };
 
-        if !self
-            .context
-            .read_grants
-            .lock()
-            .map_err(|e| AgentRigError::Agent(format!("Error reading grants: {e}")))?
-            .contains(&args.path)
-        {
-            return Err(AgentRigError::Agent(format!(
-                "File {} must be read before it can be edited",
-                args.path.to_string_lossy()
-            )));
+        match self.context.read_grants.lock() {
+            Ok(grants) => {
+                if !grants.contains(&args.path) {
+                    return ToolResult::error(format!(
+                        "File {} must be read before it can be edited",
+                        args.path.to_string_lossy()
+                    ));
+                }
+            }
+            Err(e) => return ToolResult::error(format!("Error reading grants: {e}")),
         }
 
-        let read_host = self
-            .context
-            .host
-            .read_text_file
-            .as_ref()
-            .ok_or(AgentRigError::Agent("Capability unavailable".to_string()))?;
+        let Some(read_host) = self.context.host.read_text_file.as_ref() else {
+            return ToolResult::error("Capability unavailable");
+        };
         let path = if args.path.is_relative() {
             self.context.cwd.join(&args.path)
         } else {
             args.path.clone()
         };
-        let original = read_host
-            .read_text_file(&path, None, None)
-            .await
-            .map_err(|e| {
-                AgentRigError::Agent(format!("Failed to read '{}': {}", path.display(), e))
-            })?;
-        let new_content =
-            Self::apply_edits(&original, &args.edits).map_err(AgentRigError::Agent)?;
+        let original = match read_host.read_text_file(&path, None, None).await {
+            Ok(original) => original,
+            Err(e) => {
+                return ToolResult::error(format!("Failed to read '{}': {}", path.display(), e));
+            }
+        };
+        let new_content = match Self::apply_edits(&original, &args.edits) {
+            Ok(new_content) => new_content,
+            Err(e) => return ToolResult::error(e),
+        };
         let proposal = EditTextFileProposal {
             edits_applied: args.edits.len(),
             path,
             old_content: original,
             new_content,
         };
-        serde_json::to_value(proposal)
-            .map_err(|e| AgentRigError::Agent(format!("failed to serialize proposal: {e}")))
+        match serde_json::to_value(proposal) {
+            Ok(value) => ToolResult::ok(value),
+            Err(e) => ToolResult::error(format!("failed to serialize proposal: {e}")),
+        }
     }
 
     /// Writes the contents [`propose`](Self::propose) resolved. Receives the
     /// approved [`EditTextFileProposal`] verbatim, so it neither re-reads the file nor
     /// re-applies the edits — what was approved is exactly what is written.
-    async fn apply(
-        &self,
-        proposal: Value,
-        _cancel: CancellationToken,
-    ) -> Result<Value, AgentRigError> {
-        let proposal: EditTextFileProposal = serde_json::from_value(proposal)
-            .map_err(|e| AgentRigError::Agent(format!("invalid edit proposal: {e}")))?;
-        let write_host = self
-            .context
-            .host
-            .write_text_file
-            .as_ref()
-            .ok_or(AgentRigError::Agent("Capability unavailable".to_string()))?;
-        write_host
+    async fn apply(&self, proposal: Value, _cancel: CancellationToken) -> ToolResult {
+        let proposal: EditTextFileProposal = match serde_json::from_value(proposal) {
+            Ok(proposal) => proposal,
+            Err(e) => return ToolResult::error(format!("invalid edit proposal: {e}")),
+        };
+        let Some(write_host) = self.context.host.write_text_file.as_ref() else {
+            return ToolResult::error("Capability unavailable");
+        };
+        if let Err(e) = write_host
             .write_text_file(&proposal.path, &proposal.new_content)
             .await
-            .map_err(|e| {
-                AgentRigError::Agent(format!(
-                    "Failed to write '{}': {}",
-                    proposal.path.display(),
-                    e
-                ))
-            })?;
+        {
+            return ToolResult::error(format!(
+                "Failed to write '{}': {}",
+                proposal.path.display(),
+                e
+            ));
+        }
         let output = EditTextFileOutput {
             edits_applied: proposal.edits_applied,
         };
-        serde_json::to_value(output)
-            .map_err(|e| AgentRigError::Agent(format!("failed to serialize tool result: {e}")))
+        match serde_json::to_value(output) {
+            Ok(value) => ToolResult::ok(value),
+            Err(e) => ToolResult::error(format!("failed to serialize tool result: {e}")),
+        }
     }
 }
 
@@ -291,7 +287,7 @@ mod tests {
     async fn run(
         tool: &EditTextFile,
         args: EditTextFileParams,
-    ) -> Result<EditTextFileOutput, AgentRigError> {
+    ) -> Result<EditTextFileOutput, Value> {
         // Editing requires the file to have been read first; grant that here so
         // these tests exercise the edit logic, not the read-before-edit guard.
         tool.context
@@ -300,9 +296,14 @@ mod tests {
             .unwrap()
             .insert(args.path.clone());
         let args = serde_json::to_value(args).unwrap();
-        let proposal = tool.propose(&args, CancellationToken::new()).await?;
-        let output = tool.apply(proposal, CancellationToken::new()).await?;
-        Ok(serde_json::from_value(output).unwrap())
+        let proposal = match tool.propose(&args, CancellationToken::new()).await {
+            ToolResult::Ok(proposal) => proposal,
+            ToolResult::Err(error) => return Err(error),
+        };
+        match tool.apply(proposal, CancellationToken::new()).await {
+            ToolResult::Ok(value) => Ok(serde_json::from_value(value).unwrap()),
+            ToolResult::Err(error) => Err(error),
+        }
     }
 
     /// Serves file contents from an in-memory map and captures the single
@@ -514,13 +515,16 @@ mod tests {
             .lock()
             .unwrap()
             .insert(args.path.clone());
-        let value = tool
+        let value = match tool
             .propose(
                 &serde_json::to_value(args).unwrap(),
                 CancellationToken::new(),
             )
             .await
-            .unwrap();
+        {
+            ToolResult::Ok(value) => value,
+            ToolResult::Err(error) => panic!("propose should succeed, got error: {error}"),
+        };
         let proposal =
             EditTextFileProposal::from_proposal(&value).expect("proposal describes a file edit");
         assert_eq!(proposal.path, PathBuf::from("/f.txt"));
@@ -537,13 +541,16 @@ mod tests {
         };
         // The path holds no read grant, so propose must refuse before touching
         // the file, and nothing is written.
-        let err = tool
+        let err = match tool
             .propose(
                 &serde_json::to_value(args).unwrap(),
                 CancellationToken::new(),
             )
             .await
-            .unwrap_err();
+        {
+            ToolResult::Err(error) => error,
+            ToolResult::Ok(value) => panic!("propose should refuse, got: {value}"),
+        };
         assert!(err.to_string().contains("must be read"));
         assert!(host.written.lock().unwrap().is_none());
     }
@@ -555,7 +562,7 @@ mod tests {
             path: PathBuf::from("/f.txt"),
             edits: Vec::new(),
         };
-        let title = tool.title(&serde_json::to_value(args).unwrap()).unwrap();
+        let title = tool.title(&serde_json::to_value(args).unwrap());
         assert_eq!(title, "Edit /f.txt");
     }
 }

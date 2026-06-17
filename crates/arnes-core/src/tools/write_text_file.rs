@@ -6,8 +6,7 @@ use std::path::PathBuf;
 use crate::{ToolContext, ToolKind};
 
 use super::Tool;
-use agent_rig::error::Error as AgentRigError;
-use agent_rig::tools::{Tool as RigTool, ToolDefinition};
+use agent_rig::tools::{Tool as RigTool, ToolDefinition, ToolResult};
 use async_trait::async_trait;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -56,13 +55,15 @@ impl RigTool for WriteTextFile {
         &self.definition
     }
 
-    fn title(&self, args: &Value) -> Result<String, AgentRigError> {
-        let args: WriteTextFileParams = serde_json::from_value(args.clone())
-            .map_err(|e| AgentRigError::Agent(format!("invalid tool arguments: {e}")))?;
-        Ok(match args.path.to_str() {
-            Some(path) => format!("Write {}", path),
-            None => "Write".to_string(),
-        })
+    fn title(&self, args: &Value) -> String {
+        match serde_json::from_value::<WriteTextFileParams>(args.clone()) {
+            Ok(args) => match args.path.to_str() {
+                Some(path) => format!("Write {}", path),
+                None => "Write".to_string(),
+            },
+            // Unparseable args: fall back to the tool name.
+            Err(_) => NAME.to_string(),
+        }
     }
 
     fn requires_approval(&self, _args: &Value) -> bool {
@@ -71,19 +72,14 @@ impl RigTool for WriteTextFile {
 
     // `propose` is left as the default — the proposal is the raw args — so
     // `apply` decodes straight into `WriteTextFileParams`.
-    async fn apply(
-        &self,
-        proposal: Value,
-        _cancel: CancellationToken,
-    ) -> Result<Value, AgentRigError> {
-        let args: WriteTextFileParams = serde_json::from_value(proposal)
-            .map_err(|e| AgentRigError::Agent(format!("invalid tool arguments: {e}")))?;
-        let host = self
-            .context
-            .host
-            .write_text_file
-            .as_ref()
-            .ok_or(AgentRigError::Agent("Capability unavailable".to_string()))?;
+    async fn apply(&self, proposal: Value, _cancel: CancellationToken) -> ToolResult {
+        let args: WriteTextFileParams = match serde_json::from_value(proposal) {
+            Ok(args) => args,
+            Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
+        };
+        let Some(host) = self.context.host.write_text_file.as_ref() else {
+            return ToolResult::error("Capability unavailable");
+        };
         let path = if args.path.is_relative() {
             self.context.cwd.join(&args.path)
         } else {
@@ -102,8 +98,10 @@ impl RigTool for WriteTextFile {
                 error: Some(format!("Failed to write '{}': {}", path.display(), e)),
             },
         };
-        serde_json::to_value(output)
-            .map_err(|e| AgentRigError::Agent(format!("failed to serialize tool result: {e}")))
+        match serde_json::to_value(output) {
+            Ok(value) => ToolResult::ok(value),
+            Err(e) => ToolResult::error(format!("failed to serialize tool result: {e}")),
+        }
     }
 }
 
@@ -142,10 +140,12 @@ mod tests {
     async fn run(
         tool: &WriteTextFile,
         args: WriteTextFileParams,
-    ) -> Result<WriteTextFileOutput, AgentRigError> {
+    ) -> Result<WriteTextFileOutput, Value> {
         let proposal = serde_json::to_value(args).unwrap();
-        let output = tool.apply(proposal, CancellationToken::new()).await?;
-        Ok(serde_json::from_value(output).unwrap())
+        match tool.apply(proposal, CancellationToken::new()).await {
+            ToolResult::Ok(value) => Ok(serde_json::from_value(value).unwrap()),
+            ToolResult::Err(error) => Err(error),
+        }
     }
 
     struct CapturingHost {
@@ -271,7 +271,7 @@ mod tests {
             path: PathBuf::from("/output.txt"),
             content: String::new(),
         };
-        let title = tool.title(&serde_json::to_value(args).unwrap()).unwrap();
+        let title = tool.title(&serde_json::to_value(args).unwrap());
         assert_eq!(title, "Write /output.txt");
     }
 
