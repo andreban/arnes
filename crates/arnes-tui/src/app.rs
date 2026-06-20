@@ -19,6 +19,7 @@ use ratatui::{
 use similar::{ChangeTag, TextDiff};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 
 use crate::frontend::UiCommand;
 
@@ -160,6 +161,9 @@ impl AppState {
                     args: summarize_json(&args),
                     outcome: None,
                 });
+            }
+            EventKind::ToolCallUpdated(update) => {
+                debug!(?update, "EventKind::ToolCallUpdated");
             }
             EventKind::ToolCallFinished { id, name, outcome } => {
                 let rendered = render_outcome(outcome);

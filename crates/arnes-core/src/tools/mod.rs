@@ -10,7 +10,7 @@ pub use edit_text_file::{EditTextFile, EditTextFileProposal};
 pub use read_text_file::ReadTextFile;
 pub use write_text_file::WriteTextFile;
 
-use crate::{PermissionRequest, ToolCallOutcome};
+use crate::{PermissionRequest, ToolCallOutcome, frontend::ToolCallUpdate};
 
 #[allow(clippy::enum_variant_names)]
 pub enum Tool {
@@ -39,14 +39,17 @@ impl ToolRegistry {
         self.tools.insert(tool.name().to_string(), tool);
     }
 
-    pub async fn call<F, Fut>(
+    pub async fn call<P, PFut, U, UFut>(
         &self,
         req: &ToolCallRequest,
-        request_permission: F,
+        request_permission: P,
+        update_toolcall: U,
     ) -> ToolCallOutcome
     where
-        F: Fn(PermissionRequest) -> Fut,
-        Fut: Future<Output = bool>,
+        P: Fn(PermissionRequest) -> PFut,
+        PFut: Future<Output = bool>,
+        U: Fn(ToolCallUpdate) -> UFut,
+        UFut: Future<Output = ()>,
     {
         let Some(tool) = self.tools.get(&req.tool_name) else {
             return ToolCallOutcome::Unknown;
@@ -58,6 +61,7 @@ impl ToolRegistry {
                     req.args.clone(),
                     req.tool_call_id.clone(),
                     request_permission,
+                    update_toolcall,
                     req.cancellation_token.clone(),
                 )
                 .await
@@ -67,6 +71,7 @@ impl ToolRegistry {
                     req.args.clone(),
                     req.tool_call_id.clone(),
                     request_permission,
+                    update_toolcall,
                     req.cancellation_token.clone(),
                 )
                 .await
@@ -76,6 +81,7 @@ impl ToolRegistry {
                     req.args.clone(),
                     req.tool_call_id.clone(),
                     request_permission,
+                    update_toolcall,
                     req.cancellation_token.clone(),
                 )
                 .await

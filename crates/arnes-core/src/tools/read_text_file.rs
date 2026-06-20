@@ -3,7 +3,9 @@
 
 use std::path::PathBuf;
 
-use crate::{PermissionRequest, ToolContext, ToolKind, helpers::normalize_path};
+use crate::{
+    PermissionRequest, ToolContext, ToolKind, frontend::ToolCallUpdate, helpers::normalize_path,
+};
 
 use agent_rig::tools::{ToolDefinition, ToolResult};
 use schemars::{JsonSchema, schema_for};
@@ -53,17 +55,33 @@ impl ReadTextFile {
         &self.definition
     }
 
-    pub async fn call<F, Fut>(
+    pub async fn call<F, Fut, U, UFut>(
         &self,
         args: Value,
         tool_call_id: String,
         request_permission: F,
+        update_toolcall: U,
         _cancel: CancellationToken,
     ) -> ToolResult
     where
         F: Fn(PermissionRequest) -> Fut,
         Fut: Future<Output = bool>,
+        U: Fn(ToolCallUpdate) -> UFut,
+        UFut: Future<Output = ()>,
     {
+        let read_text_file_params: ReadTextFileParams = match serde_json::from_value(args.clone()) {
+            Ok(args) => args,
+            Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
+        };
+        let title = format!("Reading file {}", &read_text_file_params.path.display());
+        update_toolcall(ToolCallUpdate {
+            tool_call_id: tool_call_id.clone(),
+            tool_name: NAME.to_string(),
+            args: args.clone(),
+            title,
+        })
+        .await;
+
         let request = PermissionRequest {
             tool_call_id,
             tool_name: NAME.to_string(),
@@ -75,23 +93,25 @@ impl ReadTextFile {
             return ToolResult::error("User rejected tool call");
         }
 
-        let args: ReadTextFileParams = match serde_json::from_value(args) {
-            Ok(args) => args,
-            Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
-        };
-
         if let Ok(mut read_grants) = self.context.read_grants.lock() {
-            read_grants.insert(args.path.clone());
+            read_grants.insert(read_text_file_params.path.clone());
         }
 
         let Some(host) = self.context.host.read_text_file.as_ref() else {
             return ToolResult::error("Capability unavailable");
         };
-        let path = normalize_path(&self.context.cwd, &args.path);
+        let path = normalize_path(&self.context.cwd, &read_text_file_params.path);
         // Always return Ok so the model receives a valid JSON object.
         // (Gemini requires FunctionResponse.response to be an object; a bare
         // string causes an empty/null candidate and a silent non-response.)
-        let output = match host.read_text_file(&path, args.line, args.limit).await {
+        let output = match host
+            .read_text_file(
+                &path,
+                read_text_file_params.line,
+                read_text_file_params.limit,
+            )
+            .await
+        {
             Ok(content) => ReadTextFileOutput {
                 content: Some(content),
                 error: None,

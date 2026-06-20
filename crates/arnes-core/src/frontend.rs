@@ -38,6 +38,7 @@ pub enum EventKind {
     Error {
         message: String,
     },
+    ToolCallUpdated(ToolCallUpdate),
     ToolCallStarted {
         id: String,
         name: String,
@@ -49,6 +50,14 @@ pub enum EventKind {
         name: String,
         outcome: ToolCallOutcome,
     },
+}
+
+#[derive(Clone, Debug)]
+pub struct ToolCallUpdate {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub args: Value,
+    pub title: String,
 }
 
 #[derive(Clone, Debug)]

@@ -3,7 +3,9 @@
 
 use std::path::PathBuf;
 
-use crate::{PermissionRequest, ToolContext, ToolKind, helpers::normalize_path};
+use crate::{
+    PermissionRequest, ToolContext, ToolKind, frontend::ToolCallUpdate, helpers::normalize_path,
+};
 
 use agent_rig::tools::{ToolDefinition, ToolResult};
 use schemars::{JsonSchema, schema_for};
@@ -50,17 +52,34 @@ impl WriteTextFile {
         &self.definition
     }
 
-    pub async fn call<F, Fut>(
+    pub async fn call<F, Fut, U, UFut>(
         &self,
         args: Value,
         tool_call_id: String,
         request_permission: F,
+        update_toolcall: U,
         _cancel: CancellationToken,
     ) -> ToolResult
     where
         F: Fn(PermissionRequest) -> Fut,
         Fut: Future<Output = bool>,
+        U: Fn(ToolCallUpdate) -> UFut,
+        UFut: Future<Output = ()>,
     {
+        let write_text_file_params: WriteTextFileParams = match serde_json::from_value(args.clone())
+        {
+            Ok(args) => args,
+            Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
+        };
+        let title = format!("Writing file {}", &write_text_file_params.path.display());
+        update_toolcall(ToolCallUpdate {
+            tool_call_id: tool_call_id.clone(),
+            tool_name: NAME.to_string(),
+            args: args.clone(),
+            title,
+        })
+        .await;
+
         let request = PermissionRequest {
             tool_call_id,
             tool_name: NAME.to_string(),
@@ -71,18 +90,17 @@ impl WriteTextFile {
         if !request_permission(request).await {
             return ToolResult::error("User rejected tool call");
         }
-        let args: WriteTextFileParams = match serde_json::from_value(args) {
-            Ok(args) => args,
-            Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
-        };
         let Some(host) = self.context.host.write_text_file.as_ref() else {
             return ToolResult::error("Capability unavailable");
         };
-        let path = normalize_path(&self.context.cwd, &args.path);
+        let path = normalize_path(&self.context.cwd, &write_text_file_params.path);
         // Always return Ok so the model receives a valid JSON object.
         // (Gemini requires FunctionResponse.response to be an object; a bare
         // string causes an empty/null candidate and a silent non-response.)
-        let output = match host.write_text_file(&path, &args.content).await {
+        let output = match host
+            .write_text_file(&path, &write_text_file_params.content)
+            .await
+        {
             Ok(()) => WriteTextFileOutput {
                 written: true,
                 error: None,
