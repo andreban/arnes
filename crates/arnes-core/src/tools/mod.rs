@@ -5,13 +5,12 @@ mod write_text_file;
 use std::collections::HashMap;
 
 use agent_rig::tools::{ToolCallRequest, ToolResult};
-use serde_json::Value;
 
 pub use edit_text_file::{EditTextFile, EditTextFileProposal};
 pub use read_text_file::ReadTextFile;
 pub use write_text_file::WriteTextFile;
 
-use crate::ToolCallOutcome;
+use crate::{PermissionRequest, ToolCallOutcome};
 
 #[allow(clippy::enum_variant_names)]
 pub enum Tool {
@@ -46,7 +45,7 @@ impl ToolRegistry {
         request_permission: F,
     ) -> ToolCallOutcome
     where
-        F: Fn(&Value) -> Fut,
+        F: Fn(PermissionRequest) -> Fut,
         Fut: Future<Output = bool>,
     {
         let Some(tool) = self.tools.get(&req.tool_name) else {
@@ -57,6 +56,7 @@ impl ToolRegistry {
             Tool::ReadTextFile(tool) => {
                 tool.call(
                     req.args.clone(),
+                    req.tool_call_id.clone(),
                     request_permission,
                     req.cancellation_token.clone(),
                 )
@@ -65,6 +65,7 @@ impl ToolRegistry {
             Tool::WriteTextFile(tool) => {
                 tool.call(
                     req.args.clone(),
+                    req.tool_call_id.clone(),
                     request_permission,
                     req.cancellation_token.clone(),
                 )
@@ -73,6 +74,7 @@ impl ToolRegistry {
             Tool::EditTextFile(tool) => {
                 tool.call(
                     req.args.clone(),
+                    req.tool_call_id.clone(),
                     request_permission,
                     req.cancellation_token.clone(),
                 )

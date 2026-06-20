@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use crate::{ToolContext, helpers::normalize_path};
+use crate::{PermissionRequest, ToolContext, ToolKind, helpers::normalize_path};
 
 use agent_rig::tools::{ToolDefinition, ToolResult};
 use schemars::{JsonSchema, schema_for};
@@ -140,11 +140,12 @@ impl EditTextFile {
     pub async fn call<F, Fut>(
         &self,
         args: Value,
+        tool_call_id: String,
         request_permission: F,
         _cancel: CancellationToken,
     ) -> ToolResult
     where
-        F: Fn(&Value) -> Fut,
+        F: Fn(PermissionRequest) -> Fut,
         Fut: Future<Output = bool>,
     {
         let (Some(read_host), Some(write_host)) = (
@@ -154,24 +155,24 @@ impl EditTextFile {
             return ToolResult::error("Capability unavailable");
         };
 
-        let args: EditTextFileParams = match serde_json::from_value(args.clone()) {
-            Ok(args) => args,
+        let params: EditTextFileParams = match serde_json::from_value(args.clone()) {
+            Ok(params) => params,
             Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
         };
 
         match self.context.read_grants.lock() {
             Ok(grants) => {
-                if !grants.contains(&args.path) {
+                if !grants.contains(&params.path) {
                     return ToolResult::error(format!(
                         "File {} must be read before it can be edited",
-                        args.path.to_string_lossy()
+                        params.path.to_string_lossy()
                     ));
                 }
             }
             Err(e) => return ToolResult::error(format!("Error reading grants: {e}")),
         }
 
-        let path = normalize_path(&self.context.cwd, &args.path);
+        let path = normalize_path(&self.context.cwd, &params.path);
 
         let original = match read_host.read_text_file(&path, None, None).await {
             Ok(original) => original,
@@ -179,19 +180,26 @@ impl EditTextFile {
                 return ToolResult::error(format!("Failed to read '{}': {}", path.display(), e));
             }
         };
-        let new_content = match Self::apply_edits(&original, &args.edits) {
+        let new_content = match Self::apply_edits(&original, &params.edits) {
             Ok(new_content) => new_content,
             Err(e) => return ToolResult::error(e),
         };
 
         let proposal = EditTextFileProposal {
-            edits_applied: args.edits.len(),
+            edits_applied: params.edits.len(),
             path,
             old_content: original,
             new_content,
         };
 
-        if !request_permission(&(&proposal).into()).await {
+        let request = PermissionRequest {
+            tool_call_id,
+            tool_name: NAME.to_string(),
+            args,
+            kind: ToolKind::Edit,
+            proposal: (&proposal).into(),
+        };
+        if !request_permission(request).await {
             return ToolResult::error("User rejected tool call");
         }
 
