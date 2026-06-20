@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use crate::{ToolContext, helpers::normalize_path};
+use crate::{PermissionRequest, ToolContext, ToolKind, helpers::normalize_path};
 
 use agent_rig::tools::{ToolDefinition, ToolResult};
 use schemars::{JsonSchema, schema_for};
@@ -53,14 +53,22 @@ impl WriteTextFile {
     pub async fn call<F, Fut>(
         &self,
         args: Value,
+        tool_call_id: String,
         request_permission: F,
         _cancel: CancellationToken,
     ) -> ToolResult
     where
-        F: Fn(&Value) -> Fut,
+        F: Fn(PermissionRequest) -> Fut,
         Fut: Future<Output = bool>,
     {
-        if !request_permission(&args).await {
+        let request = PermissionRequest {
+            tool_call_id,
+            tool_name: NAME.to_string(),
+            args: args.clone(),
+            kind: ToolKind::Other,
+            proposal: args.clone(),
+        };
+        if !request_permission(request).await {
             return ToolResult::error("User rejected tool call");
         }
         let args: WriteTextFileParams = match serde_json::from_value(args) {

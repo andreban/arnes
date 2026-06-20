@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     AgentId, ContentBlock, CoreError, EventKind, Frontend, Message, Permission, PermissionRequest,
-    Result, StopReason, TokenCounts, ToolCallOutcome, ToolKind, TurnUsage,
+    Result, StopReason, TokenCounts, ToolCallOutcome, TurnUsage,
 };
 
 use super::Session;
@@ -128,26 +128,11 @@ impl<F: Frontend> Session<F> {
     /// flow that agent-rig used to drive internally. The returned outcome is
     /// what the caller reports as finished and hands back to the runner.
     async fn resolve_tool_call(&self, req: &ToolCallRequest) -> ToolCallOutcome {
-        let kind = match req.tool_name.as_str() {
-            "read_text_file" => ToolKind::Read,
-            "write_text_file" => ToolKind::Other,
-            "edit_text_file" => ToolKind::Edit,
-            _ => ToolKind::Other,
-        };
-        let request_permission = |args: &Value| {
-            let request = PermissionRequest {
-                tool_call_id: req.tool_call_id.clone(),
-                tool_name: req.tool_name.clone(),
-                args: req.args.clone(),
-                kind,
-                proposal: args.clone(),
-            };
-            async move {
-                matches!(
-                    self.frontend.request_permission(request).await,
-                    Permission::AllowOnce
-                )
-            }
+        let request_permission = |request: PermissionRequest| async move {
+            matches!(
+                self.frontend.request_permission(request).await,
+                Permission::AllowOnce
+            )
         };
 
         self.tool_registry.call(req, request_permission).await
