@@ -15,7 +15,7 @@ mod tools;
 pub use error::{CoreError, Result};
 pub use frontend::{
     EventKind, FilesystemCapabilities, Frontend, FrontendCapabilities, Permission,
-    PermissionRequest, SessionEvent, StopReason, ToolCallOutcome, ToolKind,
+    PermissionRequest, StopReason, ToolCallOutcome, ToolKind,
 };
 pub use host::{
     Host, ReadTextFile, Terminal, TerminalHandle, TerminalSnapshot, TerminalSpec, WriteTextFile,

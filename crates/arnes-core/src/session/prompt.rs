@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     AgentId, ContentBlock, CoreError, EventKind, Frontend, Message, Permission, PermissionRequest,
-    Result, SessionEvent, StopReason, TokenCounts, ToolCallOutcome, ToolKind, TurnUsage,
+    Result, StopReason, TokenCounts, ToolCallOutcome, ToolKind, TurnUsage,
 };
 
 use super::Session;
@@ -36,7 +36,7 @@ impl<F: Frontend> Session<F> {
 
         let mut thread = self.rig_thread.clone();
         thread.push(agent_rig::model::Message::user(&input));
-        self.frontend.on_event(mk_event(EventKind::TurnStart)).await;
+        self.frontend.on_event(EventKind::TurnStart).await;
 
         let mut stream = self
             .runner
@@ -50,13 +50,13 @@ impl<F: Frontend> Session<F> {
             match ev.agent_event {
                 AgentEvent::TextDelta(text) => {
                     self.frontend
-                        .on_event(mk_event(EventKind::TextDelta { text: text.clone() }))
+                        .on_event(EventKind::TextDelta { text: text.clone() })
                         .await;
                     append_block(&mut blocks, text, false);
                 }
                 AgentEvent::ThinkingDelta(text) => {
                     self.frontend
-                        .on_event(mk_event(EventKind::ThinkingDelta { text: text.clone() }))
+                        .on_event(EventKind::ThinkingDelta { text: text.clone() })
                         .await;
                     append_block(&mut blocks, text, true);
                 }
@@ -72,30 +72,30 @@ impl<F: Frontend> Session<F> {
                 AgentEvent::Error(e) => {
                     tracing::error!(error = %e, "prompt: agent error");
                     self.frontend
-                        .on_event(mk_event(EventKind::Error {
+                        .on_event(EventKind::Error {
                             message: e.to_string(),
-                        }))
+                        })
                         .await;
                     return Err(CoreError::Session(e.to_string()));
                 }
                 AgentEvent::ToolCall(req) => {
                     tracing::debug!(tool = %req.tool_name, "prompt: tool call");
                     self.frontend
-                        .on_event(mk_event(EventKind::ToolCallStarted {
+                        .on_event(EventKind::ToolCallStarted {
                             id: req.tool_call_id.clone(),
                             name: req.tool_name.clone(),
                             args: req.args.clone(),
                             title: req.tool_name.clone(),
-                        }))
+                        })
                         .await;
                     let outcome = self.resolve_tool_call(&req).await;
                     tracing::debug!(tool = %req.tool_name, outcome = ?outcome, "prompt: tool call finished");
                     self.frontend
-                        .on_event(mk_event(EventKind::ToolCallFinished {
+                        .on_event(EventKind::ToolCallFinished {
                             id: req.tool_call_id.clone(),
                             name: req.tool_name.clone(),
                             outcome: outcome.clone(),
-                        }))
+                        })
                         .await;
                     req.resolve(outcome);
                 }
@@ -118,7 +118,7 @@ impl<F: Frontend> Session<F> {
         self.history.push(Message::Assistant { content: blocks });
         tracing::debug!(stop_reason = ?stop_reason, "prompt: emitting TurnEnd");
         self.frontend
-            .on_event(mk_event(EventKind::TurnEnd { stop_reason, usage }))
+            .on_event(EventKind::TurnEnd { stop_reason, usage })
             .await;
         Ok(())
     }
@@ -151,14 +151,6 @@ impl<F: Frontend> Session<F> {
         };
 
         self.tool_registry.call(req, request_permission).await
-    }
-}
-
-fn mk_event(kind: EventKind) -> SessionEvent {
-    SessionEvent {
-        agent_id: AgentId::Root,
-        depth: 0,
-        kind,
     }
 }
 

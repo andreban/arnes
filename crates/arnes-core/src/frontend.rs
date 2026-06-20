@@ -6,12 +6,12 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::{AgentId, TurnUsage};
+use crate::TurnUsage;
 
 /// Implemented by every UI adapter.
 #[async_trait]
 pub trait Frontend: Send + Sync + 'static {
-    async fn on_event(&self, event: SessionEvent);
+    async fn on_event(&self, event: EventKind);
     async fn request_permission(&self, req: PermissionRequest) -> Permission;
     fn capabilities(&self) -> FrontendCapabilities {
         FrontendCapabilities {
@@ -21,13 +21,6 @@ pub trait Frontend: Send + Sync + 'static {
 }
 
 /// One event from the session loop.
-#[derive(Clone, Debug)]
-pub struct SessionEvent {
-    pub agent_id: AgentId,
-    pub depth: u8,
-    pub kind: EventKind,
-}
-
 #[derive(Clone, Debug)]
 pub enum EventKind {
     TurnStart,

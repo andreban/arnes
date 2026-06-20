@@ -40,14 +40,14 @@ async fn read_tool_roundtrip() {
 
     let events = frontend.events();
 
-    let started = events.iter().any(
-        |e| matches!(&e.kind, EventKind::ToolCallStarted { name, .. } if name == "read_text_file"),
-    );
+    let started = events
+        .iter()
+        .any(|e| matches!(e, EventKind::ToolCallStarted { name, .. } if name == "read_text_file"));
     assert!(started, "expected a ToolCallStarted for read_text_file");
 
     let finished_ok = events.iter().any(|e| {
         matches!(
-            &e.kind,
+            e,
             EventKind::ToolCallFinished { name, outcome: ToolCallOutcome::Ok(_), .. }
                 if name == "read_text_file"
         )
@@ -57,7 +57,7 @@ async fn read_tool_roundtrip() {
         "expected a successful ToolCallFinished for read_text_file"
     );
 
-    let last_text = events.iter().rev().find_map(|e| match &e.kind {
+    let last_text = events.iter().rev().find_map(|e| match e {
         EventKind::TextDelta { text } => Some(text.clone()),
         _ => None,
     });
@@ -69,7 +69,7 @@ async fn read_tool_roundtrip() {
 
     assert!(
         matches!(
-            events.last().unwrap().kind,
+            events.last().unwrap(),
             EventKind::TurnEnd {
                 stop_reason: StopReason::EndTurn,
                 ..
@@ -113,14 +113,14 @@ async fn edit_tool_roundtrip() {
 
     let events = frontend.events();
 
-    let started = events.iter().any(
-        |e| matches!(&e.kind, EventKind::ToolCallStarted { name, .. } if name == "edit_text_file"),
-    );
+    let started = events
+        .iter()
+        .any(|e| matches!(e, EventKind::ToolCallStarted { name, .. } if name == "edit_text_file"));
     assert!(started, "expected a ToolCallStarted for edit_text_file");
 
     let finished_ok = events.iter().any(|e| {
         matches!(
-            &e.kind,
+            e,
             EventKind::ToolCallFinished { name, outcome: ToolCallOutcome::Ok(_), .. }
                 if name == "edit_text_file"
         )
@@ -138,7 +138,7 @@ async fn edit_tool_roundtrip() {
 
     assert!(
         matches!(
-            events.last().unwrap().kind,
+            events.last().unwrap(),
             EventKind::TurnEnd {
                 stop_reason: StopReason::EndTurn,
                 ..
@@ -173,14 +173,14 @@ async fn write_tool_roundtrip() {
 
     let events = frontend.events();
 
-    let started = events.iter().any(
-        |e| matches!(&e.kind, EventKind::ToolCallStarted { name, .. } if name == "write_text_file"),
-    );
+    let started = events
+        .iter()
+        .any(|e| matches!(e, EventKind::ToolCallStarted { name, .. } if name == "write_text_file"));
     assert!(started, "expected a ToolCallStarted for write_text_file");
 
     let finished_ok = events.iter().any(|e| {
         matches!(
-            &e.kind,
+            e,
             EventKind::ToolCallFinished { name, outcome: ToolCallOutcome::Ok(_), .. }
                 if name == "write_text_file"
         )
@@ -198,7 +198,7 @@ async fn write_tool_roundtrip() {
 
     assert!(
         matches!(
-            events.last().unwrap().kind,
+            events.last().unwrap(),
             EventKind::TurnEnd {
                 stop_reason: StopReason::EndTurn,
                 ..
