@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -11,12 +11,12 @@ use agent_rig::{
     Agent,
     model::{LlmModel, Message as RigMessage},
     runner::AgentRunner,
-    tools::{Tool as RigTool, ToolRegistry},
+    tools::ToolDefinition,
 };
 
 use crate::{
-    AgentId, CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext, ToolKind,
-    tools::{EditTextFile, ReadTextFile, Tool, WriteTextFile},
+    AgentId, CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext,
+    tools::{EditTextFile, ReadTextFile, Tool, ToolRegistry, WriteTextFile},
 };
 
 mod prompt;
@@ -24,8 +24,6 @@ mod prompt;
 /// The single entry point a frontend talks to.
 pub struct Session<F: Frontend> {
     pub(super) frontend: Arc<F>,
-    #[allow(dead_code)]
-    pub(super) host: Host,
     pub(super) runner: AgentRunner,
     pub(super) agent: Agent,
     pub(super) history: Vec<Message>,
@@ -35,10 +33,7 @@ pub struct Session<F: Frontend> {
     pub(super) cumulative_usage: CumulativeUsage,
     pub(super) model: ModelKey,
     pub(super) cwd: PathBuf,
-    /// The tool implementations arnes resolves each call against — propose,
-    /// approval, then apply.
-    tools: Arc<ToolRegistry>,
-    tool_metadata: HashMap<String, ToolKind>,
+    tool_registry: ToolRegistry,
 }
 
 impl<F: Frontend> Session<F> {
@@ -49,9 +44,9 @@ impl<F: Frontend> Session<F> {
         model: ModelKey,
         cwd: PathBuf,
     ) -> Self {
-        let mut tool_registry = ToolRegistry::new();
         let mut tool_guidelines: Vec<String> = Vec::new();
-        let mut tool_metadata: HashMap<String, ToolKind> = HashMap::new();
+        let mut tool_definitions: Vec<ToolDefinition> = vec![];
+        let mut tool_registry = ToolRegistry::default();
         let tool_context = ToolContext {
             host: host.clone(),
             progress: None,
@@ -62,25 +57,23 @@ impl<F: Frontend> Session<F> {
 
         if host.read_text_file.is_some() {
             let tool = ReadTextFile::new(tool_context.clone());
+            tool_definitions.push(tool.definition().clone());
             tool_guidelines.push(tool.prompt_guidelines().to_string());
-            tool_metadata.insert(tool.definition().name.clone(), tool.tool_kind());
-            tool_registry = tool_registry.register(tool);
-        }
+            tool_registry.register(Tool::ReadTextFile(tool));
+        };
 
         if host.write_text_file.is_some() {
             let tool = WriteTextFile::new(tool_context.clone());
+            tool_definitions.push(tool.definition().clone());
             tool_guidelines.push(tool.prompt_guidelines().to_string());
-            tool_metadata.insert(tool.definition().name.clone(), tool.tool_kind());
-            tool_registry = tool_registry.register(tool);
-        }
+            tool_registry.register(Tool::WriteTextFile(tool));
+        };
 
-        // `edit_text_file` composes the read and write capabilities, so it is only
-        // available when the host provides both.
         if host.read_text_file.is_some() && host.write_text_file.is_some() {
             let tool = EditTextFile::new(tool_context.clone());
+            tool_definitions.push(tool.definition().clone());
             tool_guidelines.push(tool.prompt_guidelines().to_string());
-            tool_metadata.insert(tool.definition().name.clone(), tool.tool_kind());
-            tool_registry = tool_registry.register(tool);
+            tool_registry.register(Tool::EditTextFile(tool));
         }
 
         let mut instructions = String::from("You are a helpful assistant.");
@@ -94,12 +87,10 @@ impl<F: Frontend> Session<F> {
             .instructions(&instructions)
             .build();
 
-        let tools = Arc::new(tool_registry);
-        let runner = AgentRunner::with_tools(llm, tools.definitions());
+        let runner = AgentRunner::with_tools(llm, tool_definitions);
 
         Self {
             frontend,
-            host,
             runner,
             agent,
             history: Vec::new(),
@@ -107,8 +98,7 @@ impl<F: Frontend> Session<F> {
             cumulative_usage: CumulativeUsage::default(),
             model,
             cwd,
-            tools,
-            tool_metadata,
+            tool_registry,
         }
     }
 

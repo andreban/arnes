@@ -1,18 +1,14 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-use agent_rig::{
-    model::TokenUsage,
-    runner::AgentEvent,
-    tools::{ToolCallRequest, ToolRegistry},
-};
+use agent_rig::{model::TokenUsage, runner::AgentEvent, tools::ToolCallRequest};
 use futures_util::StreamExt;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     AgentId, ContentBlock, CoreError, EventKind, Frontend, Message, Permission, PermissionRequest,
-    Result, SessionEvent, StopReason, TokenCounts, ToolCallOutcome, TurnUsage,
+    Result, SessionEvent, StopReason, TokenCounts, ToolCallOutcome, ToolKind, TurnUsage,
 };
 
 use super::Session;
@@ -45,11 +41,6 @@ impl<F: Frontend> Session<F> {
         let mut stream = self
             .runner
             .run_with_cancellation(&self.agent, thread, cancel);
-
-        // The runner now only announces tool calls; arnes resolves them against
-        // its own registry. Clone the `Arc` so the borrows below are
-        // independent of `&self`.
-        let registry = self.tools.clone();
 
         let mut blocks: Vec<ContentBlock> = Vec::new();
         let mut tokens = TokenCounts::default();
@@ -89,7 +80,15 @@ impl<F: Frontend> Session<F> {
                 }
                 AgentEvent::ToolCall(req) => {
                     tracing::debug!(tool = %req.tool_name, "prompt: tool call");
-                    let outcome = self.resolve_tool_call(&registry, &req).await;
+                    self.frontend
+                        .on_event(mk_event(EventKind::ToolCallStarted {
+                            id: req.tool_call_id.clone(),
+                            name: req.tool_name.clone(),
+                            args: req.args.clone(),
+                            title: req.tool_name.clone(),
+                        }))
+                        .await;
+                    let outcome = self.resolve_tool_call(&req).await;
                     tracing::debug!(tool = %req.tool_name, outcome = ?outcome, "prompt: tool call finished");
                     self.frontend
                         .on_event(mk_event(EventKind::ToolCallFinished {
@@ -128,66 +127,30 @@ impl<F: Frontend> Session<F> {
     /// [`EventKind::ToolCallStarted`], then runs the propose / approval / apply
     /// flow that agent-rig used to drive internally. The returned outcome is
     /// what the caller reports as finished and hands back to the runner.
-    async fn resolve_tool_call(
-        &self,
-        registry: &ToolRegistry,
-        req: &ToolCallRequest,
-    ) -> ToolCallOutcome {
-        let tool = registry.get(&req.tool_name);
-
-        // A descriptive title for the start event; fall back to the tool name
-        // when the tool is unknown or can't interpret its arguments.
-        let title = tool
-            .and_then(|t| t.title(&req.args).ok())
-            .unwrap_or_else(|| req.tool_name.clone());
-        self.frontend
-            .on_event(mk_event(EventKind::ToolCallStarted {
-                id: req.tool_call_id.clone(),
-                name: req.tool_name.clone(),
-                args: req.args.clone(),
-                title,
-            }))
-            .await;
-
-        let Some(tool) = tool else {
-            return ToolCallOutcome::Unknown;
+    async fn resolve_tool_call(&self, req: &ToolCallRequest) -> ToolCallOutcome {
+        let kind = match req.tool_name.as_str() {
+            "read_text_file" => ToolKind::Read,
+            "write_text_file" => ToolKind::Other,
+            "edit_text_file" => ToolKind::Edit,
+            _ => ToolKind::Other,
         };
-
-        // `propose` is side-effect-free and resolves the raw args into the
-        // value both the approval prompt and `apply` read from.
-        let proposal = match tool
-            .propose(&req.args, req.cancellation_token.clone())
-            .await
-        {
-            Ok(proposal) => proposal,
-            Err(e) => return ToolCallOutcome::Err(e.to_string()),
-        };
-
-        if tool.requires_approval(&req.args) {
-            let kind = self
-                .tool_metadata
-                .get(&req.tool_name)
-                .copied()
-                .unwrap_or_default();
-            let permission = PermissionRequest {
+        let request_permission = |args: &Value| {
+            let request = PermissionRequest {
                 tool_call_id: req.tool_call_id.clone(),
                 tool_name: req.tool_name.clone(),
                 args: req.args.clone(),
                 kind,
-                proposal: proposal.clone(),
+                proposal: args.clone(),
             };
-            if !matches!(
-                self.frontend.request_permission(permission).await,
-                Permission::AllowOnce
-            ) {
-                return ToolCallOutcome::Denied;
+            async move {
+                matches!(
+                    self.frontend.request_permission(request).await,
+                    Permission::AllowOnce
+                )
             }
-        }
+        };
 
-        match tool.apply(proposal, req.cancellation_token.clone()).await {
-            Ok(value) => ToolCallOutcome::Ok(value),
-            Err(e) => ToolCallOutcome::Err(e.to_string()),
-        }
+        self.tool_registry.call(req, request_permission).await
     }
 }
 
