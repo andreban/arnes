@@ -1,7 +1,7 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-use agent_rig::{model::TokenUsage, runner::AgentEvent, tools::ToolCallRequest};
+use agent_rig::{model::TokenUsage, runner::AgentEvent};
 use futures_util::StreamExt;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -88,7 +88,10 @@ impl<F: Frontend> Session<F> {
                             title: req.tool_name.clone(),
                         })
                         .await;
-                    let outcome = self.resolve_tool_call(&req).await;
+                    let outcome = self
+                        .tool_registry
+                        .call(&req, |request| self.request_permission(request))
+                        .await;
                     tracing::debug!(tool = %req.tool_name, outcome = ?outcome, "prompt: tool call finished");
                     self.frontend
                         .on_event(EventKind::ToolCallFinished {
@@ -123,19 +126,13 @@ impl<F: Frontend> Session<F> {
         Ok(())
     }
 
-    /// Resolves one tool call the runner announced: looks the tool up, emits
-    /// [`EventKind::ToolCallStarted`], then runs the propose / approval / apply
-    /// flow that agent-rig used to drive internally. The returned outcome is
-    /// what the caller reports as finished and hands back to the runner.
-    async fn resolve_tool_call(&self, req: &ToolCallRequest) -> ToolCallOutcome {
-        let request_permission = |request: PermissionRequest| async move {
-            matches!(
-                self.frontend.request_permission(request).await,
-                Permission::AllowOnce
-            )
-        };
-
-        self.tool_registry.call(req, request_permission).await
+    /// Asks the frontend to approve a gated tool call, reporting whether it was
+    /// granted.
+    async fn request_permission(&self, request: PermissionRequest) -> bool {
+        matches!(
+            self.frontend.request_permission(request).await,
+            Permission::AllowOnce
+        )
     }
 }
 
