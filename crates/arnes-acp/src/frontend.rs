@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use arnes_core::{
     EditTextFileProposal, EventKind, Frontend, FrontendCapabilities, Permission, PermissionRequest,
-    SessionEvent, ToolCallOutcome,
+    ToolCallOutcome,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -61,8 +61,8 @@ impl AcpFrontend {
 
 #[async_trait]
 impl Frontend for AcpFrontend {
-    async fn on_event(&self, event: SessionEvent) {
-        match event.kind {
+    async fn on_event(&self, event: EventKind) {
+        match event {
             EventKind::TurnStart => {
                 *self.current_message_id.lock().unwrap() = Some(Uuid::now_v7().to_string());
             }

@@ -214,15 +214,15 @@ async fn m2_tool_call_golden() {
     };
 
     // A `tool_call` lifecycle update is emitted for the read, carrying the
-    // tool's descriptive title and the raw arguments the model supplied.
+    // tool's title and the raw arguments the model supplied.
     let tool_call = outbound
         .iter()
         .find(|v| is_session_update(v, "tool_call"))
         .expect("expected a tool_call session/update");
     assert_eq!(
         tool_call["params"]["update"]["title"].as_str(),
-        Some("Read Cargo.toml"),
-        "tool_call update should carry the tool's descriptive title"
+        Some("read_text_file"),
+        "tool_call update should carry the tool's title"
     );
     assert_eq!(
         tool_call["params"]["update"]["rawInput"],

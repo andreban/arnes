@@ -3,11 +3,11 @@
 
 use std::sync::{Arc, Mutex};
 
-use arnes_core::{Frontend, FrontendCapabilities, Permission, PermissionRequest, SessionEvent};
+use arnes_core::{EventKind, Frontend, FrontendCapabilities, Permission, PermissionRequest};
 use async_trait::async_trait;
 
 pub struct RecordingFrontend {
-    events: Mutex<Vec<SessionEvent>>,
+    events: Mutex<Vec<EventKind>>,
 }
 
 impl RecordingFrontend {
@@ -17,14 +17,14 @@ impl RecordingFrontend {
         })
     }
 
-    pub fn events(&self) -> Vec<SessionEvent> {
+    pub fn events(&self) -> Vec<EventKind> {
         self.events.lock().unwrap().clone()
     }
 }
 
 #[async_trait]
 impl Frontend for RecordingFrontend {
-    async fn on_event(&self, event: SessionEvent) {
+    async fn on_event(&self, event: EventKind) {
         self.events.lock().unwrap().push(event);
     }
 

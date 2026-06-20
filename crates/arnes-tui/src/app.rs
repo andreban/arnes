@@ -3,7 +3,7 @@
 
 use std::io;
 
-use arnes_core::{EditTextFileProposal, EventKind, Permission, SessionEvent, ToolCallOutcome};
+use arnes_core::{EditTextFileProposal, EventKind, Permission, ToolCallOutcome};
 use crossterm::event::{
     Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
@@ -129,8 +129,8 @@ impl AppState {
         self.last_transcript_height.saturating_sub(1).max(1)
     }
 
-    fn handle_session_event(&mut self, ev: SessionEvent) {
-        match ev.kind {
+    fn handle_session_event(&mut self, ev: EventKind) {
+        match ev {
             EventKind::TurnStart => {
                 self.is_running = true;
             }

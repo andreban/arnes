@@ -31,17 +31,17 @@ async fn basic_text_roundtrip() {
 
     let events = frontend.events();
     assert!(
-        matches!(events[0].kind, EventKind::TurnStart),
+        matches!(events[0], EventKind::TurnStart),
         "first event should be TurnStart"
     );
     assert!(
         events
             .iter()
-            .any(|e| matches!(e.kind, EventKind::TextDelta { .. })),
+            .any(|e| matches!(e, EventKind::TextDelta { .. })),
         "expected at least one TextDelta event"
     );
     assert!(
-        matches!(events.last().unwrap().kind, EventKind::TurnEnd { .. }),
+        matches!(events.last().unwrap(), EventKind::TurnEnd { .. }),
         "last event should be TurnEnd"
     );
 }

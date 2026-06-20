@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use arnes_core::{
-    FilesystemCapabilities, Frontend, FrontendCapabilities, Permission, PermissionRequest,
-    SessionEvent,
+    EventKind, FilesystemCapabilities, Frontend, FrontendCapabilities, Permission,
+    PermissionRequest,
 };
 use async_trait::async_trait;
 use tokio::sync::{mpsc, oneshot};
 use tracing::debug;
 
 pub enum UiCommand {
-    Event(SessionEvent),
+    Event(EventKind),
     /// A tool is asking to run; the UI answers through `responder`.
     PermissionRequest {
         request: PermissionRequest,
@@ -30,7 +30,7 @@ impl TuiFrontend {
 
 #[async_trait]
 impl Frontend for TuiFrontend {
-    async fn on_event(&self, event: SessionEvent) {
+    async fn on_event(&self, event: EventKind) {
         debug!(?event, "TuiFrontend::on_event");
         let _ = self.tx.send(UiCommand::Event(event));
     }
