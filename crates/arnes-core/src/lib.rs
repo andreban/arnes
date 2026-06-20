@@ -3,6 +3,7 @@
 
 mod error;
 mod frontend;
+mod helpers;
 mod host;
 mod identity;
 mod message;
