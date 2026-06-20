@@ -3,7 +3,9 @@
 
 use std::path::PathBuf;
 
-use crate::{PermissionRequest, ToolContext, ToolKind, helpers::normalize_path};
+use crate::{
+    PermissionRequest, ToolContext, ToolKind, frontend::ToolCallUpdate, helpers::normalize_path,
+};
 
 use agent_rig::tools::{ToolDefinition, ToolResult};
 use schemars::{JsonSchema, schema_for};
@@ -137,16 +139,19 @@ impl EditTextFile {
         &self.definition
     }
 
-    pub async fn call<F, Fut>(
+    pub async fn call<F, Fut, U, UFut>(
         &self,
         args: Value,
         tool_call_id: String,
         request_permission: F,
+        update_toolcall: U,
         _cancel: CancellationToken,
     ) -> ToolResult
     where
         F: Fn(PermissionRequest) -> Fut,
         Fut: Future<Output = bool>,
+        U: Fn(ToolCallUpdate) -> UFut,
+        UFut: Future<Output = ()>,
     {
         let (Some(read_host), Some(write_host)) = (
             self.context.host.read_text_file.as_ref(),
@@ -159,6 +164,15 @@ impl EditTextFile {
             Ok(params) => params,
             Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
         };
+
+        let title = format!("Editing file {}", &params.path.display());
+        update_toolcall(ToolCallUpdate {
+            tool_call_id: tool_call_id.clone(),
+            tool_name: NAME.to_string(),
+            args: args.clone(),
+            title,
+        })
+        .await;
 
         match self.context.read_grants.lock() {
             Ok(grants) => {

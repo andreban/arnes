@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     AgentId, ContentBlock, CoreError, EventKind, Frontend, Message, Permission, PermissionRequest,
-    Result, StopReason, TokenCounts, ToolCallOutcome, TurnUsage,
+    Result, StopReason, TokenCounts, ToolCallOutcome, TurnUsage, frontend::ToolCallUpdate,
 };
 
 use super::Session;
@@ -90,7 +90,11 @@ impl<F: Frontend> Session<F> {
                         .await;
                     let outcome = self
                         .tool_registry
-                        .call(&req, |request| self.request_permission(request))
+                        .call(
+                            &req,
+                            |request| self.request_permission(request),
+                            |update| self.tool_update(update),
+                        )
                         .await;
                     tracing::debug!(tool = %req.tool_name, outcome = ?outcome, "prompt: tool call finished");
                     self.frontend
@@ -133,6 +137,12 @@ impl<F: Frontend> Session<F> {
             self.frontend.request_permission(request).await,
             Permission::AllowOnce
         )
+    }
+
+    async fn tool_update(&self, update: ToolCallUpdate) {
+        self.frontend
+            .on_event(EventKind::ToolCallUpdated(update))
+            .await;
     }
 }
 
