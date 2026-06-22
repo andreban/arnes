@@ -54,8 +54,8 @@ impl WriteTextFile {
 
     pub async fn call<F, Fut, U, UFut>(
         &self,
-        args: Value,
-        tool_call_id: String,
+        args: &Value,
+        tool_call_id: &str,
         request_permission: F,
         update_toolcall: U,
         _cancel: CancellationToken,
@@ -66,14 +66,13 @@ impl WriteTextFile {
         U: Fn(ToolCallUpdate) -> UFut,
         UFut: Future<Output = ()>,
     {
-        let write_text_file_params: WriteTextFileParams = match serde_json::from_value(args.clone())
-        {
+        let write_text_file_params = match WriteTextFileParams::deserialize(args) {
             Ok(args) => args,
             Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
         };
         let title = format!("Writing file {}", &write_text_file_params.path.display());
         update_toolcall(ToolCallUpdate {
-            tool_call_id: tool_call_id.clone(),
+            tool_call_id: tool_call_id.to_string(),
             tool_name: NAME.to_string(),
             args: args.clone(),
             title,
@@ -81,7 +80,7 @@ impl WriteTextFile {
         .await;
 
         let request = PermissionRequest {
-            tool_call_id,
+            tool_call_id: tool_call_id.to_string(),
             tool_name: NAME.to_string(),
             args: args.clone(),
             kind: ToolKind::Other,

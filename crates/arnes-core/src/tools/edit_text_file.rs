@@ -141,8 +141,8 @@ impl EditTextFile {
 
     pub async fn call<F, Fut, U, UFut>(
         &self,
-        args: Value,
-        tool_call_id: String,
+        args: &Value,
+        tool_call_id: &str,
         request_permission: F,
         update_toolcall: U,
         _cancel: CancellationToken,
@@ -160,14 +160,14 @@ impl EditTextFile {
             return ToolResult::error("Capability unavailable");
         };
 
-        let params: EditTextFileParams = match serde_json::from_value(args.clone()) {
+        let params = match EditTextFileParams::deserialize(args) {
             Ok(params) => params,
             Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
         };
 
         let title = format!("Editing file {}", &params.path.display());
         update_toolcall(ToolCallUpdate {
-            tool_call_id: tool_call_id.clone(),
+            tool_call_id: tool_call_id.to_string(),
             tool_name: NAME.to_string(),
             args: args.clone(),
             title,
@@ -207,9 +207,9 @@ impl EditTextFile {
         };
 
         let request = PermissionRequest {
-            tool_call_id,
+            tool_call_id: tool_call_id.to_string(),
             tool_name: NAME.to_string(),
-            args,
+            args: args.clone(),
             kind: ToolKind::Edit,
             proposal: (&proposal).into(),
         };
