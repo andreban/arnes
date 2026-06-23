@@ -79,13 +79,13 @@ impl<F: Frontend> Session<F> {
                     return Err(CoreError::Session(e.to_string()));
                 }
                 AgentEvent::ToolCall(req) => {
-                    tracing::debug!(tool = %req.tool_name, "prompt: tool call");
+                    tracing::debug!(tool = %req.details.name, "prompt: tool call");
                     self.frontend
                         .on_event(EventKind::ToolCallStarted {
-                            id: req.tool_call_id.clone(),
-                            name: req.tool_name.clone(),
-                            args: req.args.clone(),
-                            title: req.tool_name.clone(),
+                            id: req.details.id.clone(),
+                            name: req.details.name.clone(),
+                            args: req.details.args.clone(),
+                            title: req.details.name.clone(),
                         })
                         .await;
                     let outcome = self
@@ -96,11 +96,11 @@ impl<F: Frontend> Session<F> {
                             |update| self.tool_update(update),
                         )
                         .await;
-                    tracing::debug!(tool = %req.tool_name, outcome = ?outcome, "prompt: tool call finished");
+                    tracing::debug!(tool = %req.details.name, outcome = ?outcome, "prompt: tool call finished");
                     self.frontend
                         .on_event(EventKind::ToolCallFinished {
-                            id: req.tool_call_id.clone(),
-                            name: req.tool_name.clone(),
+                            id: req.details.id.clone(),
+                            name: req.details.name.clone(),
                             outcome: outcome.clone(),
                         })
                         .await;
