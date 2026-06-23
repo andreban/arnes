@@ -51,15 +51,15 @@ impl ToolRegistry {
         U: Fn(ToolCallUpdate) -> UFut,
         UFut: Future<Output = ()>,
     {
-        let Some(tool) = self.tools.get(&req.tool_name) else {
+        let Some(tool) = self.tools.get(&req.details.name) else {
             return ToolCallOutcome::Unknown;
         };
 
         let tool_result = match tool {
             Tool::ReadTextFile(tool) => {
                 tool.call(
-                    &req.args,
-                    &req.tool_call_id,
+                    &req.details.args,
+                    &req.details.id,
                     request_permission,
                     update_toolcall,
                     req.cancellation_token.clone(),
@@ -68,8 +68,8 @@ impl ToolRegistry {
             }
             Tool::WriteTextFile(tool) => {
                 tool.call(
-                    &req.args,
-                    &req.tool_call_id,
+                    &req.details.args,
+                    &req.details.id,
                     request_permission,
                     update_toolcall,
                     req.cancellation_token.clone(),
@@ -78,8 +78,8 @@ impl ToolRegistry {
             }
             Tool::EditTextFile(tool) => {
                 tool.call(
-                    &req.args,
-                    &req.tool_call_id,
+                    &req.details.args,
+                    &req.details.id,
                     request_permission,
                     update_toolcall,
                     req.cancellation_token.clone(),

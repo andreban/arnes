@@ -9,7 +9,7 @@ use std::{
 
 use agent_rig::{
     Agent,
-    model::{LlmModel, Message as RigMessage},
+    model::{LlmModel, MessageList},
     runner::AgentRunner,
     tools::ToolDefinition,
 };
@@ -29,7 +29,7 @@ pub struct Session<F: Frontend> {
     pub(super) history: Vec<Message>,
     /// Full agent-rig thread, including tool-call and tool-result messages,
     /// carried forward across `prompt()` calls so the model retains context.
-    pub(super) rig_thread: Vec<RigMessage>,
+    pub(super) rig_thread: MessageList,
     pub(super) cumulative_usage: CumulativeUsage,
     pub(super) model: ModelKey,
     pub(super) cwd: PathBuf,
@@ -94,7 +94,7 @@ impl<F: Frontend> Session<F> {
             runner,
             agent,
             history: Vec::new(),
-            rig_thread: Vec::new(),
+            rig_thread: MessageList::new(),
             cumulative_usage: CumulativeUsage::default(),
             model,
             cwd,
