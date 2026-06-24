@@ -8,7 +8,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     AgentId, ContentBlock, CoreError, EventKind, Frontend, Message, Permission, PermissionRequest,
-    Result, StopReason, TokenCounts, ToolCallOutcome, TurnUsage, frontend::ToolCallUpdate,
+    Result, StopReason, TokenCounts, ToolCallOutcome, TurnUsage,
+    frontend::{ToolCallFinish, ToolCallStart, ToolCallUpdate},
 };
 
 use super::Session;
@@ -81,12 +82,10 @@ impl<F: Frontend> Session<F> {
                 AgentEvent::ToolCall(req) => {
                     tracing::debug!(tool = %req.details.name, "prompt: tool call");
                     self.frontend
-                        .on_event(EventKind::ToolCallStarted {
-                            id: req.details.id.clone(),
-                            name: req.details.name.clone(),
-                            args: req.details.args.clone(),
+                        .on_event(EventKind::ToolCallStarted(ToolCallStart {
+                            tool_call: req.details.clone(),
                             title: req.details.name.clone(),
-                        })
+                        }))
                         .await;
                     let outcome = self
                         .tool_registry
@@ -98,11 +97,10 @@ impl<F: Frontend> Session<F> {
                         .await;
                     tracing::debug!(tool = %req.details.name, outcome = ?outcome, "prompt: tool call finished");
                     self.frontend
-                        .on_event(EventKind::ToolCallFinished {
-                            id: req.details.id.clone(),
-                            name: req.details.name.clone(),
+                        .on_event(EventKind::ToolCallFinished(ToolCallFinish {
+                            tool_call: req.details.clone(),
                             outcome: outcome.clone(),
-                        })
+                        }))
                         .await;
                     req.resolve(outcome);
                 }

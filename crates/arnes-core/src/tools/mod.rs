@@ -58,8 +58,7 @@ impl ToolRegistry {
         let tool_result = match tool {
             Tool::ReadTextFile(tool) => {
                 tool.call(
-                    &req.details.args,
-                    &req.details.id,
+                    &req.details,
                     request_permission,
                     update_toolcall,
                     req.cancellation_token.clone(),
@@ -68,8 +67,7 @@ impl ToolRegistry {
             }
             Tool::WriteTextFile(tool) => {
                 tool.call(
-                    &req.details.args,
-                    &req.details.id,
+                    &req.details,
                     request_permission,
                     update_toolcall,
                     req.cancellation_token.clone(),
@@ -78,8 +76,7 @@ impl ToolRegistry {
             }
             Tool::EditTextFile(tool) => {
                 tool.call(
-                    &req.details.args,
-                    &req.details.id,
+                    &req.details,
                     request_permission,
                     update_toolcall,
                     req.cancellation_token.clone(),

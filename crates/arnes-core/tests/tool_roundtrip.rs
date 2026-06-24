@@ -5,7 +5,7 @@ mod support;
 
 use std::{path::PathBuf, sync::Arc};
 
-use arnes_core::{EventKind, ModelKey, Session, StopReason, ToolCallOutcome};
+use arnes_core::{EventKind, ModelKey, Session, StopReason, ToolCallFinish, ToolCallOutcome};
 use support::{InMemoryEnv, RecordingFrontend, ScriptedLlm, ScriptedTurn};
 use tokio_util::sync::CancellationToken;
 
@@ -42,14 +42,14 @@ async fn read_tool_roundtrip() {
 
     let started = events
         .iter()
-        .any(|e| matches!(e, EventKind::ToolCallStarted { name, .. } if name == "read_text_file"));
+        .any(|e| matches!(e, EventKind::ToolCallStarted(start) if start.tool_call.name == "read_text_file"));
     assert!(started, "expected a ToolCallStarted for read_text_file");
 
     let finished_ok = events.iter().any(|e| {
         matches!(
             e,
-            EventKind::ToolCallFinished { name, outcome: ToolCallOutcome::Ok(_), .. }
-                if name == "read_text_file"
+            EventKind::ToolCallFinished(ToolCallFinish { tool_call, outcome: ToolCallOutcome::Ok(_), .. })
+                if tool_call.name == "read_text_file"
         )
     });
     assert!(
@@ -115,14 +115,14 @@ async fn edit_tool_roundtrip() {
 
     let started = events
         .iter()
-        .any(|e| matches!(e, EventKind::ToolCallStarted { name, .. } if name == "edit_text_file"));
+        .any(|e| matches!(e, EventKind::ToolCallStarted(start) if start.tool_call.name == "edit_text_file"));
     assert!(started, "expected a ToolCallStarted for edit_text_file");
 
     let finished_ok = events.iter().any(|e| {
         matches!(
             e,
-            EventKind::ToolCallFinished { name, outcome: ToolCallOutcome::Ok(_), .. }
-                if name == "edit_text_file"
+            EventKind::ToolCallFinished(ToolCallFinish { tool_call, outcome: ToolCallOutcome::Ok(_), .. })
+                if tool_call.name == "edit_text_file"
         )
     });
     assert!(
@@ -175,14 +175,14 @@ async fn write_tool_roundtrip() {
 
     let started = events
         .iter()
-        .any(|e| matches!(e, EventKind::ToolCallStarted { name, .. } if name == "write_text_file"));
+        .any(|e| matches!(e, EventKind::ToolCallStarted(start) if start.tool_call.name == "write_text_file"));
     assert!(started, "expected a ToolCallStarted for write_text_file");
 
     let finished_ok = events.iter().any(|e| {
         matches!(
             e,
-            EventKind::ToolCallFinished { name, outcome: ToolCallOutcome::Ok(_), .. }
-                if name == "write_text_file"
+            EventKind::ToolCallFinished(ToolCallFinish { tool_call, outcome: ToolCallOutcome::Ok(_), .. })
+                if tool_call.name == "write_text_file"
         )
     });
     assert!(

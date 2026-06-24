@@ -153,35 +153,35 @@ impl AppState {
                 self.is_running = false;
                 self.current_cancel = None;
             }
-            EventKind::ToolCallStarted { id, name, args, .. } => {
+            EventKind::ToolCallStarted(start) => {
                 self.flush_streaming();
                 self.items.push(TranscriptItem::ToolCall {
-                    id,
-                    name,
-                    args: summarize_json(&args),
+                    id: start.tool_call.id.clone(),
+                    name: start.tool_call.name.clone(),
+                    args: summarize_json(&start.tool_call.args),
                     outcome: None,
                 });
             }
             EventKind::ToolCallUpdated(update) => {
                 debug!(?update, "EventKind::ToolCallUpdated");
             }
-            EventKind::ToolCallFinished { id, name, outcome } => {
-                let rendered = render_outcome(outcome);
+            EventKind::ToolCallFinished(finish) => {
+                let rendered = render_outcome(finish.outcome);
                 let matched = self.items.iter_mut().rev().find_map(|item| match item {
                     TranscriptItem::ToolCall {
                         id: tool_call_id,
                         name: n,
                         outcome: o @ None,
                         ..
-                    } if *tool_call_id == id => Some(o),
+                    } if *tool_call_id == finish.tool_call.id => Some(o),
                     _ => None,
                 });
                 if let Some(slot) = matched {
                     *slot = Some(rendered);
                 } else {
                     self.items.push(TranscriptItem::ToolCall {
-                        id,
-                        name,
+                        id: finish.tool_call.id.clone(),
+                        name: finish.tool_call.name.clone(),
                         args: String::new(),
                         outcome: Some(rendered),
                     });
@@ -720,8 +720,8 @@ pub async fn run(
                             None => (None, None),
                         };
                         state.pending_permission = Some(PendingPermission {
-                            tool_name: request.tool_name,
-                            args: summarize_json(&request.args),
+                            tool_name: request.tool_call.name.clone(),
+                            args: summarize_json(&request.tool_call.args),
                             path,
                             diff,
                             scroll: 0,
