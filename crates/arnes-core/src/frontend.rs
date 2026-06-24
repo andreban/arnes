@@ -3,6 +3,9 @@
 
 //! Frontend trait and the event vocabulary it consumes.
 
+use std::sync::Arc;
+
+use agent_rig::model::ToolCall;
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -39,24 +42,25 @@ pub enum EventKind {
         message: String,
     },
     ToolCallUpdated(ToolCallUpdate),
-    ToolCallStarted {
-        id: String,
-        name: String,
-        args: Value,
-        title: String,
-    },
-    ToolCallFinished {
-        id: String,
-        name: String,
-        outcome: ToolCallOutcome,
-    },
+    ToolCallStarted(ToolCallStart),
+    ToolCallFinished(ToolCallFinish),
+}
+
+#[derive(Clone, Debug)]
+pub struct ToolCallFinish {
+    pub tool_call: Arc<ToolCall>,
+    pub outcome: ToolCallOutcome,
+}
+
+#[derive(Clone, Debug)]
+pub struct ToolCallStart {
+    pub tool_call: Arc<ToolCall>,
+    pub title: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct ToolCallUpdate {
-    pub tool_call_id: String,
-    pub tool_name: String,
-    pub args: Value,
+    pub tool_call: Arc<ToolCall>,
     pub title: String,
 }
 
@@ -92,11 +96,9 @@ pub enum ToolKind {
 }
 
 /// Describes the gated tool call awaiting the user's approval.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PermissionRequest {
-    pub tool_call_id: String,
-    pub tool_name: String,
-    pub args: Value,
+    pub tool_call: Arc<ToolCall>,
     /// Semantic category of the tool, for labelling the prompt.
     pub kind: ToolKind,
     /// The change the tool resolved before asking for approval, opaque here and

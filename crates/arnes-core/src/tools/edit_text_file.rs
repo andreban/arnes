@@ -1,13 +1,16 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::{
     PermissionRequest, ToolContext, ToolKind, frontend::ToolCallUpdate, helpers::normalize_path,
 };
 
-use agent_rig::tools::{ToolDefinition, ToolResult};
+use agent_rig::{
+    model::ToolCall,
+    tools::{ToolDefinition, ToolResult},
+};
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -141,8 +144,7 @@ impl EditTextFile {
 
     pub async fn call<F, Fut, U, UFut>(
         &self,
-        args: &Value,
-        tool_call_id: &str,
+        tool_call: &Arc<ToolCall>,
         request_permission: F,
         update_toolcall: U,
         _cancel: CancellationToken,
@@ -160,16 +162,14 @@ impl EditTextFile {
             return ToolResult::error("Capability unavailable");
         };
 
-        let params = match EditTextFileParams::deserialize(args) {
+        let params = match EditTextFileParams::deserialize(&tool_call.args) {
             Ok(params) => params,
             Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
         };
 
         let title = format!("Editing file {}", &params.path.display());
         update_toolcall(ToolCallUpdate {
-            tool_call_id: tool_call_id.to_string(),
-            tool_name: NAME.to_string(),
-            args: args.clone(),
+            tool_call: tool_call.clone(),
             title,
         })
         .await;
@@ -207,9 +207,7 @@ impl EditTextFile {
         };
 
         let request = PermissionRequest {
-            tool_call_id: tool_call_id.to_string(),
-            tool_name: NAME.to_string(),
-            args: args.clone(),
+            tool_call: tool_call.clone(),
             kind: ToolKind::Edit,
             proposal: (&proposal).into(),
         };

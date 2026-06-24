@@ -90,25 +90,23 @@ impl Frontend for AcpFrontend {
                     content: MessageContent { kind: "text", text },
                 });
             }
-            EventKind::ToolCallStarted {
-                id, title, args, ..
-            } => {
+            EventKind::ToolCallStarted(start) => {
                 self.send(SessionUpdate::ToolCall {
-                    tool_call_id: id.clone(),
-                    title: Some(title.clone()),
+                    tool_call_id: start.tool_call.id.clone(),
+                    title: Some(start.title.clone()),
                     kind: "tool_use",
                     status: "pending",
-                    raw_input: Some(args),
+                    raw_input: Some(start.tool_call.args.clone()),
                 });
                 self.send(SessionUpdate::ToolCallUpdate {
-                    tool_call_id: id,
-                    title: Some(title),
+                    tool_call_id: start.tool_call.id.clone(),
+                    title: Some(start.title.clone()),
                     status: "in_progress",
                     content: None,
                 });
             }
-            EventKind::ToolCallFinished { id, outcome, .. } => {
-                let text = match outcome {
+            EventKind::ToolCallFinished(finish) => {
+                let text = match finish.outcome {
                     ToolCallOutcome::Ok(v) => {
                         if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
                             format!("error: {err}")
@@ -123,7 +121,7 @@ impl Frontend for AcpFrontend {
                     ToolCallOutcome::Unknown => "unknown".to_string(),
                 };
                 self.send(SessionUpdate::ToolCallUpdate {
-                    tool_call_id: id,
+                    tool_call_id: finish.tool_call.id.clone(),
                     status: "completed",
                     title: None,
                     content: Some(vec![ToolCallContent::Content {
@@ -149,7 +147,7 @@ impl Frontend for AcpFrontend {
         // card already exists because `tool_call` is emitted before authorize.
         if let Some(edit) = EditTextFileProposal::from_proposal(&req.proposal) {
             self.send(SessionUpdate::ToolCallUpdate {
-                tool_call_id: req.tool_call_id.clone(),
+                tool_call_id: req.tool_call.id.clone(),
                 title: None,
                 status: "in_progress",
                 content: Some(vec![ToolCallContent::Diff {
@@ -166,9 +164,9 @@ impl Frontend for AcpFrontend {
         let params = RequestPermissionParams {
             session_id: self.session_id.clone(),
             tool_call: PermissionToolCall {
-                tool_call_id: req.tool_call_id,
-                title: Some(req.tool_name),
-                raw_input: req.args,
+                tool_call_id: req.tool_call.id.clone(),
+                title: Some(req.tool_call.name.clone()),
+                raw_input: req.tool_call.args.clone(),
                 kind: permission::acp_kind(req.kind),
             },
             options: permission::default_options(),
