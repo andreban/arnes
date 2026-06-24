@@ -15,7 +15,7 @@ use agent_rig::{
 };
 
 use crate::{
-    AgentId, CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext,
+    CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext,
     tools::{EditTextFile, ReadTextFile, Tool, ToolRegistry, WriteTextFile},
 };
 
@@ -49,8 +49,6 @@ impl<F: Frontend> Session<F> {
         let mut tool_registry = ToolRegistry::default();
         let tool_context = ToolContext {
             host: host.clone(),
-            progress: None,
-            agent_id: AgentId::Root,
             cwd: cwd.clone(),
             read_grants: Arc::new(Mutex::new(HashSet::new())),
         };
