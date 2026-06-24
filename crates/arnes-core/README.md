@@ -9,5 +9,5 @@ The shared library at the heart of the arnes harness. It provides the `Session<F
 - **`Host`** — the trait that wires the agent to the local environment; compose it from `ReadTextFile`, `WriteTextFile`, and `Terminal` implementations.
 - **`Message` / `ContentBlock`** — conversation message types.
 - **`CumulativeUsage` / `TurnUsage` / `TokenCounts`** — token metering accumulated across turns.
-- **`ToolContext` / `ProgressSink`** — passed into tool implementations so they can report incremental progress back to the frontend.
+- **`ToolContext`** — per-invocation context passed into tool implementations, bundling the `Host`, working directory, and read grants.
 - **`CoreError` / `Result`** — the crate's error type.

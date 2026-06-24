@@ -24,5 +24,5 @@ pub use identity::{AgentId, ModelKey};
 pub use message::{ContentBlock, Message};
 pub use metering::{CumulativeUsage, ModelUsage, TokenCounts, TurnUsage};
 pub use session::Session;
-pub use tool_context::{ProgressSink, ProgressUpdate, ToolContext};
+pub use tool_context::ToolContext;
 pub use tools::EditTextFileProposal;
