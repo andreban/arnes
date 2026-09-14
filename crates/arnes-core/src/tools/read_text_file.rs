@@ -74,7 +74,7 @@ impl ReadTextFile {
             Ok(args) => args,
             Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
         };
-        let title = format!("Reading file {}", &read_text_file_params.path.display());
+        let title = format!("Reading file {}", read_text_file_params.path.display());
         update_toolcall(ToolCallUpdate {
             tool_call: tool_call.clone(),
             title,
