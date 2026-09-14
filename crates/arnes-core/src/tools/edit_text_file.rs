@@ -167,7 +167,7 @@ impl EditTextFile {
             Err(e) => return ToolResult::error(format!("invalid tool arguments: {e}")),
         };
 
-        let title = format!("Editing file {}", &params.path.display());
+        let title = format!("Editing file {}", params.path.display());
         update_toolcall(ToolCallUpdate {
             tool_call: tool_call.clone(),
             title,
