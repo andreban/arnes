@@ -42,9 +42,9 @@ pub struct EditTextFileOutput {
     pub edits_applied: usize,
 }
 
-/// The concrete change [`EditTextFile::propose`] resolved — the target path and
-/// the file's contents before and after — handed verbatim to
-/// [`EditTextFile::apply`], so the authorized change and the written change are
+/// The concrete change resolved by the `edit_text_file` tool — the target path
+/// and the file's contents before and after — included in the
+/// [`PermissionRequest`] so the authorized change and the written change are
 /// one value. The same proposal feeds the approval prompt: a frontend reads it
 /// back with [`from_proposal`](Self::from_proposal) to render a before/after
 /// diff.
@@ -53,8 +53,7 @@ pub struct EditTextFileProposal {
     pub path: PathBuf,
     pub old_content: String,
     pub new_content: String,
-    /// How many edits [`apply`](EditTextFile::apply) reports; not part of the
-    /// diff a frontend shows.
+    /// How many edits were applied; not part of the diff a frontend shows.
     edits_applied: usize,
 }
 
