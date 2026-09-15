@@ -64,7 +64,38 @@ apply to `Cargo.toml`, Markdown, or the rendered HTML docs.
 
 ## Tests
 
-- Unit tests live next to the code they test, in `#[cfg(test)] mod tests`.
+- Unit tests live next to the code they test, externalized to a sibling
+  `[file_name]_tests.rs` file using `#[path = "..."]` across all modules
+  (entities, services, routes, tools), keeping production code files concise
+  and separated from test fixtures.
+
+  In `src/model/applier.rs`:
+
+  ```rust
+  #[cfg(test)]
+  #[path = "applier_tests.rs"]
+  mod tests;
+  ```
+
+  In `src/model/applier_tests.rs`:
+
+  ```rust
+  type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+  use super::*;
+
+  #[test]
+  fn test_applier_basic() -> Result<()> {
+      // -- Setup & Fixtures
+
+      // -- Exec
+
+      // -- Check
+
+      Ok(())
+  }
+  ```
+
 - Integration tests live under each crate's `tests/` directory. Shared test
   helpers under `tests/support/` (per PR #4 of the M1 plan).
 - Run the full suite with `cargo test --workspace`. CI runs this on Linux,
