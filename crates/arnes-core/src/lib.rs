@@ -18,6 +18,7 @@ pub use frontend::{
     PermissionRequest, StopReason, ToolCallFinish, ToolCallOutcome, ToolCallStart, ToolCallUpdate,
     ToolKind,
 };
+pub use helpers::normalize_path;
 pub use host::{
     Host, ReadTextFile, Terminal, TerminalHandle, TerminalSnapshot, TerminalSpec, WriteTextFile,
 };

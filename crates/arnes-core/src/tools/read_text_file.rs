@@ -90,10 +90,6 @@ impl ReadTextFile {
             return ToolResult::error("User rejected tool call");
         }
 
-        if let Ok(mut read_grants) = self.context.read_grants.lock() {
-            read_grants.insert(read_text_file_params.path.clone());
-        }
-
         let Some(host) = self.context.host.read_text_file.as_ref() else {
             return ToolResult::error("Capability unavailable");
         };
@@ -109,10 +105,15 @@ impl ReadTextFile {
             )
             .await
         {
-            Ok(content) => ReadTextFileOutput {
-                content: Some(content),
-                error: None,
-            },
+            Ok(content) => {
+                if let Ok(mut read_grants) = self.context.read_grants.lock() {
+                    read_grants.insert(path.clone());
+                }
+                ReadTextFileOutput {
+                    content: Some(content),
+                    error: None,
+                }
+            }
             Err(e) => ReadTextFileOutput {
                 content: None,
                 error: Some(format!("Failed to read '{}': {}", path.display(), e)),

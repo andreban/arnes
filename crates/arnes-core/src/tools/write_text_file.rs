@@ -97,10 +97,15 @@ impl WriteTextFile {
             .write_text_file(&path, &write_text_file_params.content)
             .await
         {
-            Ok(()) => WriteTextFileOutput {
-                written: true,
-                error: None,
-            },
+            Ok(()) => {
+                if let Ok(mut read_grants) = self.context.read_grants.lock() {
+                    read_grants.insert(path.clone());
+                }
+                WriteTextFileOutput {
+                    written: true,
+                    error: None,
+                }
+            }
             Err(e) => WriteTextFileOutput {
                 written: false,
                 error: Some(format!("Failed to write '{}': {}", path.display(), e)),

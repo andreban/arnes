@@ -18,6 +18,6 @@ pub struct ToolContext {
     pub host: Host,
     /// Working directory for resolving relative paths in tool calls.
     pub cwd: PathBuf,
-    /// Paths the agent has read with approval, and may therefore edit.
+    /// Paths the agent has read or written with approval, and may therefore edit.
     pub read_grants: Arc<Mutex<HashSet<PathBuf>>>,
 }
