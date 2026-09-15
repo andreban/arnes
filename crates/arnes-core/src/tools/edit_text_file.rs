@@ -173,9 +173,11 @@ impl EditTextFile {
         })
         .await;
 
+        let path = normalize_path(&self.context.cwd, &params.path);
+
         match self.context.read_grants.lock() {
             Ok(grants) => {
-                if !grants.contains(&params.path) {
+                if !grants.contains(&path) {
                     return ToolResult::error(format!(
                         "File {} must be read before it can be edited",
                         params.path.to_string_lossy()
@@ -184,8 +186,6 @@ impl EditTextFile {
             }
             Err(e) => return ToolResult::error(format!("Error reading grants: {e}")),
         }
-
-        let path = normalize_path(&self.context.cwd, &params.path);
 
         let original = match read_host.read_text_file(&path, None, None).await {
             Ok(original) => original,
