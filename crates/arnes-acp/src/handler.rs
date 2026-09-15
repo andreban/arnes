@@ -32,11 +32,57 @@ use crate::{
 
 type AcpSession = Session<AcpFrontend>;
 
+/// An active ACP session wrapped in a concurrency-safe handle.
+#[derive(Clone)]
+pub(crate) struct SessionHandle {
+    inner: Arc<Mutex<AcpSession>>,
+}
+
+impl SessionHandle {
+    fn new(session: AcpSession) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(session)),
+        }
+    }
+
+    /// Executes a prompt on this session, locking only this session for the prompt duration.
+    pub async fn prompt(&self, text: String, cancel: CancellationToken) -> arnes_core::Result<()> {
+        self.inner.lock().await.prompt(text, cancel).await
+    }
+}
+
+/// Thread-safe registry of active ACP sessions.
+///
+/// Hides the internal locking complexity from [`Handler`]: looking up a session
+/// acquires and releases the map lock immediately, returning an isolated [`SessionHandle`]
+/// that can be prompted without holding the registry lock.
+#[derive(Default)]
+pub(crate) struct Sessions {
+    inner: Mutex<HashMap<String, SessionHandle>>,
+}
+
+impl Sessions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub async fn insert(&self, id: String, session: AcpSession) {
+        self.inner
+            .lock()
+            .await
+            .insert(id, SessionHandle::new(session));
+    }
+
+    pub async fn get(&self, id: &str) -> Option<SessionHandle> {
+        self.inner.lock().await.get(id).cloned()
+    }
+}
+
 pub struct Handler {
     llm: Arc<dyn LlmModel>,
     model_key: ModelKey,
     notify_tx: mpsc::UnboundedSender<String>,
-    sessions: Mutex<HashMap<String, Arc<Mutex<AcpSession>>>>,
+    sessions: Sessions,
     cancel_tokens: Mutex<HashMap<String, CancellationToken>>,
     fs_read_text_file: AtomicBool,
     fs_write_text_file: AtomicBool,
@@ -53,7 +99,7 @@ impl Handler {
             llm,
             model_key,
             notify_tx,
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Sessions::new(),
             cancel_tokens: Mutex::new(HashMap::new()),
             fs_read_text_file: AtomicBool::new(false),
             fs_write_text_file: AtomicBool::new(false),
@@ -132,10 +178,7 @@ impl Handler {
             self.model_key.clone(),
             cwd,
         );
-        self.sessions
-            .lock()
-            .await
-            .insert(session_id.clone(), Arc::new(Mutex::new(session)));
+        self.sessions.insert(session_id.clone(), session).await;
         Response::ok(id, SessionNewResult { session_id })
     }
 
@@ -149,14 +192,10 @@ impl Handler {
             .lock()
             .await
             .insert(p.session_id.clone(), cancel.clone());
-        let session_arc = {
-            let sessions = self.sessions.lock().await;
-            let Some(session) = sessions.get(&p.session_id) else {
-                return Response::err(id, error_code::INVALID_PARAMS, "unknown session_id");
-            };
-            Arc::clone(session)
+        let Some(session) = self.sessions.get(&p.session_id).await else {
+            return Response::err(id, error_code::INVALID_PARAMS, "unknown session_id");
         };
-        let result = session_arc.lock().await.prompt(text, cancel).await;
+        let result = session.prompt(text, cancel).await;
         self.cancel_tokens.lock().await.remove(&p.session_id);
         // A completed turn reports `end_turn`; a failed one is a JSON-RPC error,
         // since ACP defines no stop reason for failure.
@@ -274,5 +313,11 @@ mod tests {
         let prompt_res = s1_prompt.await.unwrap();
         let prompt_val = serde_json::to_value(&prompt_res).unwrap();
         assert_eq!(prompt_val["result"]["stopReason"], "end_turn");
+    }
+
+    #[tokio::test]
+    async fn sessions_registry_returns_none_for_missing() {
+        let sessions = Sessions::new();
+        assert!(sessions.get("missing-id").await.is_none());
     }
 }
