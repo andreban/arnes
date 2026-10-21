@@ -3,7 +3,9 @@
 
 use std::io;
 
-use arnes_core::{EditTextFileProposal, EventKind, Permission, ToolCallOutcome};
+use arnes_core::{
+    EditTextFileProposal, EventKind, Media, Permission, ToolCallOutcome, ToolResultContent,
+};
 use crossterm::event::{
     Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
@@ -270,16 +272,38 @@ fn render_tool_call<'a>(
 
 fn render_outcome(outcome: ToolCallOutcome) -> RenderedOutcome {
     match outcome {
-        ToolCallOutcome::Ok(v) => {
-            if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
-                RenderedOutcome::Err(truncate(err, MAX_INLINE_JSON))
-            } else {
-                RenderedOutcome::Ok(summarize_json(&v))
+        ToolCallOutcome::Ok(blocks) => {
+            let error = blocks.iter().find_map(|block| match block {
+                ToolResultContent::Json(v) => v.get("error").and_then(|e| e.as_str()),
+                ToolResultContent::Media(_) => None,
+            });
+            if let Some(err) = error {
+                return RenderedOutcome::Err(truncate(err, MAX_INLINE_JSON));
             }
+            let summary: Vec<String> = blocks.iter().map(summarize_block).collect();
+            RenderedOutcome::Ok(truncate(&summary.join(" "), MAX_INLINE_JSON))
         }
         ToolCallOutcome::Err(msg) => RenderedOutcome::Err(truncate(&msg, MAX_INLINE_JSON)),
         ToolCallOutcome::Denied => RenderedOutcome::Denied,
         ToolCallOutcome::Unknown => RenderedOutcome::Unknown,
+    }
+}
+
+/// One-line form of a result block. The terminal can't draw images, so media
+/// shows as its type and approximate size, e.g. `[image/png, 12 KB]`.
+fn summarize_block(block: &ToolResultContent) -> String {
+    match block {
+        ToolResultContent::Json(v) => serde_json::to_string(v).unwrap_or_default(),
+        ToolResultContent::Media(Media::Inline { mime_type, data }) => {
+            // Base64 encodes 3 bytes as 4 characters.
+            let bytes = data.len() / 4 * 3;
+            if bytes < 1024 {
+                format!("[{mime_type}, {bytes} B]")
+            } else {
+                format!("[{mime_type}, {} KB]", bytes / 1024)
+            }
+        }
+        ToolResultContent::Media(_) => "[media]".to_string(),
     }
 }
 

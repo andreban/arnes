@@ -257,6 +257,7 @@ mod tests {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 thinking: None,
+                provider_metadata: None,
                 token_usage: None,
             })
         }

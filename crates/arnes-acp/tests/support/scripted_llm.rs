@@ -73,12 +73,14 @@ impl LlmModel for ScriptedLlm {
                 text: Some(text),
                 tool_calls: vec![],
                 thinking: None,
+                provider_metadata: None,
                 token_usage: None,
             }),
             GenerateTurn::ToolCall { name, args } => Ok(ModelResponse {
                 text: None,
                 tool_calls: vec![ToolCall::new("scripted-tc".into(), name, args)],
                 thinking: None,
+                provider_metadata: None,
                 token_usage: None,
             }),
         }

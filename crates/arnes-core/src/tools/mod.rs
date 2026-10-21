@@ -86,7 +86,7 @@ impl ToolRegistry {
         };
 
         match tool_result {
-            ToolResult::Ok(value) => ToolCallOutcome::Ok(value),
+            ToolResult::Ok(blocks) => ToolCallOutcome::Ok(blocks),
             ToolResult::Err(error) => ToolCallOutcome::Err(error.to_string()),
         }
     }

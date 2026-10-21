@@ -4,8 +4,8 @@
 use std::sync::Mutex;
 
 use arnes_core::{
-    EditTextFileProposal, EventKind, Frontend, FrontendCapabilities, Permission, PermissionRequest,
-    ToolCallOutcome,
+    EditTextFileProposal, EventKind, Frontend, FrontendCapabilities, Media, Permission,
+    PermissionRequest, ToolCallOutcome, ToolResultContent,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -75,7 +75,7 @@ impl Frontend for AcpFrontend {
                     .unwrap_or_else(|| Uuid::now_v7().to_string());
                 self.send(SessionUpdate::AgentMessageChunk {
                     message_id,
-                    content: MessageContent { kind: "text", text },
+                    content: MessageContent::Text { text },
                 });
             }
             EventKind::ThinkingDelta { text } => {
@@ -87,7 +87,7 @@ impl Frontend for AcpFrontend {
                     .unwrap_or_else(|| Uuid::now_v7().to_string());
                 self.send(SessionUpdate::AgentThoughtChunk {
                     message_id,
-                    content: MessageContent { kind: "text", text },
+                    content: MessageContent::Text { text },
                 });
             }
             EventKind::ToolCallStarted(start) => {
@@ -106,27 +106,11 @@ impl Frontend for AcpFrontend {
                 });
             }
             EventKind::ToolCallFinished(finish) => {
-                let text = match finish.outcome {
-                    ToolCallOutcome::Ok(v) => {
-                        if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
-                            format!("error: {err}")
-                        } else if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
-                            content.to_string()
-                        } else {
-                            v.to_string()
-                        }
-                    }
-                    ToolCallOutcome::Err(msg) => msg,
-                    ToolCallOutcome::Denied => "denied".to_string(),
-                    ToolCallOutcome::Unknown => "unknown".to_string(),
-                };
                 self.send(SessionUpdate::ToolCallUpdate {
                     tool_call_id: finish.tool_call.id.clone(),
                     status: "completed",
                     title: None,
-                    content: Some(vec![ToolCallContent::Content {
-                        content: MessageContent { kind: "text", text },
-                    }]),
+                    content: Some(outcome_content(finish.outcome)),
                 });
             }
             EventKind::TurnEnd { .. } => {
@@ -194,6 +178,52 @@ impl Frontend for AcpFrontend {
 
     fn capabilities(&self) -> FrontendCapabilities {
         FrontendCapabilities::default()
+    }
+}
+
+/// Maps a finished tool call to the content of its ACP tool-call card: one
+/// block per result block on success, a single text block otherwise.
+fn outcome_content(outcome: ToolCallOutcome) -> Vec<ToolCallContent> {
+    let contents = match outcome {
+        ToolCallOutcome::Ok(blocks) => blocks.into_iter().map(block_content).collect(),
+        ToolCallOutcome::Err(msg) => vec![MessageContent::Text { text: msg }],
+        ToolCallOutcome::Denied => vec![MessageContent::Text {
+            text: "denied".to_string(),
+        }],
+        ToolCallOutcome::Unknown => vec![MessageContent::Text {
+            text: "unknown".to_string(),
+        }],
+    };
+    contents
+        .into_iter()
+        .map(|content| ToolCallContent::Content { content })
+        .collect()
+}
+
+fn block_content(block: ToolResultContent) -> MessageContent {
+    match block {
+        ToolResultContent::Json(v) => MessageContent::Text {
+            text: json_text(&v),
+        },
+        ToolResultContent::Media(Media::Inline { mime_type, data }) => {
+            MessageContent::Image { data, mime_type }
+        }
+        // `Media` is non-exhaustive; a kind ACP can't carry still gets a card entry.
+        ToolResultContent::Media(_) => MessageContent::Text {
+            text: "unsupported media".to_string(),
+        },
+    }
+}
+
+/// Shows a tool's JSON output as text: its `error` or `content` string field
+/// when present, the raw JSON otherwise.
+fn json_text(v: &Value) -> String {
+    if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+        format!("error: {err}")
+    } else if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
+        content.to_string()
+    } else {
+        v.to_string()
     }
 }
 
