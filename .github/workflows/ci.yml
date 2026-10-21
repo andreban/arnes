@@ -3,24 +3,41 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
 
+# A new push to a pull request cancels its run in progress. Pushes to main
+# and tags get a group per run, so none of them is cancelled or skipped.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
   check:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Pull requests run Linux and Windows; macOS runs after merge.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest", "windows-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: cargo test
@@ -28,7 +45,8 @@ jobs:
 
   install-smoke:
     name: install-smoke (${{ matrix.os }})
-    needs: check
+    if: github.event_name == 'push'
+    needs: [fmt, check]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -37,5 +55,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo install --locked --path crates/arnes-tui --debug
       - run: cargo install --locked --path crates/arnes-acp --debug
