@@ -13,7 +13,10 @@ pub use write_text_file::WriteTextFile;
 
 use crate::{PermissionRequest, ToolCallOutcome, frontend::ToolCallUpdate};
 
-#[allow(clippy::enum_variant_names)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "variants mirror the ACP tool names, which all end in TextFile"
+)]
 pub enum Tool {
     ReadTextFile(read_text_file::ReadTextFile),
     WriteTextFile(write_text_file::WriteTextFile),

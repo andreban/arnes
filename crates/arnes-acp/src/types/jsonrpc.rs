@@ -18,7 +18,6 @@ pub mod error_code {
 
 #[derive(Debug, Deserialize)]
 pub struct Request {
-    #[allow(dead_code)]
     pub jsonrpc: String,
     pub id: Option<Value>,
     pub method: String,
