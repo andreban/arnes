@@ -101,11 +101,18 @@ pub enum SessionUpdate {
     },
 }
 
+/// An ACP content block: plain text, or an image carried inline as base64.
 #[derive(Debug, Serialize)]
-pub struct MessageContent {
-    #[serde(rename = "type")]
-    pub kind: &'static str,
-    pub text: String,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MessageContent {
+    Text {
+        text: String,
+    },
+    Image {
+        data: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+    },
 }
 
 /// One block of a tool call's content. Tool output is a [`Content`] block; a
@@ -144,8 +151,7 @@ mod tests {
             session_id: "sess-1".into(),
             update: SessionUpdate::AgentMessageChunk {
                 message_id: "msg-1".into(),
-                content: MessageContent {
-                    kind: "text",
+                content: MessageContent::Text {
                     text: "hello".into(),
                 },
             },
@@ -162,8 +168,7 @@ mod tests {
             session_id: "sess-1".into(),
             update: SessionUpdate::AgentThoughtChunk {
                 message_id: "msg-1".into(),
-                content: MessageContent {
-                    kind: "text",
+                content: MessageContent::Text {
                     text: "thinking...".into(),
                 },
             },
@@ -201,8 +206,7 @@ mod tests {
                 status: "completed",
                 title: None,
                 content: Some(vec![ToolCallContent::Content {
-                    content: MessageContent {
-                        kind: "text",
+                    content: MessageContent::Text {
                         text: "file content".into(),
                     },
                 }]),
@@ -211,6 +215,28 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&update).unwrap(),
             r#"{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"file content"}}]}}"#,
+        );
+    }
+
+    #[test]
+    fn tool_call_update_image_wire_shape() {
+        let update = SessionUpdateParams {
+            session_id: "sess-1".into(),
+            update: SessionUpdate::ToolCallUpdate {
+                tool_call_id: "tc-1".into(),
+                status: "completed",
+                title: None,
+                content: Some(vec![ToolCallContent::Content {
+                    content: MessageContent::Image {
+                        data: "iVBORw0KGgo=".into(),
+                        mime_type: "image/png".into(),
+                    },
+                }]),
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&update).unwrap(),
+            r#"{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"completed","content":[{"type":"content","content":{"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"}}]}}"#,
         );
     }
 

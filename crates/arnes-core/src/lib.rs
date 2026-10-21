@@ -12,6 +12,7 @@ mod session;
 mod tool_context;
 mod tools;
 
+pub use agent_rig::model::{Media, ToolResultContent};
 pub use error::{CoreError, Result};
 pub use frontend::{
     EventKind, FilesystemCapabilities, Frontend, FrontendCapabilities, Permission,

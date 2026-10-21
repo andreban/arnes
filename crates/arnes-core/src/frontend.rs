@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use agent_rig::model::ToolCall;
+use agent_rig::model::{ToolCall, ToolResultContent};
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -66,7 +66,7 @@ pub struct ToolCallUpdate {
 
 #[derive(Clone, Debug)]
 pub enum ToolCallOutcome {
-    Ok(Value),
+    Ok(Vec<ToolResultContent>),
     Err(String),
     Denied,
     Unknown,

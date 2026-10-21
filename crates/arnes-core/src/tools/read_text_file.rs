@@ -30,10 +30,7 @@ pub struct ReadTextFileParams {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadTextFileOutput {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub content: String,
 }
 
 pub struct ReadTextFile {
@@ -94,10 +91,7 @@ impl ReadTextFile {
             return ToolResult::error("Capability unavailable");
         };
         let path = normalize_path(&self.context.cwd, &read_text_file_params.path);
-        // Always return Ok so the model receives a valid JSON object.
-        // (Gemini requires FunctionResponse.response to be an object; a bare
-        // string causes an empty/null candidate and a silent non-response.)
-        let output = match host
+        let content = match host
             .read_text_file(
                 &path,
                 read_text_file_params.line,
@@ -105,20 +99,15 @@ impl ReadTextFile {
             )
             .await
         {
-            Ok(content) => {
-                if let Ok(mut read_grants) = self.context.read_grants.lock() {
-                    read_grants.insert(path.clone());
-                }
-                ReadTextFileOutput {
-                    content: Some(content),
-                    error: None,
-                }
+            Ok(content) => content,
+            Err(e) => {
+                return ToolResult::error(format!("Failed to read '{}': {}", path.display(), e));
             }
-            Err(e) => ReadTextFileOutput {
-                content: None,
-                error: Some(format!("Failed to read '{}': {}", path.display(), e)),
-            },
         };
+        if let Ok(mut read_grants) = self.context.read_grants.lock() {
+            read_grants.insert(path.clone());
+        }
+        let output = ReadTextFileOutput { content };
         match serde_json::to_value(output) {
             Ok(value) => ToolResult::ok(value),
             Err(e) => ToolResult::error(format!("failed to serialize tool result: {e}")),

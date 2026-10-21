@@ -29,8 +29,6 @@ pub struct WriteTextFileParams {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WriteTextFileOutput {
     pub written: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 pub struct WriteTextFile {
@@ -90,27 +88,16 @@ impl WriteTextFile {
             return ToolResult::error("Capability unavailable");
         };
         let path = normalize_path(&self.context.cwd, &write_text_file_params.path);
-        // Always return Ok so the model receives a valid JSON object.
-        // (Gemini requires FunctionResponse.response to be an object; a bare
-        // string causes an empty/null candidate and a silent non-response.)
-        let output = match host
+        if let Err(e) = host
             .write_text_file(&path, &write_text_file_params.content)
             .await
         {
-            Ok(()) => {
-                if let Ok(mut read_grants) = self.context.read_grants.lock() {
-                    read_grants.insert(path.clone());
-                }
-                WriteTextFileOutput {
-                    written: true,
-                    error: None,
-                }
-            }
-            Err(e) => WriteTextFileOutput {
-                written: false,
-                error: Some(format!("Failed to write '{}': {}", path.display(), e)),
-            },
-        };
+            return ToolResult::error(format!("Failed to write '{}': {}", path.display(), e));
+        }
+        if let Ok(mut read_grants) = self.context.read_grants.lock() {
+            read_grants.insert(path.clone());
+        }
+        let output = WriteTextFileOutput { written: true };
         match serde_json::to_value(output) {
             Ok(value) => ToolResult::ok(value),
             Err(e) => ToolResult::error(format!("failed to serialize tool result: {e}")),

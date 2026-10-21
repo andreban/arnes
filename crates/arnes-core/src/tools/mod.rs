@@ -5,6 +5,7 @@ mod write_text_file;
 use std::collections::HashMap;
 
 use agent_rig::tools::{ToolCallRequest, ToolResult};
+use serde_json::Value;
 
 pub use edit_text_file::{EditTextFile, EditTextFileProposal};
 pub use read_text_file::ReadTextFile;
@@ -86,7 +87,9 @@ impl ToolRegistry {
         };
 
         match tool_result {
-            ToolResult::Ok(value) => ToolCallOutcome::Ok(value),
+            ToolResult::Ok(blocks) => ToolCallOutcome::Ok(blocks),
+            // A string error is passed through as-is; `to_string` would add JSON quotes.
+            ToolResult::Err(Value::String(error)) => ToolCallOutcome::Err(error),
             ToolResult::Err(error) => ToolCallOutcome::Err(error.to_string()),
         }
     }

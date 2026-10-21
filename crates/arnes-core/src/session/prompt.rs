@@ -1,9 +1,8 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-use agent_rig::{model::TokenUsage, runner::AgentEvent};
+use agent_rig::{model::TokenUsage, runner::AgentEvent, tools::ToolResult};
 use futures_util::StreamExt;
-use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -165,13 +164,13 @@ fn append_block(blocks: &mut Vec<ContentBlock>, text: String, thinking: bool) {
     }
 }
 
-impl From<ToolCallOutcome> for Value {
+impl From<ToolCallOutcome> for ToolResult {
     fn from(value: ToolCallOutcome) -> Self {
         match value {
-            ToolCallOutcome::Ok(value) => value,
-            ToolCallOutcome::Err(err) => Value::from(format!("Tool call error: {err}")),
-            ToolCallOutcome::Denied => Value::from("User rejected the tool call"),
-            ToolCallOutcome::Unknown => Value::from("Unknown tool"),
+            ToolCallOutcome::Ok(blocks) => ToolResult::Ok(blocks),
+            ToolCallOutcome::Err(err) => ToolResult::error(format!("Tool call error: {err}")),
+            ToolCallOutcome::Denied => ToolResult::error("User rejected the tool call"),
+            ToolCallOutcome::Unknown => ToolResult::error("Unknown tool"),
         }
     }
 }
@@ -186,3 +185,7 @@ impl From<TokenUsage> for TokenCounts {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "prompt_tests.rs"]
+mod tests;
