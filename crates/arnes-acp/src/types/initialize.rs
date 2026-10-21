@@ -9,6 +9,7 @@ use serde_json::Value;
 #[allow(dead_code)]
 pub struct InitializeParams {
     pub protocol_version: u32,
+    #[serde(default)]
     pub client_capabilities: ClientCapabilities,
 }
 
@@ -46,8 +47,8 @@ pub struct PromptCapabilities {
 }
 
 /// See <https://agentclientprotocol.com/protocol/v1/initialization#client-capabilities>
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 #[allow(dead_code)]
 pub struct ClientCapabilities {
     pub fs: FsCapabilities,
@@ -55,10 +56,14 @@ pub struct ClientCapabilities {
 }
 
 /// See <https://agentclientprotocol.com/protocol/v1/initialization#file-system>
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 #[allow(dead_code)]
 pub struct FsCapabilities {
     pub read_text_file: bool,
     pub write_text_file: bool,
 }
+
+#[cfg(test)]
+#[path = "initialize_tests.rs"]
+mod tests;
