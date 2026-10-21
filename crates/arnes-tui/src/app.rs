@@ -761,3 +761,7 @@ pub async fn run(
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "app_tests.rs"]
+mod tests;

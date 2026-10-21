@@ -238,3 +238,7 @@ fn permission_from_value(value: Value) -> Permission {
         _ => Permission::Deny,
     }
 }
+
+#[cfg(test)]
+#[path = "frontend_tests.rs"]
+mod tests;

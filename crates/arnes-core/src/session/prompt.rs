@@ -185,3 +185,7 @@ impl From<TokenUsage> for TokenCounts {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "prompt_tests.rs"]
+mod tests;
