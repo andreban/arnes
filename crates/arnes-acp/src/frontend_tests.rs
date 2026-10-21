@@ -46,6 +46,25 @@ fn inline_media_becomes_image_content() -> Result<()> {
 }
 
 #[test]
+fn non_image_media_falls_back_to_text() -> Result<()> {
+    let outcome = ToolCallOutcome::Ok(vec![ToolResultContent::Media(Media::Inline {
+        mime_type: "audio/wav".into(),
+        data: "UklGRg==".into(),
+    })]);
+
+    let content = content_json(outcome)?;
+
+    assert_eq!(
+        content,
+        json!([{
+            "type": "content",
+            "content": { "type": "text", "text": "unsupported media: audio/wav" },
+        }])
+    );
+    Ok(())
+}
+
+#[test]
 fn each_block_gets_its_own_entry_in_order() -> Result<()> {
     let outcome = ToolCallOutcome::Ok(vec![
         ToolResultContent::Json(json!({ "width": 2 })),

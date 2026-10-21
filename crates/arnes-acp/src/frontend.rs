@@ -205,10 +205,16 @@ fn block_content(block: ToolResultContent) -> MessageContent {
         ToolResultContent::Json(v) => MessageContent::Text {
             text: json_text(&v),
         },
-        ToolResultContent::Media(Media::Inline { mime_type, data }) => {
+        ToolResultContent::Media(Media::Inline { mime_type, data })
+            if mime_type.starts_with("image/") =>
+        {
             MessageContent::Image { data, mime_type }
         }
-        // `Media` is non-exhaustive; a kind ACP can't carry still gets a card entry.
+        // ACP image blocks only carry images; other media still gets a card entry.
+        ToolResultContent::Media(Media::Inline { mime_type, .. }) => MessageContent::Text {
+            text: format!("unsupported media: {mime_type}"),
+        },
+        // `Media` is non-exhaustive.
         ToolResultContent::Media(_) => MessageContent::Text {
             text: "unsupported media".to_string(),
         },
