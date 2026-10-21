@@ -29,7 +29,7 @@ export GEMINI_API_KEY=your_key_here
 Install and launch the TUI:
 
 ```sh
-cargo install --path crates/arnes-tui
+cargo install --locked --path crates/arnes-tui
 arnes
 ```
 
@@ -40,7 +40,7 @@ Type a message and press **Enter**. The agent streams its reply in real time, wi
 Install the ACP server:
 
 ```sh
-cargo install --path crates/arnes-acp
+cargo install --locked --path crates/arnes-acp
 ```
 
 Then drive it manually with newline-delimited JSON-RPC 2.0. The session below uses `arnes-acp` directly on the command line (pipe input via `echo` or a file):

@@ -11,7 +11,7 @@ arnes is a coding-agent harness written in Rust. It pairs a single `Session` cor
 
 ```sh
 export GEMINI_API_KEY=...
-cargo install --path crates/arnes-tui
+cargo install --locked --path crates/arnes-tui
 arnes
 ```
 
@@ -19,7 +19,7 @@ arnes
 
 ```sh
 export GEMINI_API_KEY=...
-cargo install --path crates/arnes-acp
+cargo install --locked --path crates/arnes-acp
 # editors spawn: arnes-acp
 ```
 

@@ -37,5 +37,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install --path crates/arnes-tui --debug
-      - run: cargo install --path crates/arnes-acp --debug
+      - run: cargo install --locked --path crates/arnes-tui --debug
+      - run: cargo install --locked --path crates/arnes-acp --debug
