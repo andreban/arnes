@@ -259,6 +259,43 @@ async fn failed_read_does_not_grant_edit() {
 }
 
 #[tokio::test]
+async fn failed_read_is_reported_as_tool_error() -> Result<(), Box<dyn std::error::Error>> {
+    let cwd = PathBuf::from(".");
+    let env = InMemoryEnv::new();
+    let host = env.build_host();
+
+    let llm = ScriptedLlm::new(vec![ScriptedTurn::ToolCallThenText {
+        name: "read_text_file".into(),
+        args: serde_json::json!({ "path": "missing.txt" }),
+        follow_up: "That file does not exist.".into(),
+    }]);
+
+    let frontend = RecordingFrontend::new();
+    let mut session = Session::new(Arc::clone(&frontend), host, llm, model_key(), cwd);
+    session
+        .prompt("read missing.txt", CancellationToken::new())
+        .await?;
+
+    // An `Err` outcome reaches the model under agent-rig's `error` key, not
+    // as a successful result that happens to carry an error field.
+    let read_failed = frontend.events().iter().any(|e| {
+        matches!(
+            e,
+            EventKind::ToolCallFinished(ToolCallFinish {
+                tool_call,
+                outcome: ToolCallOutcome::Err(msg),
+                ..
+            }) if tool_call.name == "read_text_file" && msg.starts_with("Failed to read '")
+        )
+    });
+    assert!(
+        read_failed,
+        "expected read_text_file to fail with an unquoted 'Failed to read' error"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn read_grants_path_normalization_mismatch() {
     let cwd = PathBuf::from(".");
     let mut env = InMemoryEnv::new();
