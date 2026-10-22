@@ -109,7 +109,6 @@ dependencies = [
  "async-trait",
  "clap",
  "dotenvy",
- "futures-util",
  "geologia",
  "serde",
  "serde_json",
