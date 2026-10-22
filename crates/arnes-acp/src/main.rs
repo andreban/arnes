@@ -87,9 +87,13 @@ where
         let line = match lines.next_line().await {
             Ok(Some(line)) => line,
             Ok(None) => break,
-            Err(err) => {
+            Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {
                 tracing::error!(error = %err, "failed to decode line from stdin");
                 continue;
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "failed to read from stdin; stopping read loop");
+                break;
             }
         };
 

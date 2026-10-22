@@ -107,5 +107,6 @@ anticipated.
   the hand-rolled structs.
 - The full transport implementation is small enough to read in one sitting;
   there are no `jsonrpsee` internals to debug when something goes wrong.
-- `tokio` provides line reading directly via `BufReader`; malformed or
-  non-UTF-8 frames are caught and logged without terminating the server loop (see #122).
+- `tokio` provides line reading directly via `BufReader`; non-UTF-8 frames
+  are logged and skipped without terminating the server loop, while malformed
+  JSON still returns a `-32700` parse error (see #122).
