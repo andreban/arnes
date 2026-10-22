@@ -30,7 +30,7 @@ in any crate.
 
 The transport is implemented as:
 
-- **Framing**: `tokio_util::codec::FramedRead` with `LinesCodec::new()` —
+- **Framing**: `tokio::io::BufReader` lines —
   one UTF-8 JSON object per newline-delimited line.
 - **Types**: custom `Request`, `Response`, `Notification`, and
   `OutboundRequest` structs in
@@ -107,5 +107,5 @@ anticipated.
   the hand-rolled structs.
 - The full transport implementation is small enough to read in one sitting;
   there are no `jsonrpsee` internals to debug when something goes wrong.
-- `tokio_util` is already in the workspace dependency tree (used for
-  `CancellationToken`); `LinesCodec` required no new crates.
+- `tokio` provides line reading directly via `BufReader`; malformed or
+  non-UTF-8 frames are caught and logged without terminating the server loop (see #122).

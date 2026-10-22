@@ -6,12 +6,10 @@ use std::sync::{Arc, Mutex};
 use agent_rig::models::gemini::GeminiModel;
 use arnes_core::ModelKey;
 use clap::Parser;
-use futures_util::StreamExt;
 use geologia::prelude::ThinkingConfig;
 use serde_json::Value;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
-use tokio_util::codec::{FramedRead, LinesCodec};
 
 use arnes_acp::handler::Handler;
 use arnes_acp::types::jsonrpc::{Request, Response, error_code};
@@ -72,9 +70,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Read loop: parse incoming JSON-RPC lines and dispatch.
     let stdin = tokio::io::stdin();
-    let mut lines = FramedRead::new(stdin, LinesCodec::new());
+    run_read_loop(stdin, handler.clone()).await;
 
-    while let Some(Ok(line)) = lines.next().await {
+    drop(handler);
+    write_handle.await?;
+    Ok(())
+}
+
+async fn run_read_loop<R>(reader: R, handler: Arc<Handler>)
+where
+    R: AsyncRead + Unpin,
+{
+    let mut lines = BufReader::new(reader).lines();
+
+    loop {
+        let line = match lines.next_line().await {
+            Ok(Some(line)) => line,
+            Ok(None) => break,
+            Err(err) => {
+                tracing::error!(error = %err, "failed to decode line from stdin");
+                continue;
+            }
+        };
+
         let handler = handler.clone();
 
         // Parse to Value first so we can distinguish requests from responses.
@@ -152,8 +170,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = handler.write_tx().send(serialized);
         }
     }
-
-    drop(handler);
-    write_handle.await?;
-    Ok(())
 }
+
+#[cfg(test)]
+#[path = "main_tests.rs"]
+mod tests;
