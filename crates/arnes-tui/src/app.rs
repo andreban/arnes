@@ -44,6 +44,7 @@ enum RenderedOutcome {
     Ok(String),
     Err(String),
     Denied,
+    Cancelled,
     Unknown,
 }
 
@@ -147,6 +148,7 @@ impl AppState {
                 self.flush_streaming();
                 self.is_running = false;
                 self.current_cancel = None;
+                self.pending_permission = None;
             }
             EventKind::Error { message } => {
                 self.streaming.clear();
@@ -154,6 +156,7 @@ impl AppState {
                 self.items.push(TranscriptItem::Error(message));
                 self.is_running = false;
                 self.current_cancel = None;
+                self.pending_permission = None;
             }
             EventKind::ToolCallStarted(start) => {
                 self.flush_streaming();
@@ -260,6 +263,10 @@ fn render_tool_call<'a>(
         Some(RenderedOutcome::Denied) => {
             Line::from(Span::styled("  ↳ denied", Style::default().fg(Color::Red)))
         }
+        Some(RenderedOutcome::Cancelled) => Line::from(Span::styled(
+            "  ↳ cancelled",
+            Style::default().fg(Color::Yellow),
+        )),
         Some(RenderedOutcome::Unknown) => Line::from(Span::styled(
             "  ↳ unknown tool",
             Style::default().fg(Color::Red),
@@ -285,6 +292,7 @@ fn render_outcome(outcome: ToolCallOutcome) -> RenderedOutcome {
         }
         ToolCallOutcome::Err(msg) => RenderedOutcome::Err(truncate(&msg, MAX_INLINE_JSON)),
         ToolCallOutcome::Denied => RenderedOutcome::Denied,
+        ToolCallOutcome::Cancelled => RenderedOutcome::Cancelled,
         ToolCallOutcome::Unknown => RenderedOutcome::Unknown,
     }
 }

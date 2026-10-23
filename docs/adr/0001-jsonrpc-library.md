@@ -38,8 +38,9 @@ The transport is implemented as:
 - **Dispatch**: manual `match req.method.as_str()` block in `main.rs`.
   `session/prompt` is spawned onto a new task so the read loop stays live.
 - **Outbound request correlation**: `PendingRequests` — an
-  `Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>`,
-  keyed by UUID v7 request IDs with a 30-second timeout.
+  `Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>`,
+  keyed by UUID v7 request IDs and paired with an RAII `PendingRequestGuard`
+  that removes the entry when the waiting future completes or is dropped.
 
 ## Alternatives considered
 
@@ -75,10 +76,12 @@ future milestone will cost roughly the same.
 ### Trigger 2: request-correlation machinery interferes with per-session `CancellationToken` wiring
 
 **Did not fire.** The `PendingRequests` map and the per-session
-`CancellationToken` are entirely independent data structures. Cancelling a
-session prompt cancels the `Session::prompt` future; pending outbound
-requests are cleaned up independently on timeout or channel close. The two
-mechanisms do not interact.
+`CancellationToken` remain separate data structures. Cancelling a session
+prompt cancels the in-flight tool execution or `Session::prompt` future,
+which drops any waiting outbound request (`session/request_permission`,
+`fs/read_text_file`, `fs/write_text_file`); its `PendingRequestGuard`
+then synchronously removes the entry from `PendingRequests` on `Drop`
+(just as it does on timeout or channel close).
 
 ### Trigger 3: adding ACP `_meta` field requires fighting the serialization layer
 

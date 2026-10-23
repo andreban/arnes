@@ -172,13 +172,26 @@ async fn cancelling_turn_during_permission_request_clears_pending_requests() -> 
         .await;
 
     let prompt_resp = serde_json::to_value(prompt_task.await?)?;
-    assert_eq!(prompt_resp["result"]["stopReason"], "end_turn");
+    assert_eq!(prompt_resp["result"]["stopReason"], "cancelled");
     assert!(
         handler
             .pending_requests
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .is_empty()
+    );
+
+    let mut trailing = Vec::new();
+    while let Ok(raw) = notify_rx.try_recv() {
+        trailing.push(serde_json::from_str::<Value>(&raw)?);
+    }
+    assert!(
+        trailing.iter().any(|v| {
+            v.get("method") == Some(&json!("session/update"))
+                && v["params"]["update"]["sessionUpdate"] == json!("tool_call_update")
+                && v["params"]["update"]["status"] == json!("failed")
+        }),
+        "expected a terminal failed tool_call_update on cancellation"
     );
     Ok(())
 }

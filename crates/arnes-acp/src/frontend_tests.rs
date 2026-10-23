@@ -90,6 +90,7 @@ fn non_ok_outcomes_keep_their_text() -> Result<()> {
     let cases = [
         (ToolCallOutcome::Err("boom".into()), "boom"),
         (ToolCallOutcome::Denied, "denied"),
+        (ToolCallOutcome::Cancelled, "cancelled"),
         (ToolCallOutcome::Unknown, "unknown"),
     ];
 

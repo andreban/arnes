@@ -11,7 +11,7 @@ use std::{
 };
 
 use agent_rig::model::LlmModel;
-use arnes_core::{Host, ModelKey, Session};
+use arnes_core::{Host, ModelKey, Session, StopReason};
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -66,7 +66,11 @@ impl SessionHandle {
     }
 
     /// Executes a prompt on this session, locking only this session for the prompt duration.
-    pub async fn prompt(&self, text: String, cancel: CancellationToken) -> arnes_core::Result<()> {
+    pub async fn prompt(
+        &self,
+        text: String,
+        cancel: CancellationToken,
+    ) -> arnes_core::Result<StopReason> {
         self.inner.lock().await.prompt(text, cancel).await
     }
 }
@@ -217,15 +221,16 @@ impl Handler {
         };
         let result = session.prompt(text, cancel).await;
         self.cancel_tokens.lock().await.remove(&p.session_id);
-        // A completed turn reports `end_turn`; a failed one is a JSON-RPC error,
-        // since ACP defines no stop reason for failure.
+        // A finished turn maps its StopReason to the ACP stopReason wire value;
+        // a failed turn is a JSON-RPC error since ACP defines no stop reason for failure.
         match result {
-            Ok(()) => Response::ok(
-                id,
-                SessionPromptResult {
-                    stop_reason: "end_turn",
-                },
-            ),
+            Ok(stop_reason) => {
+                let stop_reason = match stop_reason {
+                    StopReason::EndTurn => "end_turn",
+                    StopReason::Cancelled => "cancelled",
+                };
+                Response::ok(id, SessionPromptResult { stop_reason })
+            }
             Err(e) => Response::err(
                 id,
                 error_code::INTERNAL_ERROR,

@@ -25,7 +25,7 @@ impl<F: Frontend> Session<F> {
         &mut self,
         input: impl Into<String>,
         cancel: CancellationToken,
-    ) -> Result<()> {
+    ) -> Result<StopReason> {
         let input = input.into();
         tracing::debug!(
             input_len = input.len(),
@@ -95,7 +95,13 @@ impl<F: Frontend> Session<F> {
                         ))
                         .await
                     else {
-                        tracing::debug!("prompt: tool call cancelled");
+                        tracing::debug!(tool = %req.details.name, "prompt: tool call cancelled");
+                        self.frontend
+                            .on_event(EventKind::ToolCallFinished(ToolCallFinish {
+                                tool_call: req.details.clone(),
+                                outcome: ToolCallOutcome::Cancelled,
+                            }))
+                            .await;
                         stop_reason = StopReason::Cancelled;
                         break;
                     };
@@ -129,7 +135,7 @@ impl<F: Frontend> Session<F> {
         self.frontend
             .on_event(EventKind::TurnEnd { stop_reason, usage })
             .await;
-        Ok(())
+        Ok(stop_reason)
     }
 
     /// Asks the frontend to approve a gated tool call, reporting whether it was
@@ -175,6 +181,7 @@ impl From<ToolCallOutcome> for ToolResult {
             ToolCallOutcome::Ok(blocks) => ToolResult::Ok(blocks),
             ToolCallOutcome::Err(err) => ToolResult::error(format!("Tool call error: {err}")),
             ToolCallOutcome::Denied => ToolResult::error("User rejected the tool call"),
+            ToolCallOutcome::Cancelled => ToolResult::error("Tool call cancelled"),
             ToolCallOutcome::Unknown => ToolResult::error("Unknown tool"),
         }
     }

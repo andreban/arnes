@@ -109,9 +109,13 @@ impl Frontend for AcpFrontend {
                 });
             }
             EventKind::ToolCallFinished(finish) => {
+                let status = match finish.outcome {
+                    ToolCallOutcome::Cancelled => "failed",
+                    _ => "completed",
+                };
                 self.send(SessionUpdate::ToolCallUpdate {
                     tool_call_id: finish.tool_call.id.clone(),
-                    status: "completed",
+                    status,
                     title: None,
                     content: Some(outcome_content(finish.outcome)),
                 });
@@ -197,6 +201,9 @@ fn outcome_content(outcome: ToolCallOutcome) -> Vec<ToolCallContent> {
         ToolCallOutcome::Err(msg) => vec![MessageContent::Text { text: msg }],
         ToolCallOutcome::Denied => vec![MessageContent::Text {
             text: "denied".to_string(),
+        }],
+        ToolCallOutcome::Cancelled => vec![MessageContent::Text {
+            text: "cancelled".to_string(),
         }],
         ToolCallOutcome::Unknown => vec![MessageContent::Text {
             text: "unknown".to_string(),
