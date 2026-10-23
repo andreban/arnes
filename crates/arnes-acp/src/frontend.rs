@@ -1,7 +1,7 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use arnes_core::{
     EditTextFileProposal, EventKind, Frontend, FrontendCapabilities, Media, Permission,
@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::{
-    host::PendingRequests,
+    host::{PendingRequestGuard, PendingRequests},
     types::{
         jsonrpc::{Notification, OutboundRequest},
         permission::{
@@ -64,13 +64,16 @@ impl Frontend for AcpFrontend {
     async fn on_event(&self, event: EventKind) {
         match event {
             EventKind::TurnStart => {
-                *self.current_message_id.lock().unwrap() = Some(Uuid::now_v7().to_string());
+                *self
+                    .current_message_id
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(Uuid::now_v7().to_string());
             }
             EventKind::TextDelta { text } => {
                 let message_id = self
                     .current_message_id
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .clone()
                     .unwrap_or_else(|| Uuid::now_v7().to_string());
                 self.send(SessionUpdate::AgentMessageChunk {
@@ -82,7 +85,7 @@ impl Frontend for AcpFrontend {
                 let message_id = self
                     .current_message_id
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .clone()
                     .unwrap_or_else(|| Uuid::now_v7().to_string());
                 self.send(SessionUpdate::AgentThoughtChunk {
@@ -106,15 +109,22 @@ impl Frontend for AcpFrontend {
                 });
             }
             EventKind::ToolCallFinished(finish) => {
+                let status = match finish.outcome {
+                    ToolCallOutcome::Cancelled => "failed",
+                    _ => "completed",
+                };
                 self.send(SessionUpdate::ToolCallUpdate {
                     tool_call_id: finish.tool_call.id.clone(),
-                    status: "completed",
+                    status,
                     title: None,
                     content: Some(outcome_content(finish.outcome)),
                 });
             }
             EventKind::TurnEnd { .. } => {
-                *self.current_message_id.lock().unwrap() = None;
+                *self
+                    .current_message_id
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = None;
             }
             _ => {}
         }
@@ -123,7 +133,11 @@ impl Frontend for AcpFrontend {
     async fn request_permission(&self, req: PermissionRequest) -> Permission {
         let request_id = Uuid::now_v7().to_string();
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(request_id.clone(), tx);
+        self.pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(request_id.clone(), tx);
+        let _guard = PendingRequestGuard::new(Arc::clone(&self.pending), request_id.clone());
 
         // When the tool resolved a file edit, attach the before/after diff to
         // the tool-call card so the client renders it. ACP's permission request
@@ -155,21 +169,19 @@ impl Frontend for AcpFrontend {
             },
             options: permission::default_options(),
         };
-        let outbound =
-            OutboundRequest::new(request_id.clone(), "session/request_permission", params);
+        let outbound = OutboundRequest::new(request_id, "session/request_permission", params);
         let Ok(serialized) = serde_json::to_string(&outbound) else {
-            self.pending.lock().await.remove(&request_id);
             return Permission::Deny;
         };
         if self.notify_tx.send(serialized).is_err() {
-            self.pending.lock().await.remove(&request_id);
             return Permission::Deny;
         }
 
-        // No timeout: the user may take a while to answer. agent-rig races
-        // this future against session cancellation, so a stuck prompt is
-        // dropped when the turn is cancelled. A closed channel (client gone)
-        // or any non-allow outcome denies.
+        // No timeout: the user may take a while to answer. The session races
+        // tool execution against turn cancellation, so a stuck prompt is
+        // dropped when the turn is cancelled; `_guard` then removes the
+        // pending entry. A closed channel (client gone) or any non-allow
+        // outcome denies.
         match rx.await {
             Ok(Ok(value)) => permission_from_value(value),
             _ => Permission::Deny,
@@ -189,6 +201,9 @@ fn outcome_content(outcome: ToolCallOutcome) -> Vec<ToolCallContent> {
         ToolCallOutcome::Err(msg) => vec![MessageContent::Text { text: msg }],
         ToolCallOutcome::Denied => vec![MessageContent::Text {
             text: "denied".to_string(),
+        }],
+        ToolCallOutcome::Cancelled => vec![MessageContent::Text {
+            text: "cancelled".to_string(),
         }],
         ToolCallOutcome::Unknown => vec![MessageContent::Text {
             text: "unknown".to_string(),

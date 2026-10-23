@@ -58,10 +58,14 @@ fn error_field_in_any_json_block_renders_as_error() -> Result<()> {
 }
 
 #[test]
-fn denied_and_unknown_keep_their_variants() -> Result<()> {
+fn denied_cancelled_and_unknown_keep_their_variants() -> Result<()> {
     assert!(matches!(
         render_outcome(ToolCallOutcome::Denied),
         RenderedOutcome::Denied
+    ));
+    assert!(matches!(
+        render_outcome(ToolCallOutcome::Cancelled),
+        RenderedOutcome::Cancelled
     ));
     assert!(matches!(
         render_outcome(ToolCallOutcome::Unknown),

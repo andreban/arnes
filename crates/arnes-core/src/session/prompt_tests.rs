@@ -44,6 +44,7 @@ fn non_ok_outcomes_reach_the_model_as_errors() -> Result<()> {
             "Tool call error: disk full",
         ),
         (ToolCallOutcome::Denied, "User rejected the tool call"),
+        (ToolCallOutcome::Cancelled, "Tool call cancelled"),
         (ToolCallOutcome::Unknown, "Unknown tool"),
     ];
 

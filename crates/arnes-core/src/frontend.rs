@@ -69,10 +69,11 @@ pub enum ToolCallOutcome {
     Ok(Vec<ToolResultContent>),
     Err(String),
     Denied,
+    Cancelled,
     Unknown,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StopReason {
     EndTurn,
     Cancelled,
