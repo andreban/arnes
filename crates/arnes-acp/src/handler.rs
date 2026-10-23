@@ -123,7 +123,7 @@ impl Handler {
             cancel_tokens: Mutex::new(HashMap::new()),
             fs_read_text_file: AtomicBool::new(false),
             fs_write_text_file: AtomicBool::new(false),
-            pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            pending_requests: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -245,7 +245,12 @@ impl Handler {
 
     /// Routes a JSON-RPC response (from the client) back to the waiting caller.
     pub async fn handle_response(&self, id: String, result: Result<Value, String>) {
-        if let Some(tx) = self.pending_requests.lock().await.remove(&id) {
+        let tx = self
+            .pending_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
+        if let Some(tx) = tx {
             let _ = tx.send(result);
         }
     }

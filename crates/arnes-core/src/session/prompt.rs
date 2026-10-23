@@ -86,14 +86,19 @@ impl<F: Frontend> Session<F> {
                             title: req.details.name.clone(),
                         }))
                         .await;
-                    let outcome = self
-                        .tool_registry
-                        .call(
+                    let Some(outcome) = req
+                        .cancellation_token
+                        .run_until_cancelled(self.tool_registry.call(
                             &req,
                             |request| self.request_permission(request),
                             |update| self.tool_update(update),
-                        )
-                        .await;
+                        ))
+                        .await
+                    else {
+                        tracing::debug!("prompt: tool call cancelled");
+                        stop_reason = StopReason::Cancelled;
+                        break;
+                    };
                     tracing::debug!(tool = %req.details.name, outcome = ?outcome, "prompt: tool call finished");
                     self.frontend
                         .on_event(EventKind::ToolCallFinished(ToolCallFinish {
