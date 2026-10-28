@@ -21,7 +21,8 @@ pub use frontend::{
 };
 pub use helpers::normalize_path;
 pub use host::{
-    Host, ReadTextFile, Terminal, TerminalHandle, TerminalSnapshot, TerminalSpec, WriteTextFile,
+    Host, ReadTextFile, Terminal, TerminalExitStatus, TerminalHandle, TerminalSnapshot,
+    TerminalSpec, WriteTextFile,
 };
 pub use identity::{AgentId, ModelKey};
 pub use message::{ContentBlock, Message};
