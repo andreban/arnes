@@ -16,7 +16,7 @@ use agent_rig::{
 
 use crate::{
     CumulativeUsage, Frontend, Host, Message, ModelKey, ToolContext,
-    tools::{EditTextFile, ReadTextFile, Tool, ToolRegistry, WriteTextFile},
+    tools::{Bash, EditTextFile, ReadTextFile, Tool, ToolRegistry, WriteTextFile},
 };
 
 mod prompt;
@@ -72,6 +72,13 @@ impl<F: Frontend> Session<F> {
             tool_definitions.push(tool.definition().clone());
             tool_guidelines.push(tool.prompt_guidelines().to_string());
             tool_registry.register(Tool::EditTextFile(tool));
+        }
+
+        if host.terminal.is_some() {
+            let tool = Bash::new(tool_context.clone());
+            tool_definitions.push(tool.definition().clone());
+            tool_guidelines.push(tool.prompt_guidelines().to_string());
+            tool_registry.register(Tool::Bash(tool));
         }
 
         let mut instructions = String::from("You are a helpful assistant.");

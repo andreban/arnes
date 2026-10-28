@@ -42,9 +42,30 @@ impl InMemoryEnv {
             command_line.into(),
             CannedCommand {
                 output: output.into(),
-                exit_code,
+                exit_code: Some(exit_code),
             },
         );
+    }
+
+    /// Scripts `command_line` to print `output` and then run until it is
+    /// killed or released.
+    pub fn add_hanging_command(
+        &mut self,
+        command_line: impl Into<String>,
+        output: impl Into<String>,
+    ) {
+        self.terminal.commands.lock().unwrap().insert(
+            command_line.into(),
+            CannedCommand {
+                output: output.into(),
+                exit_code: None,
+            },
+        );
+    }
+
+    /// How many times `terminal_kill` was called.
+    pub fn kills(&self) -> usize {
+        *self.terminal.kills.lock().unwrap()
     }
 
     /// Every spec passed to `terminal_create`, in call order.
@@ -133,27 +154,45 @@ impl WriteTextFile for InMemoryWriteTextFile {
 
 struct CannedCommand {
     output: String,
-    exit_code: i32,
+    /// `None` keeps the command running until it is killed or released.
+    exit_code: Option<i32>,
 }
 
-/// Records spawned commands and completes each one immediately with its
-/// scripted output and exit code.
+struct FakeProcess {
+    output: String,
+    exit: tokio::sync::watch::Sender<Option<TerminalExitStatus>>,
+}
+
+/// Records spawned commands and completes each one with its scripted
+/// output and exit code; hanging commands run until killed.
 #[derive(Default)]
 struct FakeTerminal {
     commands: Mutex<HashMap<String, CannedCommand>>,
     spawned: Mutex<Vec<TerminalSpec>>,
-    live: Mutex<HashMap<Uuid, TerminalSnapshot>>,
+    live: Mutex<HashMap<Uuid, FakeProcess>>,
+    kills: Mutex<usize>,
 }
 
 impl FakeTerminal {
-    fn snapshot(&self, handle: &TerminalHandle) -> io::Result<TerminalSnapshot> {
+    fn with_process<T>(
+        &self,
+        handle: &TerminalHandle,
+        f: impl FnOnce(&FakeProcess) -> T,
+    ) -> io::Result<T> {
         self.live
             .lock()
             .unwrap()
             .get(&handle.id)
-            .cloned()
+            .map(f)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown terminal"))
     }
+}
+
+fn exited(exit_code: i32) -> Option<TerminalExitStatus> {
+    Some(TerminalExitStatus {
+        exit_code: Some(exit_code),
+        signal: None,
+    })
 }
 
 #[async_trait]
@@ -164,45 +203,69 @@ impl Terminal for FakeTerminal {
             .map(String::as_str)
             .collect::<Vec<_>>()
             .join(" ");
-        let (output, exit_code) = match self.commands.lock().unwrap().get(&command_line) {
-            Some(canned) => (canned.output.clone(), canned.exit_code),
-            None => (format!("{}: command not found\n", spec.command), 127),
-        };
-        let snapshot = TerminalSnapshot {
-            output,
-            truncated: false,
-            exit_status: Some(TerminalExitStatus {
-                exit_code: Some(exit_code),
-                signal: None,
-            }),
+        let (output, exit) = match self.commands.lock().unwrap().get(&command_line) {
+            Some(canned) => (canned.output.clone(), canned.exit_code.and_then(exited)),
+            None => (
+                format!("{}: command not found\n", spec.command),
+                exited(127),
+            ),
         };
         self.spawned.lock().unwrap().push(spec);
         let handle = TerminalHandle { id: Uuid::now_v7() };
-        self.live.lock().unwrap().insert(handle.id, snapshot);
+        let (exit, _) = tokio::sync::watch::channel(exit);
+        self.live
+            .lock()
+            .unwrap()
+            .insert(handle.id, FakeProcess { output, exit });
         Ok(handle)
     }
 
     async fn terminal_snapshot(&self, handle: &TerminalHandle) -> io::Result<TerminalSnapshot> {
-        self.snapshot(handle)
+        self.with_process(handle, |process| TerminalSnapshot {
+            output: process.output.clone(),
+            truncated: false,
+            exit_status: process.exit.borrow().clone(),
+        })
     }
 
     async fn terminal_wait_for_exit(
         &self,
         handle: &TerminalHandle,
     ) -> io::Result<TerminalExitStatus> {
-        Ok(self.snapshot(handle)?.exit_status.unwrap_or_default())
+        let mut exit = self.with_process(handle, |process| process.exit.subscribe())?;
+        let status = exit
+            .wait_for(Option::is_some)
+            .await
+            .map_err(|_| io::Error::other("terminal released while waiting"))?;
+        Ok(status.clone().unwrap_or_default())
     }
 
     async fn terminal_kill(&self, handle: &TerminalHandle) -> io::Result<()> {
-        self.snapshot(handle).map(drop)
+        *self.kills.lock().unwrap() += 1;
+        self.with_process(handle, kill)
     }
 
     async fn terminal_release(&self, handle: TerminalHandle) -> io::Result<()> {
-        self.live
+        let process = self
+            .live
             .lock()
             .unwrap()
             .remove(&handle.id)
-            .map(drop)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown terminal"))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown terminal"))?;
+        kill(&process);
+        Ok(())
     }
+}
+
+fn kill(process: &FakeProcess) {
+    process.exit.send_if_modified(|exit| {
+        if exit.is_some() {
+            return false;
+        }
+        *exit = Some(TerminalExitStatus {
+            exit_code: None,
+            signal: Some("SIGKILL".into()),
+        });
+        true
+    });
 }

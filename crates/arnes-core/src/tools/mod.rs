@@ -1,6 +1,7 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
+mod bash;
 mod edit_text_file;
 mod read_text_file;
 mod write_text_file;
@@ -10,17 +11,15 @@ use std::collections::HashMap;
 use agent_rig::tools::{ToolCallRequest, ToolResult};
 use serde_json::Value;
 
+pub use bash::Bash;
 pub use edit_text_file::{EditTextFile, EditTextFileProposal};
 pub use read_text_file::ReadTextFile;
 pub use write_text_file::WriteTextFile;
 
 use crate::{PermissionRequest, ToolCallOutcome, frontend::ToolCallUpdate};
 
-#[expect(
-    clippy::enum_variant_names,
-    reason = "variants mirror the ACP tool names, which all end in TextFile"
-)]
 pub enum Tool {
+    Bash(bash::Bash),
     ReadTextFile(read_text_file::ReadTextFile),
     WriteTextFile(write_text_file::WriteTextFile),
     EditTextFile(edit_text_file::EditTextFile),
@@ -29,6 +28,7 @@ pub enum Tool {
 impl Tool {
     pub fn name(&self) -> &str {
         match self {
+            Tool::Bash(tool) => &tool.definition().name,
             Tool::ReadTextFile(tool) => &tool.definition().name,
             Tool::WriteTextFile(tool) => &tool.definition().name,
             Tool::EditTextFile(tool) => &tool.definition().name,
@@ -63,6 +63,15 @@ impl ToolRegistry {
         };
 
         let tool_result = match tool {
+            Tool::Bash(tool) => {
+                tool.call(
+                    &req.details,
+                    request_permission,
+                    update_toolcall,
+                    req.cancellation_token.clone(),
+                )
+                .await
+            }
             Tool::ReadTextFile(tool) => {
                 tool.call(
                     &req.details,
