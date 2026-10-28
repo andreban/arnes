@@ -73,3 +73,85 @@ fn denied_cancelled_and_unknown_keep_their_variants() -> Result<()> {
     ));
     Ok(())
 }
+
+fn command_request(command: &str) -> PermissionRequest {
+    let args = json!({ "command": command });
+    PermissionRequest {
+        tool_call: std::sync::Arc::new(agent_rig::model::ToolCall::new(
+            "call-1".into(),
+            "bash".into(),
+            args.clone(),
+        )),
+        kind: ToolKind::Execute,
+        proposal: args,
+    }
+}
+
+/// A command whose dangerous part sits past the inline summary's limit.
+fn long_command() -> String {
+    format!("echo {} ; rm -rf ~", "x".repeat(MAX_INLINE_JSON * 2))
+}
+
+#[test]
+fn command_permission_previews_full_command() -> Result<()> {
+    // -- Setup & Fixtures
+    let command = long_command();
+    let (responder, _rx) = oneshot::channel();
+
+    // -- Exec
+    let pending = PendingPermission::new(&command_request(&command), responder);
+
+    // -- Check
+    assert!(!pending.args.contains("rm -rf"), "summary is truncated");
+    let preview = pending.preview.ok_or("expected a command preview")?;
+    let body: Vec<String> = preview.body.iter().map(|line| line.to_string()).collect();
+    assert_eq!(body.join("\n"), command);
+
+    Ok(())
+}
+
+#[test]
+fn command_permission_prompt_renders_command_tail() -> Result<()> {
+    // -- Setup & Fixtures
+    let command = long_command();
+    let (responder, _rx) = oneshot::channel();
+    let mut pending = PendingPermission::new(&command_request(&command), responder);
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(60, 20))?;
+
+    // -- Exec
+    terminal.draw(|f| render_permission_prompt(f, f.area(), &mut pending))?;
+
+    // -- Check
+    // Wrapping breaks the command across rows; rejoin the cells and drop the
+    // popup border to recover the words in order.
+    let buffer = terminal.backend().buffer();
+    let text: String = buffer
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>()
+        .replace('│', " ");
+    let words: Vec<&str> = text.split_whitespace().collect();
+    assert!(
+        words.windows(3).any(|w| w == ["rm", "-rf", "~"]),
+        "command tail missing from prompt: {text}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn non_execute_request_has_no_command_preview() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut request = command_request("ls");
+    request.kind = ToolKind::Other;
+    let (responder, _rx) = oneshot::channel();
+
+    // -- Exec
+    let pending = PendingPermission::new(&request, responder);
+
+    // -- Check
+    assert!(pending.preview.is_none());
+
+    Ok(())
+}

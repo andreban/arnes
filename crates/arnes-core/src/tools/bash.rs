@@ -139,7 +139,7 @@ impl Bash {
             Ok(Ok(_)) => false,
             Ok(Err(e)) => return ToolResult::error(format!("Failed waiting for command: {e}")),
             Err(_) => {
-                tracing::debug!(command = %params.command, ?timeout, "bash: timed out");
+                tracing::debug!(?timeout, "bash: timed out");
                 if let Err(e) = terminal.terminal_kill(&handle).await {
                     tracing::warn!(error = %e, "bash: kill after timeout failed");
                 }

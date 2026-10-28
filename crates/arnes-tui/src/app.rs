@@ -4,7 +4,8 @@
 use std::io;
 
 use arnes_core::{
-    EditTextFileProposal, EventKind, Media, Permission, ToolCallOutcome, ToolResultContent,
+    EditTextFileProposal, EventKind, Media, Permission, PermissionRequest, ToolCallOutcome,
+    ToolKind, ToolResultContent,
 };
 use crossterm::event::{
     Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
@@ -52,18 +53,37 @@ enum RenderedOutcome {
 struct PendingPermission {
     tool_name: String,
     args: String,
-    // The edited file's path and the rendered before/after diff, when the
-    // proposal describes a file edit. `None` falls back to the args summary.
-    path: Option<String>,
-    diff: Option<Vec<Line<'static>>>,
-    // Lines of the diff scrolled past the top. 0 shows the start.
+    // Full detail to review before approving, such as a file edit's diff or
+    // a shell command. `None` falls back to the args summary.
+    preview: Option<Preview>,
+    // Lines of the preview scrolled past the top. 0 shows the start.
     scroll: u16,
-    // Height of the diff viewport at the last render, for paging.
+    // Height of the preview viewport at the last render, for paging.
     view_height: u16,
     responder: oneshot::Sender<Permission>,
 }
 
+// What the large permission popup shows: a header naming the action and
+// its subject, then a scrollable, wrapped body.
+struct Preview {
+    title: &'static str,
+    action: &'static str,
+    subject: String,
+    body: Vec<Line<'static>>,
+}
+
 impl PendingPermission {
+    fn new(request: &PermissionRequest, responder: oneshot::Sender<Permission>) -> Self {
+        Self {
+            tool_name: request.tool_call.name.clone(),
+            args: summarize_json(&request.tool_call.args),
+            preview: preview(request),
+            scroll: 0,
+            view_height: 0,
+            responder,
+        }
+    }
+
     fn scroll_up(&mut self, by: u16) {
         self.scroll = self.scroll.saturating_sub(by);
     }
@@ -212,6 +232,34 @@ impl AppState {
 }
 
 const MAX_INLINE_JSON: usize = 80;
+
+/// Builds the full-detail preview for requests whose args summary would hide
+/// what is being approved.
+fn preview(request: &PermissionRequest) -> Option<Preview> {
+    if let Some(edit) = EditTextFileProposal::from_proposal(&request.proposal) {
+        return Some(Preview {
+            title: " Approve edit ",
+            action: "The agent wants to edit ",
+            subject: edit.path.display().to_string(),
+            body: build_diff_lines(&edit.old_content, &edit.new_content),
+        });
+    }
+    // A command must be shown in full: a truncated summary could hide
+    // anything appended after a harmless-looking prefix.
+    if request.kind != ToolKind::Execute {
+        return None;
+    }
+    let command = request.tool_call.args.get("command")?.as_str()?;
+    Some(Preview {
+        title: " Approve command ",
+        action: "The agent wants to run a command with ",
+        subject: request.tool_call.name.clone(),
+        body: command
+            .lines()
+            .map(|line| Line::from(line.to_owned()))
+            .collect(),
+    })
+}
 
 fn summarize_json(value: &serde_json::Value) -> String {
     let s = serde_json::to_string(value).unwrap_or_default();
@@ -379,14 +427,14 @@ fn prompt_border() -> Style {
 }
 
 fn render_permission_prompt(f: &mut Frame, area: Rect, pending: &mut PendingPermission) {
-    if pending.diff.is_some() {
-        render_edit_prompt(f, area, pending);
+    if pending.preview.is_some() {
+        render_preview_prompt(f, area, pending);
     } else {
         render_simple_prompt(f, area, pending);
     }
 }
 
-/// The compact allow/deny popup for tools without a diff to preview.
+/// The compact allow/deny popup for tools without a preview.
 fn render_simple_prompt(f: &mut Frame, area: Rect, pending: &PendingPermission) {
     let popup = centered_rect(60, 9, area);
     f.render_widget(Clear, popup);
@@ -413,15 +461,19 @@ fn render_simple_prompt(f: &mut Frame, area: Rect, pending: &PendingPermission) 
     f.render_widget(prompt, popup);
 }
 
-/// The roomy popup that previews an edit as a scrollable before/after diff.
-fn render_edit_prompt(f: &mut Frame, area: Rect, pending: &mut PendingPermission) {
+/// The roomy popup that shows a preview, such as an edit's before/after
+/// diff or a full command, scrollable and wrapped.
+fn render_preview_prompt(f: &mut Frame, area: Rect, pending: &mut PendingPermission) {
+    let Some(preview) = pending.preview.as_ref() else {
+        return;
+    };
     let popup = centered_rect_pct(80, 80, area);
     f.render_widget(Clear, popup);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(prompt_border())
-        .title(Span::styled(" Approve edit ", prompt_border()));
+        .title(Span::styled(preview.title, prompt_border()));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
@@ -434,19 +486,18 @@ fn render_edit_prompt(f: &mut Frame, area: Rect, pending: &mut PendingPermission
         ])
         .split(inner);
 
-    let path = pending.path.as_deref().unwrap_or_default();
     let header = Paragraph::new(Text::from(vec![
         Line::from(vec![
-            Span::raw("The agent wants to edit "),
-            Span::styled(path.to_owned(), prompt_border()),
+            Span::raw(preview.action),
+            Span::styled(preview.subject.clone(), prompt_border()),
         ]),
         Line::from(""),
     ]));
     f.render_widget(header, chunks[0]);
 
     let body_area = chunks[1];
+    let lines = preview.body.clone();
     pending.view_height = body_area.height;
-    let lines = pending.diff.clone().unwrap_or_default();
     let body = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
     let total = body.line_count(body_area.width);
     let max_scroll = total
@@ -743,23 +794,7 @@ pub async fn run(
                 match maybe_cmd {
                     Some(UiCommand::Event(ev)) => state.handle_session_event(ev),
                     Some(UiCommand::PermissionRequest { request, responder }) => {
-                        let edit = EditTextFileProposal::from_proposal(&request.proposal);
-                        let (path, diff) = match edit {
-                            Some(edit) => (
-                                Some(edit.path.display().to_string()),
-                                Some(build_diff_lines(&edit.old_content, &edit.new_content)),
-                            ),
-                            None => (None, None),
-                        };
-                        state.pending_permission = Some(PendingPermission {
-                            tool_name: request.tool_call.name.clone(),
-                            args: summarize_json(&request.tool_call.args),
-                            path,
-                            diff,
-                            scroll: 0,
-                            view_height: 0,
-                            responder,
-                        });
+                        state.pending_permission = Some(PendingPermission::new(&request, responder));
                     }
                     None => {}
                 }

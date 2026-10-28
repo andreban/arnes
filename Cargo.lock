@@ -147,6 +147,7 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "geologia",
+ "libc",
  "ratatui",
  "serde_json",
  "similar",

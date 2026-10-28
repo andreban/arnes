@@ -233,3 +233,108 @@ async fn bash_tool_not_registered_without_terminal() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn bash_tool_keeps_newest_output_over_limit() -> Result<()> {
+    // -- Setup & Fixtures
+    // 40 KiB of filler followed by the line that matters, past the 32 KiB cap.
+    let output = format!("{}\nerror: the last line\n", "x".repeat(40 * 1024));
+    let mut env = InMemoryEnv::new();
+    env.add_command("bash -c cargo build -vv", output.clone(), 101);
+    let frontend = RecordingFrontend::new();
+    let mut session = Session::new(
+        Arc::clone(&frontend),
+        env.build_host(),
+        bash_call(json!({ "command": "cargo build -vv" })),
+        model_key(),
+        PathBuf::from("."),
+    );
+
+    // -- Exec
+    session.prompt("build it", CancellationToken::new()).await?;
+
+    // -- Check
+    let result = bash_output(&frontend)?;
+    assert_eq!(result["truncated"], true);
+    let kept = result["output"].as_str().ok_or("output is not a string")?;
+    assert_eq!(kept.len(), 32 * 1024);
+    assert!(output.ends_with(kept), "kept output is not the newest part");
+    assert!(kept.ends_with("error: the last line\n"));
+
+    Ok(())
+}
+
+/// Runs a command that never exits with the given `timeout_seconds` and
+/// returns how long the call took in (paused) tokio time.
+async fn time_hanging_command(timeout_seconds: u64) -> Result<Duration> {
+    let mut env = InMemoryEnv::new();
+    env.add_hanging_command("bash -c tail -f log", "");
+    let frontend = RecordingFrontend::new();
+    let mut session = Session::new(
+        Arc::clone(&frontend),
+        env.build_host(),
+        bash_call(json!({ "command": "tail -f log", "timeout_seconds": timeout_seconds })),
+        model_key(),
+        PathBuf::from("."),
+    );
+    let started = tokio::time::Instant::now();
+    session
+        .prompt("follow the log", CancellationToken::new())
+        .await?;
+    assert_eq!(bash_output(&frontend)?["timed_out"], true);
+    Ok(started.elapsed())
+}
+
+#[tokio::test(start_paused = true)]
+async fn bash_tool_clamps_zero_timeout_to_one_second() -> Result<()> {
+    // -- Exec
+    let elapsed = time_hanging_command(0).await?;
+
+    // -- Check
+    assert_eq!(elapsed, Duration::from_secs(1));
+
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn bash_tool_clamps_timeout_to_ten_minutes() -> Result<()> {
+    // -- Exec
+    let elapsed = time_hanging_command(601).await?;
+
+    // -- Check
+    assert_eq!(elapsed, Duration::from_secs(600));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn bash_tool_rejects_empty_command() -> Result<()> {
+    // -- Setup & Fixtures
+    let env = InMemoryEnv::new();
+    let frontend = RecordingFrontend::new();
+    let mut session = Session::new(
+        Arc::clone(&frontend),
+        env.build_host(),
+        bash_call(json!({ "command": "  " })),
+        model_key(),
+        PathBuf::from("."),
+    );
+
+    // -- Exec
+    session
+        .prompt("do nothing", CancellationToken::new())
+        .await?;
+
+    // -- Check
+    let outcome = bash_outcome(&frontend)?;
+    assert!(
+        matches!(&outcome, ToolCallOutcome::Err(e) if e.contains("`command` is empty")),
+        "{outcome:?}"
+    );
+    assert!(
+        env.spawned().is_empty(),
+        "empty command must not be spawned"
+    );
+
+    Ok(())
+}

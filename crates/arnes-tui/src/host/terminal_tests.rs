@@ -206,3 +206,109 @@ fn test_output_buffer_skips_split_utf8_sequence() -> Result<()> {
 
     Ok(())
 }
+
+/// A fresh path for a marker file that a background job writes if it
+/// survives long enough.
+#[cfg(unix)]
+fn marker_path(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("arnes-{name}-{}", Uuid::now_v7()))
+}
+
+/// Starts a background grandchild that writes `marker` after one second.
+#[cfg(unix)]
+fn background_writer(marker: &std::path::Path, then: &str) -> TerminalSpec {
+    shell(&format!(
+        "(sleep 1; echo alive > '{}') & {then}",
+        marker.display()
+    ))
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_terminal_kill_stops_background_grandchild() -> Result<()> {
+    // -- Setup & Fixtures
+    let terminal = LocalTerminal::default();
+    let marker = marker_path("kill");
+    let handle = terminal
+        .terminal_create(background_writer(&marker, "echo started; wait"))
+        .await?;
+    // Kill only once the shell has forked the job, or there is nothing to leak.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !terminal
+            .terminal_snapshot(&handle)
+            .await
+            .is_ok_and(|snapshot| snapshot.output.contains("started"))
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+
+    // -- Exec
+    terminal.terminal_kill(&handle).await?;
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        terminal.terminal_wait_for_exit(&handle),
+    )
+    .await??;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // -- Check
+    let survived = marker.exists();
+    let _ = std::fs::remove_file(&marker);
+    assert!(!survived, "background grandchild outlived terminal_kill");
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_terminal_release_stops_background_job_after_shell_exits() -> Result<()> {
+    // -- Setup & Fixtures
+    let terminal = LocalTerminal::default();
+    let marker = marker_path("release");
+    let handle = terminal
+        .terminal_create(background_writer(&marker, "exit 0"))
+        .await?;
+    let status = terminal.terminal_wait_for_exit(&handle).await?;
+    assert_eq!(status.exit_code, Some(0));
+
+    // -- Exec
+    terminal.terminal_release(handle).await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // -- Check
+    let survived = marker.exists();
+    let _ = std::fs::remove_file(&marker);
+    assert!(!survived, "background job outlived terminal_release");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_terminal_wait_is_not_held_by_background_output() -> Result<()> {
+    // -- Setup & Fixtures
+    let terminal = LocalTerminal::default();
+    let spec = if cfg!(windows) {
+        shell("start /b ping -n 30 127.0.0.1")
+    } else {
+        shell("sleep 30 &")
+    };
+    let started = Instant::now();
+
+    // -- Exec
+    let handle = terminal.terminal_create(spec).await?;
+    terminal.terminal_wait_for_exit(&handle).await?;
+
+    // -- Check
+    // A pipe held open by the background job must not delay the exit
+    // status until the job ends.
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "wait_for_exit took {:?}",
+        started.elapsed()
+    );
+    terminal.terminal_release(handle).await?;
+
+    Ok(())
+}

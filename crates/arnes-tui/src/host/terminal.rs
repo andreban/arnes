@@ -11,10 +11,13 @@ use std::{
     time::Duration,
 };
 
+use tokio::time::Instant;
+
 use arnes_core::{Terminal, TerminalExitStatus, TerminalHandle, TerminalSnapshot, TerminalSpec};
 use async_trait::async_trait;
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
+    process::Child,
     process::Command,
     sync::watch,
     task::JoinHandle,
@@ -27,11 +30,17 @@ const DEFAULT_OUTPUT_BYTE_LIMIT: usize = 1024 * 1024;
 
 /// How long to keep draining output after the process exits. A background
 /// grandchild (`cmd &`) can hold the pipes open indefinitely, so the
-/// readers are abandoned after this grace period.
+/// readers are aborted once this grace period, shared by both, runs out.
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Spawns each terminal as a direct child process with stdout and stderr
 /// captured into a shared, size-bounded buffer.
+///
+/// Killing or releasing a terminal kills the child's whole process tree, so
+/// pipelines and background jobs started by a shell do not outlive it. On
+/// Unix the child leads its own process group; on Windows the tree is
+/// killed with `taskkill /T`, which only finds descendants while the child
+/// itself is still running.
 #[derive(Default)]
 pub struct LocalTerminal {
     processes: Mutex<HashMap<Uuid, LocalProcess>>,
@@ -41,13 +50,14 @@ struct LocalProcess {
     output: Arc<Mutex<OutputBuffer>>,
     exit: watch::Receiver<Option<TerminalExitStatus>>,
     kill: CancellationToken,
+    release: CancellationToken,
 }
 
 impl Drop for LocalProcess {
     fn drop(&mut self) {
         // Releasing a handle, or dropping the whole `LocalTerminal`, must
-        // not leave the child running.
-        self.kill.cancel();
+        // not leave the child or its descendants running.
+        self.release.cancel();
     }
 }
 
@@ -68,7 +78,8 @@ impl LocalTerminal {
 #[async_trait]
 impl Terminal for LocalTerminal {
     async fn terminal_create(&self, spec: TerminalSpec) -> io::Result<TerminalHandle> {
-        tracing::debug!(command = %spec.command, args = ?spec.args, "terminal_create: starting");
+        // The command line is deliberately not logged: it can carry secrets
+        // such as tokens in headers or URLs, and the log is written to disk.
         let mut command = Command::new(&spec.command);
         command
             .args(&spec.args)
@@ -80,8 +91,10 @@ impl Terminal for LocalTerminal {
         if let Some(cwd) = &spec.cwd {
             command.current_dir(cwd);
         }
+        #[cfg(unix)]
+        command.process_group(0);
         let mut child = command.spawn().inspect_err(|e| {
-            tracing::error!(command = %spec.command, error = %e, "terminal_create: spawn failed");
+            tracing::error!(error = %e, "terminal_create: spawn failed");
         })?;
 
         let output = Arc::new(Mutex::new(OutputBuffer::new(
@@ -100,29 +113,16 @@ impl Terminal for LocalTerminal {
 
         let (exit_tx, exit_rx) = watch::channel(None);
         let kill = CancellationToken::new();
+        let release = CancellationToken::new();
         let id = Uuid::now_v7();
-        let kill_requested = kill.clone();
-        tokio::spawn(async move {
-            let status = tokio::select! {
-                status = child.wait() => status,
-                () = kill_requested.cancelled() => {
-                    let _ = child.start_kill();
-                    child.wait().await
-                }
-            };
-            for reader in readers.into_iter().flatten() {
-                let _ = tokio::time::timeout(OUTPUT_DRAIN_TIMEOUT, reader).await;
-            }
-            let status = match status {
-                Ok(status) => exit_status(status),
-                Err(e) => {
-                    tracing::error!(%id, error = %e, "terminal: wait failed");
-                    TerminalExitStatus::default()
-                }
-            };
-            tracing::debug!(%id, ?status, "terminal: process exited");
-            let _ = exit_tx.send(Some(status));
-        });
+        tokio::spawn(supervise(
+            id,
+            child,
+            readers,
+            exit_tx,
+            kill.clone(),
+            release.clone(),
+        ));
 
         self.processes
             .lock()
@@ -133,6 +133,7 @@ impl Terminal for LocalTerminal {
                     output,
                     exit: exit_rx,
                     kill,
+                    release,
                 },
             );
         tracing::debug!(%id, "terminal_create: spawned");
@@ -173,7 +174,7 @@ impl Terminal for LocalTerminal {
 
     async fn terminal_release(&self, handle: TerminalHandle) -> io::Result<()> {
         tracing::debug!(id = %handle.id, "terminal_release");
-        // Dropping the `LocalProcess` kills the child if it is still running.
+        // Dropping the `LocalProcess` kills the process tree.
         self.processes
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -182,6 +183,105 @@ impl Terminal for LocalTerminal {
             .ok_or_else(|| unknown(&handle))
     }
 }
+
+/// Owns the child for its whole life: waits for it to exit (or kills it),
+/// drains its output, publishes the exit status, and finally kills any
+/// descendants still running when the terminal is killed or released.
+async fn supervise(
+    id: Uuid,
+    mut child: Child,
+    readers: [Option<JoinHandle<()>>; 2],
+    exit_tx: watch::Sender<Option<TerminalExitStatus>>,
+    kill: CancellationToken,
+    release: CancellationToken,
+) {
+    let pid = child.id();
+    let stop = async {
+        tokio::select! {
+            () = kill.cancelled() => {}
+            () = release.cancelled() => {}
+        }
+    };
+    let mut tree_killed = false;
+    let status = tokio::select! {
+        status = child.wait() => status,
+        () = stop => {
+            kill_tree(pid).await;
+            tree_killed = true;
+            let _ = child.start_kill();
+            child.wait().await
+        }
+    };
+
+    let deadline = Instant::now() + OUTPUT_DRAIN_TIMEOUT;
+    for mut reader in readers.into_iter().flatten() {
+        if tokio::time::timeout_at(deadline, &mut reader)
+            .await
+            .is_err()
+        {
+            reader.abort();
+        }
+    }
+
+    let status = match status {
+        Ok(status) => exit_status(status),
+        Err(e) => {
+            tracing::error!(%id, error = %e, "terminal: wait failed");
+            TerminalExitStatus::default()
+        }
+    };
+    tracing::debug!(%id, ?status, "terminal: process exited");
+    let _ = exit_tx.send(Some(status));
+
+    // Background jobs (`cmd &`) can outlive the shell. Keep `child`, whose
+    // handle reserves the pid on Windows, until the terminal is killed or
+    // released, then take down whatever is left of the tree. On Unix the
+    // group id stays reserved while any member is alive, so the signal can
+    // only reach this tree or, if the group is already empty, nothing.
+    if !tree_killed {
+        tokio::select! {
+            () = kill.cancelled() => {}
+            () = release.cancelled() => {}
+        }
+        kill_tree(pid).await;
+    }
+    release.cancelled().await;
+    drop(child);
+}
+
+/// Kills every process in the tree rooted at `pid`.
+#[cfg(unix)]
+async fn kill_tree(pid: Option<u32>) {
+    let Some(pgid) = pid.and_then(|pid| i32::try_from(pid).ok()) else {
+        return;
+    };
+    // SAFETY: `kill` has no memory-safety preconditions. The child was
+    // spawned with `process_group(0)`, so its pid is the group id and the
+    // negated pid signals every process in that group.
+    let _ = unsafe { libc::kill(-pgid, libc::SIGKILL) };
+}
+
+/// Kills every process in the tree rooted at `pid`.
+#[cfg(windows)]
+async fn kill_tree(pid: Option<u32>) {
+    let Some(pid) = pid else {
+        return;
+    };
+    let result = Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await;
+    if let Err(e) = result {
+        tracing::warn!(error = %e, "terminal: taskkill failed");
+    }
+}
+
+/// Kills every process in the tree rooted at `pid`.
+#[cfg(not(any(unix, windows)))]
+async fn kill_tree(_pid: Option<u32>) {}
 
 /// Keeps the most recent `limit` bytes of output.
 struct OutputBuffer {
