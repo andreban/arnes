@@ -188,7 +188,13 @@ impl AppState {
                 });
             }
             EventKind::ToolCallUpdated(update) => {
-                debug!(?update, "EventKind::ToolCallUpdated");
+                // Only the name and id: the args and title can carry a
+                // bash command line, and this log is written to disk.
+                debug!(
+                    tool = %update.tool_call.name,
+                    id = %update.tool_call.id,
+                    "EventKind::ToolCallUpdated"
+                );
             }
             EventKind::ToolCallFinished(finish) => {
                 let rendered = render_outcome(finish.outcome);
