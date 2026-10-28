@@ -8,12 +8,25 @@ use async_trait::async_trait;
 
 pub struct RecordingFrontend {
     events: Mutex<Vec<EventKind>>,
+    verdict: Permission,
 }
 
 impl RecordingFrontend {
+    /// A frontend that allows every permission request.
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             events: Mutex::new(Vec::new()),
+            verdict: Permission::AllowOnce,
+        })
+    }
+
+    /// A frontend that denies every permission request.
+    // Each test binary compiles `support` separately; not all of them deny.
+    #[allow(dead_code, reason = "unused in test binaries that never deny")]
+    pub fn denying() -> Arc<Self> {
+        Arc::new(Self {
+            events: Mutex::new(Vec::new()),
+            verdict: Permission::Deny,
         })
     }
 
@@ -29,7 +42,7 @@ impl Frontend for RecordingFrontend {
     }
 
     async fn request_permission(&self, _req: PermissionRequest) -> Permission {
-        Permission::AllowOnce
+        self.verdict.clone()
     }
 
     fn capabilities(&self) -> FrontendCapabilities {

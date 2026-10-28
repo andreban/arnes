@@ -9,7 +9,7 @@ mod filesystem;
 mod terminal;
 
 pub use filesystem::{ReadTextFile, WriteTextFile};
-pub use terminal::{Terminal, TerminalHandle, TerminalSnapshot, TerminalSpec};
+pub use terminal::{Terminal, TerminalExitStatus, TerminalHandle, TerminalSnapshot, TerminalSpec};
 
 /// Optional OS-resource capabilities the embedder grants to a session.
 ///

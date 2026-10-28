@@ -30,8 +30,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let log_file = std::fs::File::create("arnes-acp.log")?;
+    // agent_rig's runner logs every tool call's args and result at info,
+    // which would write bash command lines and their output to disk.
     let filter = tracing_subscriber::EnvFilter::new(
-        "off,ollama_rs=debug,geologia=debug,agent_rig=debug,arnes_core=debug,arnes_acp=debug",
+        "off,ollama_rs=debug,geologia=debug,agent_rig=debug,agent_rig::runner=warn,arnes_core=debug,arnes_acp=debug",
     );
     tracing_subscriber::fmt()
         .with_writer(Mutex::new(log_file))

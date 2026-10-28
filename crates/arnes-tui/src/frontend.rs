@@ -31,12 +31,12 @@ impl TuiFrontend {
 #[async_trait]
 impl Frontend for TuiFrontend {
     async fn on_event(&self, event: EventKind) {
-        debug!(?event, "TuiFrontend::on_event");
+        log_event(&event);
         let _ = self.tx.send(UiCommand::Event(event));
     }
 
     async fn request_permission(&self, req: PermissionRequest) -> Permission {
-        debug!(?req, "TuiFrontend::request_permission");
+        debug!(tool = %req.tool_call.name, id = %req.tool_call.id, "TuiFrontend::request_permission");
         let (responder, response) = oneshot::channel();
         if self
             .tx
@@ -63,4 +63,19 @@ impl Frontend for TuiFrontend {
             ..Default::default()
         }
     }
+}
+
+/// Logs `event` without tool arguments, titles or output: those can carry
+/// secrets, such as a token in a bash command line, into the on-disk log.
+fn log_event(event: &EventKind) {
+    let (stage, tool_call) = match event {
+        EventKind::ToolCallStarted(start) => ("started", &start.tool_call),
+        EventKind::ToolCallUpdated(update) => ("updated", &update.tool_call),
+        EventKind::ToolCallFinished(finish) => ("finished", &finish.tool_call),
+        other => {
+            debug!(event = ?other, "TuiFrontend::on_event");
+            return;
+        }
+    };
+    debug!(tool = %tool_call.name, id = %tool_call.id, stage, "TuiFrontend::on_event: tool call");
 }

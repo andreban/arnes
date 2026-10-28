@@ -147,6 +147,7 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "geologia",
+ "libc",
  "ratatui",
  "serde_json",
  "similar",
@@ -154,6 +155,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

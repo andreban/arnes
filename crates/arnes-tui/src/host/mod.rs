@@ -7,11 +7,15 @@ use arnes_core::{Host, ReadTextFile, WriteTextFile};
 use async_trait::async_trait;
 use tokio::io;
 
+mod terminal;
+
+pub use terminal::LocalTerminal;
+
 pub fn tui_host() -> Host {
     Host {
         read_text_file: Some(Arc::new(ReadLocalTextFile {})),
         write_text_file: Some(Arc::new(WriteLocalTextFile {})),
-        ..Default::default()
+        terminal: Some(Arc::new(LocalTerminal::default())),
     }
 }
 

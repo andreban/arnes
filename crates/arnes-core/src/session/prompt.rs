@@ -105,7 +105,9 @@ impl<F: Frontend> Session<F> {
                         stop_reason = StopReason::Cancelled;
                         break;
                     };
-                    tracing::debug!(tool = %req.details.name, outcome = ?outcome, "prompt: tool call finished");
+                    // The outcome is not logged: tool output, such as a bash
+                    // command's, can contain secrets.
+                    tracing::debug!(tool = %req.details.name, "prompt: tool call finished");
                     self.frontend
                         .on_event(EventKind::ToolCallFinished(ToolCallFinish {
                             tool_call: req.details.clone(),
