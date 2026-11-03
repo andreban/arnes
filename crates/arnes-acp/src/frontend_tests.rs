@@ -134,3 +134,39 @@ async fn dropping_in_flight_permission_request_removes_pending_entry() -> Result
     assert!(pending.lock().unwrap_or_else(|e| e.into_inner()).is_empty());
     Ok(())
 }
+
+#[tokio::test]
+async fn tool_call_update_sends_one_in_progress_title_update() -> Result<()> {
+    // -- Setup & Fixtures
+    let (notify_tx, mut notify_rx) = mpsc::unbounded_channel();
+    let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+    let frontend = AcpFrontend::new("sess-1".into(), notify_tx, pending);
+    let update = arnes_core::ToolCallUpdate {
+        tool_call: Arc::new(ToolCall::new(
+            "call-1".into(),
+            "read_text_file".into(),
+            json!({ "path": "Cargo.toml" }),
+        )),
+        title: "Reading file Cargo.toml".into(),
+    };
+
+    // -- Exec
+    frontend.on_event(EventKind::ToolCallUpdated(update)).await;
+
+    // -- Check
+    let raw = notify_rx.try_recv()?;
+    let notification: Value = serde_json::from_str(&raw)?;
+    assert_eq!(notification["method"], "session/update");
+    assert_eq!(notification["params"]["sessionId"], "sess-1");
+    assert_eq!(
+        notification["params"]["update"],
+        json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-1",
+            "title": "Reading file Cargo.toml",
+            "status": "in_progress",
+        })
+    );
+    assert!(notify_rx.try_recv().is_err());
+    Ok(())
+}

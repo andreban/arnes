@@ -155,3 +155,188 @@ fn non_execute_request_has_no_command_preview() -> Result<()> {
 
     Ok(())
 }
+
+fn tool_call(id: &str) -> std::sync::Arc<agent_rig::model::ToolCall> {
+    std::sync::Arc::new(agent_rig::model::ToolCall::new(
+        id.into(),
+        "read_text_file".into(),
+        json!({ "path": "Cargo.toml" }),
+    ))
+}
+
+fn started(id: &str) -> EventKind {
+    EventKind::ToolCallStarted(arnes_core::ToolCallStart {
+        tool_call: tool_call(id),
+        title: "read_text_file".into(),
+    })
+}
+
+fn updated(id: &str, title: &str) -> EventKind {
+    EventKind::ToolCallUpdated(arnes_core::ToolCallUpdate {
+        tool_call: tool_call(id),
+        title: title.into(),
+    })
+}
+
+fn finished(id: &str) -> EventKind {
+    EventKind::ToolCallFinished(arnes_core::ToolCallFinish {
+        tool_call: tool_call(id),
+        outcome: ToolCallOutcome::Ok(vec![ToolResultContent::Json(json!({ "ok": true }))]),
+    })
+}
+
+/// The title and whether the outcome is set, for each tool-call card.
+fn tool_call_cards(state: &AppState) -> Vec<(Option<&str>, bool)> {
+    state
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            TranscriptItem::ToolCall { title, outcome, .. } => {
+                Some((title.as_deref(), outcome.is_some()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn tool_call_update_sets_running_card_title() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::new("model".into());
+    state.handle_session_event(started("call-1"));
+
+    // -- Exec
+    state.handle_session_event(updated("call-1", "Reading file Cargo.toml"));
+
+    // -- Check
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(
+        tool_call_cards(&state),
+        [(Some("Reading file Cargo.toml"), false)]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn later_tool_call_update_replaces_title() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::new("model".into());
+    state.handle_session_event(started("call-1"));
+    state.handle_session_event(updated("call-1", "Reading file Cargo.toml"));
+
+    // -- Exec
+    state.handle_session_event(updated("call-1", "Reading file README.md"));
+
+    // -- Check
+    assert_eq!(
+        tool_call_cards(&state),
+        [(Some("Reading file README.md"), false)]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn tool_call_update_for_unknown_id_changes_nothing() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::new("model".into());
+    state.handle_session_event(started("call-1"));
+
+    // -- Exec
+    state.handle_session_event(updated("call-2", "Reading file Cargo.toml"));
+
+    // -- Check
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(tool_call_cards(&state), [(None, false)]);
+
+    Ok(())
+}
+
+#[test]
+fn tool_call_update_after_finish_keeps_finished_card() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::new("model".into());
+    state.handle_session_event(started("call-1"));
+    state.handle_session_event(updated("call-1", "Reading file Cargo.toml"));
+    state.handle_session_event(finished("call-1"));
+
+    // -- Exec
+    state.handle_session_event(updated("call-1", "Reading file README.md"));
+
+    // -- Check
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(
+        tool_call_cards(&state),
+        [(Some("Reading file Cargo.toml"), true)]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn tool_call_card_shows_title_and_args() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = summarize_json(&json!({ "path": "Cargo.toml" }));
+
+    // -- Exec
+    let lines = render_tool_call(
+        "call-1",
+        "read_text_file",
+        &args,
+        Some("Reading file Cargo.toml"),
+        None,
+    );
+
+    // -- Check
+    let lines: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+    let [header, args_line, result, _spacer] = lines.as_slice() else {
+        return Err(format!("expected header, args and result lines: {lines:?}").into());
+    };
+    assert!(header.contains("read_text_file"), "{header}");
+    assert!(header.contains("Reading file Cargo.toml"), "{header}");
+    assert!(!header.contains(&args), "{header}");
+    assert!(args_line.contains(&args), "{args_line}");
+    assert!(result.contains("running"), "{result}");
+
+    Ok(())
+}
+
+#[test]
+fn tool_call_card_without_title_keeps_args_in_header() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = summarize_json(&json!({ "path": "Cargo.toml" }));
+
+    // -- Exec
+    let lines = render_tool_call("call-1", "read_text_file", &args, None, None);
+
+    // -- Check
+    let lines: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+    let [header, result, _spacer] = lines.as_slice() else {
+        return Err(format!("expected header and result lines: {lines:?}").into());
+    };
+    assert!(header.contains("read_text_file"), "{header}");
+    assert!(header.contains(&args), "{header}");
+    assert!(result.contains("running"), "{result}");
+
+    Ok(())
+}
+
+#[test]
+fn tool_call_card_truncates_long_title() -> Result<()> {
+    // -- Setup & Fixtures
+    let title = format!("Running `{}`", "x".repeat(MAX_INLINE_JSON * 2));
+
+    // -- Exec
+    let lines = render_tool_call("call-1", "bash", "{}", Some(&title), None);
+
+    // -- Check
+    let header = lines.first().ok_or("missing header")?.to_string();
+    assert!(
+        header.contains(&truncate(&title, MAX_INLINE_JSON)),
+        "{header}"
+    );
+    assert!(!header.contains(&title), "{header}");
+
+    Ok(())
+}
