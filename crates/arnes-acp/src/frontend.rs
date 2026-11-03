@@ -108,6 +108,16 @@ impl Frontend for AcpFrontend {
                     content: None,
                 });
             }
+            // Updates only arrive while the tool runs. Content stays unset so
+            // the client keeps any diff `request_permission` attached.
+            EventKind::ToolCallUpdated(update) => {
+                self.send(SessionUpdate::ToolCallUpdate {
+                    tool_call_id: update.tool_call.id.clone(),
+                    title: Some(update.title),
+                    status: "in_progress",
+                    content: None,
+                });
+            }
             EventKind::ToolCallFinished(finish) => {
                 let status = match finish.outcome {
                     ToolCallOutcome::Cancelled => "failed",

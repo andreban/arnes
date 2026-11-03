@@ -37,6 +37,9 @@ enum TranscriptItem {
         id: String,
         name: String,
         args: String,
+        // Progress title from `ToolCallUpdated`, such as the file being
+        // read. When set, the header shows it and `args` moves below.
+        title: Option<String>,
         outcome: Option<RenderedOutcome>,
     },
 }
@@ -184,6 +187,7 @@ impl AppState {
                     id: start.tool_call.id.clone(),
                     name: start.tool_call.name.clone(),
                     args: summarize_json(&start.tool_call.args),
+                    title: None,
                     outcome: None,
                 });
             }
@@ -195,6 +199,15 @@ impl AppState {
                     id = %update.tool_call.id,
                     "EventKind::ToolCallUpdated"
                 );
+                let running = self.items.iter_mut().rev().find_map(|item| match item {
+                    TranscriptItem::ToolCall {
+                        id, title, outcome, ..
+                    } if outcome.is_none() && *id == update.tool_call.id => Some(title),
+                    _ => None,
+                });
+                if let Some(title) = running {
+                    *title = Some(update.title);
+                }
             }
             EventKind::ToolCallFinished(finish) => {
                 let rendered = render_outcome(finish.outcome);
@@ -214,6 +227,7 @@ impl AppState {
                         id: finish.tool_call.id.clone(),
                         name: finish.tool_call.name.clone(),
                         args: String::new(),
+                        title: None,
                         outcome: Some(rendered),
                     });
                 }
@@ -286,9 +300,10 @@ fn render_tool_call<'a>(
     _id: &'a str,
     name: &'a str,
     args: &'a str,
+    title: Option<&'a str>,
     outcome: Option<&'a RenderedOutcome>,
 ) -> Vec<Line<'a>> {
-    let mut lines = Vec::with_capacity(2);
+    let mut lines = Vec::with_capacity(3);
     let header_style = Style::default()
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
@@ -298,11 +313,23 @@ fn render_tool_call<'a>(
         Span::styled("⚙ ", header_style),
         Span::styled(name.to_owned(), header_style),
     ];
-    if !args.is_empty() {
+    // With a title, the header names what the tool is doing and the args
+    // summary moves to its own line below it.
+    let (detail, args_line) = match title {
+        Some(title) => (truncate(title, MAX_INLINE_JSON), Some(args)),
+        None => (args.to_owned(), None),
+    };
+    if !detail.is_empty() {
         header.push(Span::styled(" ", dim));
-        header.push(Span::styled(args.to_owned(), dim));
+        header.push(Span::styled(detail, dim));
     }
     lines.push(Line::from(header));
+    if let Some(args) = args_line.filter(|args| !args.is_empty()) {
+        lines.push(Line::from(vec![
+            Span::styled("  args ", dim),
+            Span::styled(args.to_owned(), dim),
+        ]));
+    }
 
     let result_line = match outcome {
         None => Line::from(Span::styled("  ↳ running…", dim)),
@@ -592,9 +619,16 @@ fn render(f: &mut Frame, state: &mut AppState) {
                 id,
                 name,
                 args,
+                title,
                 outcome,
             } => {
-                lines.extend(render_tool_call(id, name, args, outcome.as_ref()));
+                lines.extend(render_tool_call(
+                    id,
+                    name,
+                    args,
+                    title.as_deref(),
+                    outcome.as_ref(),
+                ));
             }
         }
     }
