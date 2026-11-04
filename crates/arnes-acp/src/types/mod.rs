@@ -6,3 +6,4 @@ pub mod initialize;
 pub mod jsonrpc;
 pub mod permission;
 pub mod session;
+pub mod terminal;
