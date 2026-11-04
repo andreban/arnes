@@ -439,3 +439,167 @@ async fn m3_write_tool_call_golden() {
         "session/prompt should have stopReason: end_turn"
     );
 }
+
+#[tokio::test]
+async fn m3_bash_tool_call_golden() {
+    let (write_tx, mut write_rx) = mpsc::unbounded_channel::<String>();
+    let llm = Arc::new(ScriptedLlm::new(vec![ScriptedTurn::ToolCallThenText {
+        name: "bash".into(),
+        args: json!({ "command": "echo hi" }),
+        follow_up: "The command printed hi.".into(),
+    }]));
+    let model_key = ModelKey {
+        provider: "test".into(),
+        model_id: "scripted".into(),
+    };
+    let handler = Arc::new(Handler::new(llm, model_key, write_tx));
+
+    let golden_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/golden/m3_bash_tool_call.jsonl"
+    );
+    let frames: Vec<String> = std::fs::read_to_string(golden_path)
+        .expect("golden file not found")
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.to_owned())
+        .collect();
+
+    let mut outbound: Vec<Value> = Vec::new();
+    let mut session_id = String::new();
+    let mut prompt_resp: Option<Value> = None;
+
+    for frame in &frames {
+        let req: Value = serde_json::from_str(frame).expect("invalid JSON in golden file");
+        let method = req["method"].as_str().expect("frame missing method");
+        let id = req["id"].clone();
+        let params = req["params"].clone();
+
+        match method {
+            "initialize" => {
+                handler.handle_initialize(id, params).await;
+            }
+            "session/new" => {
+                let resp = handler.handle_session_new(id, params).await;
+                let v = serde_json::to_value(&resp).unwrap();
+                session_id = v["result"]["sessionId"]
+                    .as_str()
+                    .expect("session/new should return a session id")
+                    .to_owned();
+            }
+            "session/prompt" => {
+                let params_str = params.to_string().replace("<session-id>", &session_id);
+                let params_sub: Value = serde_json::from_str(&params_str).unwrap();
+                let h = Arc::clone(&handler);
+                let task =
+                    tokio::spawn(async move { h.handle_session_prompt(id, params_sub).await });
+
+                // Play the client: allow the command, then answer each
+                // terminal/* request until the terminal is released.
+                loop {
+                    let raw = write_rx
+                        .recv()
+                        .await
+                        .expect("channel closed before terminal/release");
+                    let v: Value = serde_json::from_str(&raw).unwrap();
+                    let method = v.get("method").and_then(Value::as_str).map(str::to_owned);
+                    outbound.push(v.clone());
+                    let Some(method) = method else { continue };
+                    let reply = match method.as_str() {
+                        "session/request_permission" => json!({
+                            "outcome": { "outcome": "selected", "optionId": "allow-once" }
+                        }),
+                        "terminal/create" => json!({ "terminalId": "term-1" }),
+                        "terminal/wait_for_exit" => json!({ "exitCode": 0, "signal": null }),
+                        "terminal/output" => json!({
+                            "output": "hi\n",
+                            "truncated": false,
+                            "exitStatus": { "exitCode": 0, "signal": null }
+                        }),
+                        "terminal/release" => json!({}),
+                        _ => continue,
+                    };
+                    let req_id = v["id"].as_str().unwrap().to_string();
+                    handler.handle_response(req_id, Ok(reply)).await;
+                    if method == "terminal/release" {
+                        break;
+                    }
+                }
+
+                let resp = task.await.unwrap();
+                prompt_resp = Some(serde_json::to_value(&resp).unwrap());
+
+                while let Ok(raw) = write_rx.try_recv() {
+                    outbound.push(serde_json::from_str(&raw).unwrap());
+                }
+            }
+            _ => panic!("unexpected method in golden file: {method}"),
+        }
+    }
+
+    let is_session_update = |v: &Value, kind: &str| {
+        v.get("method") == Some(&json!("session/update"))
+            && v["params"]["update"]["sessionUpdate"] == json!(kind)
+    };
+    let position = |method: &str| {
+        outbound
+            .iter()
+            .position(|v| v.get("method") == Some(&json!(method)))
+            .unwrap_or_else(|| panic!("expected an outbound {method} request"))
+    };
+
+    // The command is spawned on the client through `bash -c` in the
+    // session's working directory.
+    let create = &outbound[position("terminal/create")];
+    assert_eq!(create["params"]["sessionId"].as_str(), Some(&*session_id));
+    assert_eq!(create["params"]["command"], json!("bash"));
+    assert_eq!(create["params"]["args"], json!(["-c", "echo hi"]));
+    assert_eq!(create["params"]["cwd"], json!("/work"));
+
+    // Later calls address the client-assigned terminal id.
+    for method in [
+        "terminal/wait_for_exit",
+        "terminal/output",
+        "terminal/release",
+    ] {
+        assert_eq!(
+            outbound[position(method)]["params"]["terminalId"],
+            json!("term-1"),
+            "{method} should address the client's terminal id"
+        );
+    }
+
+    // Permission, then create, wait, output, release, in that order.
+    let order = [
+        position("session/request_permission"),
+        position("terminal/create"),
+        position("terminal/wait_for_exit"),
+        position("terminal/output"),
+        position("terminal/release"),
+    ];
+    assert!(
+        order.windows(2).all(|w| w[0] < w[1]),
+        "terminal lifecycle out of order: {order:?}"
+    );
+
+    // The completed tool call carries the command's output and exit code.
+    let completed = outbound
+        .iter()
+        .find(|v| {
+            is_session_update(v, "tool_call_update")
+                && v["params"]["update"]["status"] == json!("completed")
+        })
+        .expect("expected a completed tool_call_update");
+    let text = completed["params"]["update"]["content"][0]["content"]["text"]
+        .as_str()
+        .expect("completed update should carry a text block");
+    let result: Value = serde_json::from_str(text).expect("bash result should be JSON");
+    assert_eq!(result["output"], json!("hi\n"));
+    assert_eq!(result["exit_code"], json!(0));
+
+    assert_eq!(
+        prompt_resp.expect("session/prompt produced no response")["result"]["stopReason"].as_str(),
+        Some("end_turn"),
+        "session/prompt should have stopReason: end_turn"
+    );
+}
